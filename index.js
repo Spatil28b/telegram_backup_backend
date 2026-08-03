@@ -152,6 +152,42 @@ app.post('/api/auth/verify-otp-register', async (req, res) => {
   return res.json({ success: true, message: 'Account registered successfully in Neon database!' });
 });
 
+// 4b. Reset Password via OTP
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  const lowerEmail = (email || '').toLowerCase();
+
+  let storedCode, expiresAt;
+  if (pool) {
+    const result = await pool.query(`SELECT code, expires_at FROM otps WHERE email = $1`, [lowerEmail]);
+    if (result.rows.length > 0) {
+      storedCode = result.rows[0].code;
+      expiresAt = parseInt(result.rows[0].expires_at, 10);
+    }
+  } else {
+    const rec = memoryOtps.get(lowerEmail);
+    if (rec) {
+      storedCode = rec.code;
+      expiresAt = rec.expiresAt;
+    }
+  }
+
+  if (!storedCode || storedCode !== code || Date.now() > expiresAt) {
+    return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
+  }
+
+  if (pool) {
+    await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
+    await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [newPassword, lowerEmail]);
+  } else {
+    memoryOtps.delete(lowerEmail);
+    const u = memoryUsers.get(lowerEmail);
+    if (u) u.passwordHash = newPassword;
+  }
+
+  return res.json({ success: true, message: 'Password updated successfully! You can now log in.' });
+});
+
 // 5. Login API
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
