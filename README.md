@@ -1,44 +1,39 @@
-# Telegram Backup Vercel Backend Server
+# Telegram Backup Vercel Backend Server with Neon Postgres
 
-A Node.js / Express Serverless API designed for Vercel deployment with **Google SMTP Email OTP Verification** and **Telegram Credential Locking with 2FA Protection**.
+A Node.js / Express Serverless API designed for Vercel deployment with **Neon Postgres Database**, **Google SMTP Email OTP Verification**, and **Telegram Credential Locking with 2FA Protection**.
 
 ---
 
 ## Features
+- 🐘 **Neon Serverless Postgres Integration**: Automatically creates `users`, `otps`, and `backed_files` tables.
 - 📧 **Google SMTP Email OTP**: Sends 6-digit verification codes to user emails via Gmail SMTP (`nodemailer`).
 - 🔐 **2FA Credential Security**: Verifies Telegram Bot credentials live and locks them under user accounts. Modifying credentials requires 2FA Email OTP.
 - ☁️ **Vercel Serverless Ready**: Includes `vercel.json` for zero-config deployment.
 
 ---
 
-## How to Get Google App Password for SMTP
+## Step 1: Get Your Free Neon Postgres Connection String
 
-1. Go to your [Google Account Security Settings](https://myaccount.google.com/security).
+1. Go to [neon.tech](https://neon.tech) and create a free account.
+2. Create a project named `telegram-backup-db`.
+3. Copy the Postgres connection string from your dashboard:
+   `postgresql://username:password@ep-xxxxxx.us-east-2.aws.neon.tech/neondb?sslmode=require`
+
+---
+
+## Step 2: Get Google App Password for SMTP
+
+1. Go to [Google Account Security](https://myaccount.google.com/security).
 2. Ensure **2-Step Verification** is turned **ON**.
-3. Search for **"App Passwords"** in the Google Account search bar.
-4. Create a new App Password named `Telegram Backup Server`.
+3. Search for **"App Passwords"** in the Google search bar.
+4. Create an App Password named `Telegram Backup Server`.
 5. Copy the 16-character generated password (e.g. `abcd efgh ijkl mnop`).
 
 ---
 
-## Deployment to Vercel via GitHub
+## Step 3: Vercel Environment Variables
 
-### Step 1: Push Repository to GitHub
-```bash
-cd server
-git init -b main
-git add .
-git commit -m "Initial Vercel Backend Server"
-git remote add origin https://github.com/YOUR_USERNAME/telegram-backup-backend.git
-git push -u origin main
-```
-
-### Step 2: Import into Vercel
-1. Go to [Vercel Dashboard](https://vercel.com/dashboard) and click **"Add New" -> "Project"**.
-2. Select your `telegram-backup-backend` GitHub repository.
-3. In **Environment Variables**, add:
-   - `SMTP_EMAIL`: Your Gmail Address (`yourname@gmail.com`)
-   - `SMTP_APP_PASSWORD`: Your 16-character Google App Password
-4. Click **Deploy**.
-
-Vercel will build and provide your live server URL (e.g. `https://telegram-backup-backend.vercel.app`).
+In Vercel Dashboard -> **Settings -> Environment Variables**, add:
+- `DATABASE_URL`: Your Neon Postgres Connection String
+- `SMTP_EMAIL`: Your Gmail Address (`yourname@gmail.com`)
+- `SMTP_APP_PASSWORD`: Your 16-character Google App Password
