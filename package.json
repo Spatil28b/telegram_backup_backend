@@ -1,0 +1,16 @@
+{
+  "name": "telegram-backup-backend",
+  "version": "1.0.0",
+  "description": "Vercel Serverless Backend for Telegram Backup App with Google SMTP OTP & 2FA Security",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "nodemailer": "^6.9.13",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3"
+  }
+}
