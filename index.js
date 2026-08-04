@@ -362,6 +362,37 @@ app.post('/api/auth/send-key', async (req, res) => {
   }
 });
 
+// 10. Delete File Record from Cloud Database
+app.post('/api/files/delete', async (req, res) => {
+  const { email, telegramFileId, path } = req.body;
+  const lowerEmail = (email || '').toLowerCase();
+
+  if (!lowerEmail || (!telegramFileId && !path)) {
+    return res.status(400).json({ success: false, message: 'Email and file ID or path are required.' });
+  }
+
+  if (pool) {
+    if (telegramFileId) {
+      await pool.query(
+        `DELETE FROM backed_files WHERE email = $1 AND telegram_file_id = $2`,
+        [lowerEmail, telegramFileId]
+      );
+    } else if (path) {
+      await pool.query(
+        `DELETE FROM backed_files WHERE email = $1 AND path = $2`,
+        [lowerEmail, path]
+      );
+    }
+  } else {
+    if (memoryFiles.has(lowerEmail)) {
+      const updated = memoryFiles.get(lowerEmail).filter(f => f.telegramFileId !== telegramFileId && f.path !== path);
+      memoryFiles.set(lowerEmail, updated);
+    }
+  }
+
+  return res.json({ success: true, message: 'File deleted from cloud database.' });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Telegram Backup Backend with Neon Postgres running on port ${PORT}`));
 
