@@ -117,7 +117,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res)
 });
 
 // 3b. Send AES-256 Zero-Knowledge Security Encryption Key to User's Email
-app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], async (req, res) => {
+const handleSendKey = async (req, res) => {
   try {
     const { email, encryptionKey } = req.body || {};
     if (!email || !encryptionKey) {
@@ -164,7 +164,16 @@ app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], async (req, res)
     console.error('Failed to send encryption key email:', err);
     return res.status(500).json({ success: false, message: `Email sending failed: ${err.message}` });
   }
+};
+
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.url.includes('send-key')) {
+    return handleSendKey(req, res);
+  }
+  next();
 });
+
+app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], handleSendKey);
 
 // 4. Verify OTP & Register Account
 app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify-otp-register'], async (req, res) => {
