@@ -42,8 +42,11 @@ async function initDb() {
         telegram_file_id TEXT NOT NULL,
         size BIGINT DEFAULT 0,
         path TEXT DEFAULT '',
-        timestamp BIGINT NOT NULL
+        timestamp BIGINT NOT NULL,
+        message_id BIGINT DEFAULT 0
       );
+
+      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS message_id BIGINT DEFAULT 0;
     `);
     console.log('[Neon Postgres] Database tables initialized successfully!');
   } catch (err) {
@@ -277,19 +280,19 @@ app.post('/api/credentials/save', async (req, res) => {
 
 // 7. Index File Metadata to Neon Database
 app.post('/api/files/index', async (req, res) => {
-  const { email, fileName, telegramFileId, size, path } = req.body;
+  const { email, fileName, telegramFileId, size, path, messageId = 0 } = req.body;
   const lowerEmail = (email || '').toLowerCase();
   const timestamp = Date.now();
 
   if (pool) {
     await pool.query(
-      `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [lowerEmail, fileName, telegramFileId, size, path, timestamp]
+      `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId]
     );
   } else {
     if (!memoryFiles.has(lowerEmail)) memoryFiles.set(lowerEmail, []);
-    memoryFiles.get(lowerEmail).push({ fileName, telegramFileId, size, path, timestamp });
+    memoryFiles.get(lowerEmail).push({ fileName, telegramFileId, size, path, timestamp, messageId });
   }
 
   return res.json({ success: true, message: 'File indexed to Neon Database.' });
@@ -301,7 +304,7 @@ app.get('/api/files/list', async (req, res) => {
 
   if (pool) {
     const result = await pool.query(
-      `SELECT file_name AS "fileName", telegram_file_id AS "telegramFileId", size, path, timestamp
+      `SELECT file_name AS "fileName", telegram_file_id AS "telegramFileId", size, path, timestamp, message_id AS "messageId"
        FROM backed_files WHERE email = $1 ORDER BY timestamp DESC`,
       [lowerEmail]
     );
