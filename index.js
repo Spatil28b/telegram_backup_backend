@@ -74,7 +74,7 @@ function generateOTP() {
 }
 
 // 3. Send OTP API
-app.post(['/api/auth/send-otp', '/auth/send-otp'], async (req, res) => {
+app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res) => {
   const { email, type = 'register' } = req.body;
   if (!email || !email.includes('@')) {
     return res.status(400).json({ success: false, message: 'Valid email is required.' });
@@ -117,7 +117,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp'], async (req, res) => {
 });
 
 // 4. Verify OTP & Register Account
-app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register'], async (req, res) => {
+app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify-otp-register'], async (req, res) => {
   const { email, code, password } = req.body;
   const lowerEmail = (email || '').toLowerCase();
 
@@ -156,7 +156,7 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register'], async (
 });
 
 // 4b. Reset Password via OTP
-app.post(['/api/auth/reset-password', '/auth/reset-password'], async (req, res) => {
+app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password'], async (req, res) => {
   const { email, code, newPassword } = req.body;
   const lowerEmail = (email || '').toLowerCase();
 
@@ -192,7 +192,7 @@ app.post(['/api/auth/reset-password', '/auth/reset-password'], async (req, res) 
 });
 
 // 5. Login API
-app.post(['/api/auth/login', '/auth/login'], async (req, res) => {
+app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res) => {
   const { email, password } = req.body;
   const lowerEmail = (email || '').toLowerCase();
 
@@ -279,7 +279,7 @@ app.post('/api/credentials/save', async (req, res) => {
 });
 
 // 7. Index File Metadata to Database
-app.post(['/api/files/index', '/files/index'], async (req, res) => {
+app.post(['/api/files/index', '/files/index', '/index'], async (req, res) => {
   const { email, fileName, telegramFileId, size, path, messageId = 0 } = req.body;
   const lowerEmail = (email || '').toLowerCase();
   const timestamp = Date.now();
@@ -315,11 +315,11 @@ const handleListFiles = async (req, res) => {
   }
 };
 
-app.get(['/api/files/list', '/files/list'], handleListFiles);
-app.post(['/api/files/list', '/files/list'], handleListFiles);
+app.get(['/api/files/list', '/files/list', '/list'], handleListFiles);
+app.post(['/api/files/list', '/files/list', '/list'], handleListFiles);
 
 // 9. Send AES-256 Zero-Knowledge Security Encryption Key to User's Email
-app.post(['/api/auth/send-key', '/auth/send-key'], async (req, res) => {
+app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], async (req, res) => {
   const { email, encryptionKey } = req.body;
   if (!email || !encryptionKey) {
     return res.status(400).json({ success: false, message: 'Email and encryption key are required.' });
@@ -369,7 +369,7 @@ app.post(['/api/auth/send-key', '/auth/send-key'], async (req, res) => {
 });
 
 // 10. Delete File Record from Cloud Database
-app.post(['/api/files/delete', '/files/delete'], async (req, res) => {
+app.post(['/api/files/delete', '/files/delete', '/delete'], async (req, res) => {
   const { email, telegramFileId, path } = req.body;
   const lowerEmail = (email || '').toLowerCase();
 
