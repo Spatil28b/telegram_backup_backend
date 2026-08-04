@@ -396,6 +396,17 @@ app.post('/api/files/delete', async (req, res) => {
   return res.json({ success: true, message: 'File deleted from cloud database.' });
 });
 
+// JSON 404 Fallback Middleware
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: `Route ${req.method} ${req.url} not found.` });
+});
+
+// JSON Error Handling Middleware
+app.use((err, req, res, next) => {
+  console.error('Express Server Error:', err);
+  res.status(err.status || 500).json({ success: false, message: err.message || 'Internal Server Error' });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Telegram Backup Backend with Neon Postgres running on port ${PORT}`));
 
