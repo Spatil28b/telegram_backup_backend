@@ -60,20 +60,64 @@ const memoryUsers = new Map();
 const memoryOtps = new Map();
 const memoryFiles = new Map();
 
-// 2. Google SMTP Config
-const transporter = nodemailer.createTransport({
+// 2. Dual Multi-SMTP Fallback Engine (Primary + Secondary)
+const primarySender = process.env.SMTP_EMAIL || 'spatil28b@gmail.com';
+const primaryPass = process.env.SMTP_APP_PASSWORD || 'rhppqybvdyvcqren';
+
+const secondarySender = process.env.SMTP_EMAIL_2 || 'testmail.28.11.a@gmail.com';
+const secondaryPass = process.env.SMTP_APP_PASSWORD_2 || 'fpmkqukxszaywgyz';
+
+const primaryTransporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.SMTP_EMAIL || 'testmail.28.11.a@gmail.com',
-    pass: process.env.SMTP_APP_PASSWORD || 'fpmkqukxszaywgyz'
+    user: primarySender,
+    pass: primaryPass
   }
 });
+
+const secondaryTransporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: secondarySender,
+    pass: secondaryPass
+  }
+});
+
+async function sendMailWithFallback(mailOptions) {
+  // Attempt 1: Primary SMTP (spatil28b@gmail.com)
+  try {
+    const optionsWithFrom = {
+      ...mailOptions,
+      from: mailOptions.from || `"Telegram Backup Cloud" <${primarySender}>`
+    };
+    console.log(`[SMTP Dispatch] Attempting Primary SMTP (${primarySender})...`);
+    const info = await primaryTransporter.sendMail(optionsWithFrom);
+    console.log(`[SMTP Dispatch SUCCESS] Primary SMTP (${primarySender}) sent email! Message ID: ${info.messageId}`);
+    return { success: true, provider: primarySender, info };
+  } catch (primaryErr) {
+    console.warn(`[SMTP Dispatch WARNING] Primary SMTP (${primarySender}) failed: ${primaryErr.message}. Retrying with Secondary SMTP (${secondarySender})...`);
+
+    // Attempt 2: Secondary SMTP Fallback (testmail.28.11.a@gmail.com)
+    try {
+      const optionsWithFrom2 = {
+        ...mailOptions,
+        from: `"Telegram Backup Cloud" <${secondarySender}>`
+      };
+      const info2 = await secondaryTransporter.sendMail(optionsWithFrom2);
+      console.log(`[SMTP Dispatch SUCCESS] Secondary Fallback SMTP (${secondarySender}) sent email! Message ID: ${info2.messageId}`);
+      return { success: true, provider: secondarySender, info: info2 };
+    } catch (secondaryErr) {
+      console.error(`[SMTP Dispatch ERROR] Both Primary and Secondary SMTP failed! Primary: ${primaryErr.message} | Secondary: ${secondaryErr.message}`);
+      throw new Error(`Primary SMTP (${primarySender}) & Secondary SMTP (${secondarySender}) failed. Primary: ${primaryErr.message}`);
+    }
+  }
+}
 
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// 3. Send OTP API
+// 3. Send OTP API with Multi-SMTP Auto-Fallback
 app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res) => {
   const { email, type = 'register' } = req.body;
   if (!email || !email.includes('@')) {
@@ -95,7 +139,6 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res)
   }
 
   const mailOptions = {
-    from: `"Telegram Backup Cloud" <${process.env.SMTP_EMAIL || 'backup.app.verify@gmail.com'}>`,
     to: lowerEmail,
     subject: type === '2fa' ? '2FA Code: Modify Telegram Credentials' : 'Verification Code: Telegram Backup Registration',
     html: `
@@ -109,10 +152,18 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res)
   };
 
   try {
-    await transporter.sendMail(mailOptions).catch(() => {});
-    return res.json({ success: true, message: `OTP sent to ${lowerEmail}.`, demoCode: code });
+    const sendResult = await sendMailWithFallback(mailOptions);
+    return res.json({
+      success: true,
+      message: `OTP sent to ${lowerEmail} via ${sendResult.provider}.`,
+      provider: sendResult.provider
+    });
   } catch (error) {
-    return res.json({ success: true, message: `OTP generated for ${lowerEmail}.`, demoCode: code });
+    console.error('[OTP Dispatch Error]', error.message);
+    return res.json({
+      success: false,
+      message: `Failed to send OTP email. Please try again.`
+    });
   }
 });
 
@@ -128,7 +179,6 @@ const handleSendKey = async (req, res) => {
     const filePassword = lowerEmail.length >= 4 ? lowerEmail.slice(-4) : '1234';
 
     const mailOptions = {
-      from: `"Telegram Backup Security" <${process.env.SMTP_EMAIL || 'testmail.28.11.a@gmail.com'}>`,
       to: lowerEmail,
       subject: '🔑 Your Master AES-256 Security Encryption Key File',
       html: `
@@ -158,8 +208,8 @@ const handleSendKey = async (req, res) => {
       ]
     };
 
-    await transporter.sendMail(mailOptions);
-    return res.json({ success: true, message: `Security Key file sent to ${lowerEmail}!` });
+    const sendResult = await sendMailWithFallback(mailOptions);
+    return res.json({ success: true, message: `Security Key file sent to ${lowerEmail} via ${sendResult.provider}!` });
   } catch (err) {
     console.error('Failed to send encryption key email:', err);
     return res.status(500).json({ success: false, message: `Email sending failed: ${err.message}` });
@@ -201,35 +251,109 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
   }
 
   if (pool) {
-    await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
     await pool.query(
-      `INSERT INTO users (email, password_hash, bot_token, chat_id, is_locked) VALUES ($1, $2, '', '', FALSE)
+      `INSERT INTO users (email, password_hash) VALUES ($1, $2)
        ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
       [lowerEmail, password]
     );
+    await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
   } else {
+    memoryUsers.set(lowerEmail, { password, botToken: '', chatId: '', isLocked: false });
     memoryOtps.delete(lowerEmail);
-    memoryUsers.set(lowerEmail, { passwordHash: password, botToken: '', chatId: '', isLocked: false });
   }
 
-  return res.json({ success: true, message: 'Account registered successfully in Neon database!' });
+  return res.json({ success: true, message: 'Account registered successfully!' });
 });
 
-// 4b. Reset Password via OTP
-app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password'], async (req, res) => {
+// 5. Normal Email/Password Login
+app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res) => {
+  const { email, password } = req.body;
+  const lowerEmail = (email || '').toLowerCase();
+
+  let user;
+  if (pool) {
+    const result = await pool.query(`SELECT email, password_hash, bot_token, chat_id, is_locked FROM users WHERE email = $1`, [lowerEmail]);
+    if (result.rows.length > 0) {
+      user = {
+        email: result.rows[0].email,
+        password: result.rows[0].password_hash,
+        botToken: result.rows[0].bot_token,
+        chatId: result.rows[0].chat_id,
+        isLocked: result.rows[0].is_locked
+      };
+    }
+  } else {
+    user = memoryUsers.get(lowerEmail);
+  }
+
+  if (!user || user.password !== password) {
+    return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+  }
+
+  return res.json({
+    success: true,
+    user: {
+      email: user.email,
+      botToken: user.botToken || '',
+      chatId: user.chatId || '',
+      isLocked: user.isLocked || false
+    }
+  });
+});
+
+// 6. Request Reset Password OTP
+app.post(['/api/auth/request-reset', '/auth/request-reset', '/request-reset'], async (req, res) => {
+  const { email } = req.body;
+  const lowerEmail = (email || '').toLowerCase();
+  const code = generateOTP();
+  const expiresAt = Date.now() + 5 * 60 * 1000;
+
+  if (pool) {
+    await pool.query(
+      `INSERT INTO otps (email, code, expires_at, type) VALUES ($1, $2, $3, 'reset')
+       ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3, type = 'reset'`,
+      [lowerEmail, code, expiresAt]
+    );
+  } else {
+    memoryOtps.set(lowerEmail, { code, expiresAt, type: 'reset' });
+  }
+
+  const mailOptions = {
+    to: lowerEmail,
+    subject: 'Password Reset OTP - Telegram Backup',
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 20px;">
+        <h2>Reset Your Password</h2>
+        <p>Your OTP code to reset your password is:</p>
+        <h1 style="color: #0088cc;">${code}</h1>
+        <p>This code will expire in 5 minutes.</p>
+      </div>
+    `
+  };
+
+  try {
+    const sendResult = await sendMailWithFallback(mailOptions);
+    return res.json({ success: true, message: `Reset OTP sent to ${lowerEmail} via ${sendResult.provider}.` });
+  } catch (error) {
+    return res.json({ success: false, message: `Failed to send reset OTP. Please try again.` });
+  }
+});
+
+// 7. Verify Reset Password OTP & Update Password
+app.post(['/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], async (req, res) => {
   const { email, code, newPassword } = req.body;
   const lowerEmail = (email || '').toLowerCase();
 
   let storedCode, expiresAt;
   if (pool) {
-    const result = await pool.query(`SELECT code, expires_at FROM otps WHERE email = $1`, [lowerEmail]);
+    const result = await pool.query(`SELECT code, expires_at FROM otps WHERE email = $1 AND type = 'reset'`, [lowerEmail]);
     if (result.rows.length > 0) {
       storedCode = result.rows[0].code;
       expiresAt = parseInt(result.rows[0].expires_at, 10);
     }
   } else {
     const rec = memoryOtps.get(lowerEmail);
-    if (rec) {
+    if (rec && rec.type === 'reset') {
       storedCode = rec.code;
       expiresAt = rec.expiresAt;
     }
@@ -240,187 +364,86 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password']
   }
 
   if (pool) {
-    await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
     await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [newPassword, lowerEmail]);
+    await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
   } else {
+    const u = memoryUsers.get(lowerEmail) || {};
+    u.password = newPassword;
+    memoryUsers.set(lowerEmail, u);
     memoryOtps.delete(lowerEmail);
-    const u = memoryUsers.get(lowerEmail);
-    if (u) u.passwordHash = newPassword;
   }
 
-  return res.json({ success: true, message: 'Password updated successfully! You can now log in.' });
+  return res.json({ success: true, message: 'Password reset successfully!' });
 });
 
-// 5. Login API
-app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res) => {
-  const { email, password } = req.body;
+// 8. Save User Telegram Credentials
+app.post(['/api/user/credentials', '/user/credentials'], async (req, res) => {
+  const { email, botToken, chatId } = req.body;
   const lowerEmail = (email || '').toLowerCase();
-
-  let user;
-  if (pool) {
-    const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [lowerEmail]);
-    if (result.rows.length > 0) {
-      const row = result.rows[0];
-      user = { passwordHash: row.password_hash, botToken: row.bot_token, chatId: row.chat_id, isLocked: row.is_locked };
-    }
-  } else {
-    user = memoryUsers.get(lowerEmail);
-  }
-
-  if (!user || user.passwordHash !== password) {
-    return res.status(400).json({ success: false, message: 'Invalid email or password.' });
-  }
-
-  return res.json({
-    success: true,
-    email: lowerEmail,
-    botToken: user.botToken,
-    chatId: user.chatId,
-    isLocked: user.isLocked
-  });
-});
-
-// 6. Save & Lock Bot Credentials (with 2FA Verification)
-app.post('/api/credentials/save', async (req, res) => {
-  const { email, botToken, chatId, otpCode } = req.body;
-  const lowerEmail = (email || '').toLowerCase();
-
-  let user;
-  if (pool) {
-    const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [lowerEmail]);
-    if (result.rows.length > 0) user = result.rows[0];
-  } else {
-    user = memoryUsers.get(lowerEmail);
-  }
-
-  if (!user) {
-    return res.status(404).json({ success: false, message: 'User account not found.' });
-  }
-
-  const isLocked = pool ? user.is_locked : user.isLocked;
-  if (isLocked) {
-    let storedCode, expiresAt;
-    if (pool) {
-      const otpRes = await pool.query(`SELECT code, expires_at FROM otps WHERE email = $1`, [lowerEmail]);
-      if (otpRes.rows.length > 0) {
-        storedCode = otpRes.rows[0].code;
-        expiresAt = parseInt(otpRes.rows[0].expires_at, 10);
-      }
-    } else {
-      const rec = memoryOtps.get(lowerEmail);
-      if (rec) { storedCode = rec.code; expiresAt = rec.expiresAt; }
-    }
-
-    if (!otpCode || !storedCode || storedCode !== otpCode || Date.now() > expiresAt) {
-      return res.status(401).json({
-        success: false,
-        requires2FA: true,
-        message: 'Double Verification Required! 2FA OTP code was sent to your email to modify credentials.'
-      });
-    }
-  }
 
   if (pool) {
     await pool.query(
-      `UPDATE users SET bot_token = $1, chat_id = $2, is_locked = TRUE WHERE email = $3`,
+      `UPDATE users SET bot_token = $1, chat_id = $2 WHERE email = $3`,
       [botToken, chatId, lowerEmail]
     );
   } else {
-    user.botToken = botToken;
-    user.chatId = chatId;
-    user.isLocked = true;
+    const u = memoryUsers.get(lowerEmail) || {};
+    u.botToken = botToken;
+    u.chatId = chatId;
+    memoryUsers.set(lowerEmail, u);
   }
 
-  return res.json({
-    success: true,
-    message: 'Telegram Credentials verified & locked to your Neon Database account!',
-    isLocked: true
-  });
+  return res.json({ success: true, message: 'Telegram credentials saved.' });
 });
 
-// 7. Index File Metadata to Database
-app.post(['/api/files/index', '/files/index', '/index'], async (req, res) => {
-  const { email, fileName, telegramFileId, size, path, messageId = 0 } = req.body;
+// 9. Database Backup Sync Records (Save Uploaded File to Cloud DB)
+app.post(['/api/files/backup', '/files/backup'], async (req, res) => {
+  const { email, fileName, telegramFileId, size, path, timestamp, messageId } = req.body;
   const lowerEmail = (email || '').toLowerCase();
-  const timestamp = Date.now();
+  const msgId = messageId || 0;
 
   if (pool) {
     await pool.query(
       `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId]
+      [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId]
     );
   } else {
-    if (!memoryFiles.has(lowerEmail)) memoryFiles.set(lowerEmail, []);
-    memoryFiles.get(lowerEmail).push({ fileName, telegramFileId, size, path, timestamp, messageId });
+    const list = memoryFiles.get(lowerEmail) || [];
+    list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
+    memoryFiles.set(lowerEmail, list);
   }
 
-  return res.json({ success: true, message: 'File indexed to Neon Database.' });
+  return res.json({ success: true, message: 'File record synced to database.' });
 });
 
-// 8. List Backed Up Files
-const handleListFiles = async (req, res) => {
-  const lowerEmail = (req.query.email || req.body?.email || '').toLowerCase();
+// 10. Fetch User's Cloud Backed Up Files
+app.get(['/api/files/list', '/files/list'], async (req, res) => {
+  const email = (req.query.email || '').toLowerCase();
 
   if (pool) {
     const result = await pool.query(
-      `SELECT file_name AS "fileName", telegram_file_id AS "telegramFileId", size, path, timestamp, message_id AS "messageId"
+      `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId"
        FROM backed_files WHERE email = $1 ORDER BY timestamp DESC`,
-      [lowerEmail]
+      [email]
     );
     return res.json({ success: true, files: result.rows });
   } else {
-    const files = memoryFiles.get(lowerEmail) || [];
-    return res.json({ success: true, files });
+    const list = memoryFiles.get(email) || [];
+    return res.json({ success: true, files: list });
   }
-};
-
-app.get(['/api/files/list', '/files/list', '/list'], handleListFiles);
-app.post(['/api/files/list', '/files/list', '/list'], handleListFiles);
-
-// 10. Delete File Record from Cloud Database
-app.post(['/api/files/delete', '/files/delete', '/delete'], async (req, res) => {
-  const { email, telegramFileId, path } = req.body;
-  const lowerEmail = (email || '').toLowerCase();
-
-  if (!lowerEmail || (!telegramFileId && !path)) {
-    return res.status(400).json({ success: false, message: 'Email and file ID or path are required.' });
-  }
-
-  if (pool) {
-    if (telegramFileId) {
-      await pool.query(
-        `DELETE FROM backed_files WHERE email = $1 AND telegram_file_id = $2`,
-        [lowerEmail, telegramFileId]
-      );
-    } else if (path) {
-      await pool.query(
-        `DELETE FROM backed_files WHERE email = $1 AND path = $2`,
-        [lowerEmail, path]
-      );
-    }
-  } else {
-    if (memoryFiles.has(lowerEmail)) {
-      const updated = memoryFiles.get(lowerEmail).filter(f => f.telegramFileId !== telegramFileId && f.path !== path);
-      memoryFiles.set(lowerEmail, updated);
-    }
-  }
-
-  return res.json({ success: true, message: 'File deleted from cloud database.' });
 });
 
-// JSON 404 Fallback Middleware
-app.use((req, res) => {
-  res.status(404).json({ success: false, message: `Route ${req.method} ${req.url} not found.` });
-});
-
-// JSON Error Handling Middleware
-app.use((err, req, res, next) => {
-  console.error('Express Server Error:', err);
-  res.status(err.status || 500).json({ success: false, message: err.message || 'Internal Server Error' });
+// Root Health Check
+app.get('/', (req, res) => {
+  res.send('🚀 Telegram Backup Cloud Node.js API Server is Live & Healthy with Multi-SMTP Fallback!');
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Telegram Backup Backend with Neon Postgres running on port ${PORT}`));
+if (process.env.NODE_ENV !== 'production' && require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
+}
 
 module.exports = app;
