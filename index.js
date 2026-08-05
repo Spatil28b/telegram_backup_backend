@@ -167,7 +167,8 @@ const handleSendKey = async (req, res) => {
 };
 
 app.use((req, res, next) => {
-  if (req.method === 'POST' && req.url.includes('send-key')) {
+  const fullUrl = (req.originalUrl || req.url || '').toLowerCase();
+  if (req.method === 'POST' && fullUrl.includes('send-key')) {
     return handleSendKey(req, res);
   }
   next();
