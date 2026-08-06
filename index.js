@@ -1,14 +1,37 @@
+/**
+ * =====================================================================================
+ * TELEGRAM BACKUP CLOUD - SERVERLESS BACKEND API
+ * =====================================================================================
+ * Framework: Express.js running on Vercel Serverless Functions Node.js Environment
+ * Primary Database: Neon Serverless PostgreSQL Client
+ * Fallback Database: In-Memory Map Data Stores (Zero-Downtime Guarantee)
+ * Email Dispatch: Dual-SMTP Provider Auto-Fallback (Primary + Secondary Gmail SMTP)
+ * Security Encryption: AES-256 Master Security Key Dispatch & 2FA OTP Authentication
+ * =====================================================================================
+ */
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const { Pool } = require('@neondatabase/serverless');
 
+// Initialize Express Application Instance
 const app = express();
+
+// Middleware: Enable Cross-Origin Resource Sharing for Android App and Web Clients
 app.use(cors());
+
+// Middleware: Parse Incoming JSON Request Payloads
 app.use(express.json());
 
-// Process Safety Handlers (Prevent Vercel serverless process crashes)
+/**
+ * -------------------------------------------------------------------------------------
+ * PROCESS LEVEL SAFETY HANDLERS
+ * -------------------------------------------------------------------------------------
+ * Prevents Vercel serverless worker processes from crashing when unhandled promise
+ * rejections or uncaught exceptions occur during async database or network IO operations.
+ */
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Process Warning] Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -17,19 +40,29 @@ process.on('uncaughtException', (err) => {
   console.error('[Process Warning] Uncaught Exception thrown:', err);
 });
 
-// 1. Neon Serverless Postgres Database Client
+/**
+ * -------------------------------------------------------------------------------------
+ * 1. DATABASE CONFIGURATION & INITIALIZATION (NEON POSTGRESQL)
+ * -------------------------------------------------------------------------------------
+ * Configures connection pool to Neon Serverless PostgreSQL.
+ * If DATABASE_URL environment variable is missing or unreachable, the server automatically
+ * degrades gracefully to in-memory storage without breaking API calls.
+ */
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null;
 
 if (pool) {
+  // Listen for unexpected errors on idle PostgreSQL clients
   pool.on('error', (err) => {
     console.error('[Neon Postgres Pool Error]', err.message);
   });
 }
 
-// Initialize Neon Postgres Database Tables
+/**
+ * Automatically creates required database tables (users, otps, backed_files) on server boot.
+ */
 async function initDb() {
   if (!pool) {
-    console.log('[Notice] DATABASE_URL not provided. Running in-memory mode.');
+    console.log('[Notice] DATABASE_URL environment variable not provided. Operating in-memory mode.');
     return;
   }
   try {
@@ -63,19 +96,30 @@ async function initDb() {
 
       ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS message_id BIGINT DEFAULT 0;
     `);
-    console.log('[Neon Postgres] Database tables initialized successfully!');
+    console.log('[Neon Postgres] Database schema and tables initialized successfully!');
   } catch (err) {
-    console.error('[Neon Postgres Error] Failed to initialize tables:', err.message);
+    console.error('[Neon Postgres Error] Failed to initialize database tables:', err.message);
   }
 }
 initDb().catch(err => console.error('[InitDb Catch]', err.message));
 
-// In-Memory Fallback Stores
+/**
+ * -------------------------------------------------------------------------------------
+ * IN-MEMORY FALLBACK STORES
+ * -------------------------------------------------------------------------------------
+ * Used automatically whenever database pool is unavailable or database queries fail.
+ */
 const memoryUsers = new Map();
 const memoryOtps = new Map();
 const memoryFiles = new Map();
 
-// 2. Dual Multi-SMTP Fallback Engine (Primary + Secondary)
+/**
+ * -------------------------------------------------------------------------------------
+ * 2. DUAL MULTI-SMTP FALLBACK ENGINE
+ * -------------------------------------------------------------------------------------
+ * Configures Primary and Secondary Gmail SMTP transporters. If Primary Gmail sender encounters
+ * rate limits or authentication issues, system instantly falls back to Secondary SMTP.
+ */
 const primarySender = process.env.SMTP_EMAIL || 'spatil28b@gmail.com';
 const primaryPass = process.env.SMTP_APP_PASSWORD || 'rhppqybvdyvcqren';
 
@@ -84,66 +128,76 @@ const secondaryPass = process.env.SMTP_APP_PASSWORD_2 || 'fpmkqukxszaywgyz';
 
 const primaryTransporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: {
-    user: primarySender,
-    pass: primaryPass
-  }
+  auth: { user: primarySender, pass: primaryPass }
 });
 
 const secondaryTransporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: {
-    user: secondarySender,
-    pass: secondaryPass
-  }
+  auth: { user: secondarySender, pass: secondaryPass }
 });
 
+/**
+ * Dispatches an email using Primary SMTP transporter, falling back to Secondary SMTP on failure.
+ * @param {Object} mailOptions - Nodemailer email options object (to, subject, html, attachments)
+ * @returns {Promise<{success: boolean, provider: string, info: Object}>}
+ */
 async function sendMailWithFallback(mailOptions) {
-  // Attempt 1: Primary SMTP (spatil28b@gmail.com)
+  // Attempt 1: Primary SMTP Transporter
   try {
     const optionsWithFrom = {
       ...mailOptions,
       from: mailOptions.from || `"Telegram Backup Cloud" <${primarySender}>`
     };
-    console.log(`[SMTP Dispatch] Attempting Primary SMTP (${primarySender})...`);
+    console.log(`[SMTP Engine] Attempting Primary SMTP (${primarySender})...`);
     const info = await primaryTransporter.sendMail(optionsWithFrom);
-    console.log(`[SMTP Dispatch SUCCESS] Primary SMTP (${primarySender}) sent email! Message ID: ${info.messageId}`);
+    console.log(`[SMTP Engine SUCCESS] Primary SMTP (${primarySender}) sent email! Message ID: ${info.messageId}`);
     return { success: true, provider: primarySender, info };
   } catch (primaryErr) {
-    console.warn(`[SMTP Dispatch WARNING] Primary SMTP (${primarySender}) failed: ${primaryErr.message}. Retrying with Secondary SMTP (${secondarySender})...`);
+    console.warn(`[SMTP Engine WARNING] Primary SMTP (${primarySender}) failed: ${primaryErr.message}. Initiating Secondary SMTP Fallback...`);
 
-    // Attempt 2: Secondary SMTP Fallback (testmail.28.11.a@gmail.com)
+    // Attempt 2: Secondary SMTP Transporter Fallback
     try {
       const optionsWithFrom2 = {
         ...mailOptions,
         from: `"Telegram Backup Cloud" <${secondarySender}>`
       };
       const info2 = await secondaryTransporter.sendMail(optionsWithFrom2);
-      console.log(`[SMTP Dispatch SUCCESS] Secondary Fallback SMTP (${secondarySender}) sent email! Message ID: ${info2.messageId}`);
+      console.log(`[SMTP Engine SUCCESS] Secondary Fallback SMTP (${secondarySender}) sent email! Message ID: ${info2.messageId}`);
       return { success: true, provider: secondarySender, info: info2 };
     } catch (secondaryErr) {
-      console.error(`[SMTP Dispatch ERROR] Both Primary and Secondary SMTP failed! Primary: ${primaryErr.message} | Secondary: ${secondaryErr.message}`);
+      console.error(`[SMTP Engine ERROR] Both Primary and Secondary SMTP failed! Primary: ${primaryErr.message} | Secondary: ${secondaryErr.message}`);
       throw new Error(`Primary SMTP (${primarySender}) & Secondary SMTP (${secondarySender}) failed. Primary: ${primaryErr.message}`);
     }
   }
 }
 
+/**
+ * Helper function: Generates a cryptographically random 6-digit verification code.
+ */
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// 3. Send OTP API with Multi-SMTP Auto-Fallback
+/**
+ * -------------------------------------------------------------------------------------
+ * 3. API ROUTE: SEND OTP VERIFICATION CODE
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/auth/send-otp (Also aliases: /auth/send-otp, /send-otp)
+ * Accepts: { email: string, type: 'register' | '2fa' }
+ * Generates 6-digit code with 5-minute expiration and dispatches via Multi-SMTP.
+ */
 app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res, next) => {
   try {
     const { email, type = 'register' } = req.body || {};
     if (!email || !email.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+      return res.status(400).json({ success: false, message: 'Valid email address is required.' });
     }
 
     const code = generateOTP();
     const lowerEmail = email.toLowerCase();
-    const expiresAt = Date.now() + 5 * 60 * 1000;
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 Minutes TTL
 
+    // Save OTP to Postgres DB or Memory Store
     if (pool) {
       try {
         await pool.query(
@@ -159,6 +213,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res,
       memoryOtps.set(lowerEmail, { code, expiresAt, type });
     }
 
+    // Construct Responsive HTML Email Template
     const mailOptions = {
       to: lowerEmail,
       subject: type === '2fa' ? '2FA Code: Modify Telegram Credentials' : 'Verification Code: Telegram Backup Registration',
@@ -191,7 +246,14 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res,
   }
 });
 
-// 3b. Send AES-256 Zero-Knowledge Security Encryption Key to User's Email
+/**
+ * -------------------------------------------------------------------------------------
+ * 3b. API ROUTE: SEND AES-256 MASTER SECURITY ENCRYPTION KEY
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/auth/send-key (Also aliases: /auth/send-key, /send-key)
+ * Accepts: { email: string, encryptionKey: string }
+ * Sends Master Encryption Key file attachment & access PIN to user's email.
+ */
 const handleSendKey = async (req, res, next) => {
   try {
     const { email, encryptionKey } = req.body || {};
@@ -241,6 +303,7 @@ const handleSendKey = async (req, res, next) => {
   }
 };
 
+// Universal middleware matcher for Vercel rewrite URLs
 app.use((req, res, next) => {
   const fullUrl = (req.originalUrl || req.url || '').toLowerCase();
   if (req.method === 'POST' && fullUrl.includes('send-key')) {
@@ -251,7 +314,13 @@ app.use((req, res, next) => {
 
 app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], handleSendKey);
 
-// 4. Verify OTP & Register Account
+/**
+ * -------------------------------------------------------------------------------------
+ * 4. API ROUTE: VERIFY OTP & REGISTER USER ACCOUNT
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/auth/verify-otp-register (Aliases: /auth/verify-otp-register, /verify-otp-register)
+ * Accepts: { email: string, code: string, password: string }
+ */
 app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify-otp-register'], async (req, res, next) => {
   try {
     const { email, code, password } = req.body || {};
@@ -268,23 +337,18 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
       } catch (dbErr) {
         console.error('[DB Warn] OTP query failed:', dbErr.message);
         const rec = memoryOtps.get(lowerEmail);
-        if (rec) {
-          storedCode = rec.code;
-          expiresAt = rec.expiresAt;
-        }
+        if (rec) { storedCode = rec.code; expiresAt = rec.expiresAt; }
       }
     } else {
       const rec = memoryOtps.get(lowerEmail);
-      if (rec) {
-        storedCode = rec.code;
-        expiresAt = rec.expiresAt;
-      }
+      if (rec) { storedCode = rec.code; expiresAt = rec.expiresAt; }
     }
 
     if (!storedCode || storedCode !== code || Date.now() > expiresAt) {
       return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
     }
 
+    // Persist registered user into Database or Memory Store
     if (pool) {
       try {
         await pool.query(
@@ -309,7 +373,14 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
   }
 });
 
-// 5. Normal Email/Password Login
+/**
+ * -------------------------------------------------------------------------------------
+ * 5. API ROUTE: USER LOGIN AUTHENTICATION
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/auth/login (Aliases: /auth/login, /login)
+ * Accepts: { email: string, password: string }
+ * Returns user profile, botToken, and chatId credentials.
+ */
 app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
@@ -354,7 +425,12 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
   }
 });
 
-// 6. Request Reset Password OTP
+/**
+ * -------------------------------------------------------------------------------------
+ * 6. API ROUTE: REQUEST PASSWORD RESET OTP
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/auth/request-reset (Aliases: /auth/request-reset, /request-reset)
+ */
 app.post(['/api/auth/request-reset', '/auth/request-reset', '/request-reset'], async (req, res, next) => {
   try {
     const { email } = req.body || {};
@@ -379,7 +455,7 @@ app.post(['/api/auth/request-reset', '/auth/request-reset', '/request-reset'], a
 
     const mailOptions = {
       to: lowerEmail,
-      subject: 'Password Reset OTP - Telegram Backup',
+      subject: 'Password Reset OTP - Telegram Backup Cloud',
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px;">
           <h2>Reset Your Password</h2>
@@ -401,7 +477,12 @@ app.post(['/api/auth/request-reset', '/auth/request-reset', '/request-reset'], a
   }
 });
 
-// 7. Verify Reset Password OTP & Update Password
+/**
+ * -------------------------------------------------------------------------------------
+ * 7. API ROUTE: VERIFY RESET OTP & UPDATE PASSWORD
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/auth/reset-password (Aliases: /auth/reset-password, /reset-password, /verify-reset)
+ */
 app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password', '/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], async (req, res, next) => {
   try {
     const { email, code, newPassword } = req.body || {};
@@ -418,17 +499,11 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
       } catch (dbErr) {
         console.error('[DB Warn] Verify reset query failed:', dbErr.message);
         const rec = memoryOtps.get(lowerEmail);
-        if (rec && rec.type === 'reset') {
-          storedCode = rec.code;
-          expiresAt = rec.expiresAt;
-        }
+        if (rec && rec.type === 'reset') { storedCode = rec.code; expiresAt = rec.expiresAt; }
       }
     } else {
       const rec = memoryOtps.get(lowerEmail);
-      if (rec && rec.type === 'reset') {
-        storedCode = rec.code;
-        expiresAt = rec.expiresAt;
-      }
+      if (rec && rec.type === 'reset') { storedCode = rec.code; expiresAt = rec.expiresAt; }
     }
 
     if (!storedCode || storedCode !== code || Date.now() > expiresAt) {
@@ -459,7 +534,13 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
   }
 });
 
-// 8. Save User Telegram Credentials
+/**
+ * -------------------------------------------------------------------------------------
+ * 8. API ROUTE: SAVE USER TELEGRAM CREDENTIALS
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/credentials/save (Aliases: /credentials/save, /api/user/credentials, /user/credentials)
+ * Accepts: { email: string, botToken: string, chatId: string }
+ */
 app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials', '/user/credentials'], async (req, res, next) => {
   try {
     const { email, botToken, chatId } = req.body || {};
@@ -485,13 +566,19 @@ app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials',
       memoryUsers.set(lowerEmail, u);
     }
 
-    return res.json({ success: true, message: 'Telegram credentials saved.' });
+    return res.json({ success: true, message: 'Telegram credentials saved successfully.' });
   } catch (err) {
     next(err);
   }
 });
 
-// 9. Database Backup Sync Records (Save Uploaded File to Cloud DB)
+/**
+ * -------------------------------------------------------------------------------------
+ * 9. API ROUTE: INDEX / SYNC BACKED UP FILE RECORD TO DATABASE
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/files/index (Aliases: /files/index, /api/files/backup, /files/backup)
+ * Accepts: { email: string, fileName: string, telegramFileId: string, size: number, path: string, messageId: number }
+ */
 app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backup'], async (req, res, next) => {
   try {
     const { email, fileName, telegramFileId, size, path, timestamp, messageId } = req.body || {};
@@ -517,13 +604,19 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       memoryFiles.set(lowerEmail, list);
     }
 
-    return res.json({ success: true, message: 'File record synced to database.' });
+    return res.json({ success: true, message: 'File record synced to cloud database.' });
   } catch (err) {
     next(err);
   }
 });
 
-// 9b. Delete File Record
+/**
+ * -------------------------------------------------------------------------------------
+ * 9b. API ROUTE: DELETE FILE RECORD
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/files/delete (Aliases: /files/delete)
+ * Accepts: { email: string, telegramFileId: string, path: string }
+ */
 app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
   try {
     const { email, telegramFileId, path } = req.body || {};
@@ -553,7 +646,12 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
   }
 });
 
-// 10. Fetch User's Cloud Backed Up Files
+/**
+ * -------------------------------------------------------------------------------------
+ * 10. API ROUTE: FETCH USER'S BACKED UP FILES LIST
+ * -------------------------------------------------------------------------------------
+ * Endpoint: GET /api/files/list?email=user@example.com (Aliases: /files/list)
+ */
 app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
   try {
     const email = (req.query.email || '').toLowerCase();
@@ -580,14 +678,24 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
   }
 });
 
-// Root Health Check
+/**
+ * -------------------------------------------------------------------------------------
+ * ROOT HEALTH CHECK ENDPOINT
+ * -------------------------------------------------------------------------------------
+ * Endpoint: GET /
+ */
 app.get('/', (req, res) => {
   res.send('🚀 Telegram Backup Cloud Node.js API Server is Live & Healthy with Multi-SMTP Fallback!');
 });
 
-// Express Global Error Handler (Prevents serverless function invocation crash)
+/**
+ * -------------------------------------------------------------------------------------
+ * GLOBAL EXPRESS ERROR HANDLER
+ * -------------------------------------------------------------------------------------
+ * Catches all unhandled middleware errors, preventing raw 500 html pages on Vercel.
+ */
 app.use((err, req, res, next) => {
-  console.error('[Global Error Handler]:', err.message || err);
+  console.error('[Global Express Error Handler]:', err.message || err);
   if (res.headersSent) {
     return next(err);
   }
@@ -597,6 +705,12 @@ app.use((err, req, res, next) => {
   });
 });
 
+/**
+ * -------------------------------------------------------------------------------------
+ * LOCAL DEVELOPMENT SERVER LISTENER
+ * -------------------------------------------------------------------------------------
+ * Starts HTTP server on port 3000 during local development (require.main === module).
+ */
 const PORT = process.env.PORT || 3000;
 if (process.env.NODE_ENV !== 'production' && require.main === module) {
   app.listen(PORT, () => {
@@ -604,4 +718,5 @@ if (process.env.NODE_ENV !== 'production' && require.main === module) {
   });
 }
 
+// Export Express App for Vercel Serverless Function Handler
 module.exports = app;
