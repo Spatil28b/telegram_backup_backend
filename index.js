@@ -93,8 +93,6 @@ async function initDb() {
         timestamp BIGINT NOT NULL,
         message_id BIGINT DEFAULT 0
       );
-
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS message_id BIGINT DEFAULT 0;
     `);
     console.log('[Neon Postgres] Database schema and tables initialized successfully!');
   } catch (err) {
