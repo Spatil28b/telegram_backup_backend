@@ -402,7 +402,7 @@ app.post(['/api/auth/request-reset', '/auth/request-reset', '/request-reset'], a
 });
 
 // 7. Verify Reset Password OTP & Update Password
-app.post(['/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], async (req, res, next) => {
+app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password', '/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], async (req, res, next) => {
   try {
     const { email, code, newPassword } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
@@ -460,7 +460,7 @@ app.post(['/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], asyn
 });
 
 // 8. Save User Telegram Credentials
-app.post(['/api/user/credentials', '/user/credentials'], async (req, res, next) => {
+app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials', '/user/credentials'], async (req, res, next) => {
   try {
     const { email, botToken, chatId } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
@@ -492,7 +492,7 @@ app.post(['/api/user/credentials', '/user/credentials'], async (req, res, next) 
 });
 
 // 9. Database Backup Sync Records (Save Uploaded File to Cloud DB)
-app.post(['/api/files/backup', '/files/backup'], async (req, res, next) => {
+app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backup'], async (req, res, next) => {
   try {
     const { email, fileName, telegramFileId, size, path, timestamp, messageId } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
@@ -518,6 +518,36 @@ app.post(['/api/files/backup', '/files/backup'], async (req, res, next) => {
     }
 
     return res.json({ success: true, message: 'File record synced to database.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 9b. Delete File Record
+app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
+  try {
+    const { email, telegramFileId, path } = req.body || {};
+    const lowerEmail = (email || '').toLowerCase();
+
+    if (pool) {
+      try {
+        await pool.query(
+          `DELETE FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR path = $3)`,
+          [lowerEmail, telegramFileId || '', path || '']
+        );
+      } catch (dbErr) {
+        console.error('[DB Warn] Files delete DB query failed:', dbErr.message);
+        const list = memoryFiles.get(lowerEmail) || [];
+        const filtered = list.filter(f => f.telegramFileId !== telegramFileId && f.path !== path);
+        memoryFiles.set(lowerEmail, filtered);
+      }
+    } else {
+      const list = memoryFiles.get(lowerEmail) || [];
+      const filtered = list.filter(f => f.telegramFileId !== telegramFileId && f.path !== path);
+      memoryFiles.set(lowerEmail, filtered);
+    }
+
+    return res.json({ success: true, message: 'File record deleted successfully.' });
   } catch (err) {
     next(err);
   }
