@@ -1,0 +1,6 @@
+.env
+.env.*
+.git
+.vercel
+node_modules
+*.log
