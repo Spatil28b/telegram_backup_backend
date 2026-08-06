@@ -14,6 +14,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const bcrypt = require('bcryptjs');
 const { Pool } = require('@neondatabase/serverless');
 
 // Initialize Express Application Instance
@@ -112,17 +113,25 @@ const memoryOtps = new Map();
 const memoryFiles = new Map();
 
 /**
+ * OTP Brute-Force Protection: Tracks failed verification attempts per email.
+ * After 5 failed attempts, the account is locked out for 15 minutes.
+ */
+const otpAttempts = new Map();
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+/**
  * -------------------------------------------------------------------------------------
  * 2. DUAL MULTI-SMTP FALLBACK ENGINE
  * -------------------------------------------------------------------------------------
  * Configures Primary and Secondary Gmail SMTP transporters. If Primary Gmail sender encounters
  * rate limits or authentication issues, system instantly falls back to Secondary SMTP.
  */
-const primarySender = process.env.SMTP_EMAIL || 'spatil28b@gmail.com';
-const primaryPass = process.env.SMTP_APP_PASSWORD || 'rhppqybvdyvcqren';
+const primarySender = process.env.SMTP_EMAIL || '';
+const primaryPass = process.env.SMTP_APP_PASSWORD || '';
 
-const secondarySender = process.env.SMTP_EMAIL_2 || 'testmail.28.11.a@gmail.com';
-const secondaryPass = process.env.SMTP_APP_PASSWORD_2 || 'fpmkqukxszaywgyz';
+const secondarySender = process.env.SMTP_EMAIL_2 || '';
+const secondaryPass = process.env.SMTP_APP_PASSWORD_2 || '';
 
 const primaryTransporter = nodemailer.createTransport({
   service: 'gmail',
@@ -324,6 +333,13 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
     const { email, code, password } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
 
+    // Fix #5: OTP brute-force protection — check attempt count before verification
+    const attempts = otpAttempts.get(lowerEmail);
+    if (attempts && attempts.count >= OTP_MAX_ATTEMPTS && (Date.now() - attempts.lastAttempt) < OTP_LOCKOUT_MS) {
+      const remainingMins = Math.ceil((OTP_LOCKOUT_MS - (Date.now() - attempts.lastAttempt)) / 60000);
+      return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${remainingMins} minutes.` });
+    }
+
     let storedCode, expiresAt;
     if (pool) {
       try {
@@ -343,8 +359,17 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
     }
 
     if (!storedCode || storedCode !== code || Date.now() > expiresAt) {
+      // Track failed attempt
+      const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
+      otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
       return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
     }
+
+    // OTP verified — clear attempt counter
+    otpAttempts.delete(lowerEmail);
+
+    // Fix #1: Hash password with bcrypt before storing (10 salt rounds)
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     // Persist registered user into Database or Memory Store
     if (pool) {
@@ -352,16 +377,16 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
         await pool.query(
           `INSERT INTO users (email, password_hash) VALUES ($1, $2)
            ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
-          [lowerEmail, password]
+          [lowerEmail, hashedPassword]
         );
         await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
       } catch (dbErr) {
         console.error('[DB Warn] User registration DB query failed, falling back to memory store:', dbErr.message);
-        memoryUsers.set(lowerEmail, { password, botToken: '', chatId: '', isLocked: false });
+        memoryUsers.set(lowerEmail, { password: hashedPassword, botToken: '', chatId: '', isLocked: false });
         memoryOtps.delete(lowerEmail);
       }
     } else {
-      memoryUsers.set(lowerEmail, { password, botToken: '', chatId: '', isLocked: false });
+      memoryUsers.set(lowerEmail, { password: hashedPassword, botToken: '', chatId: '', isLocked: false });
       memoryOtps.delete(lowerEmail);
     }
 
@@ -405,7 +430,33 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
       user = memoryUsers.get(lowerEmail);
     }
 
-    if (!user || user.password !== password) {
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    // Fix #1: Use bcrypt.compare for hashed passwords
+    // Backward compatibility: if stored password is not a bcrypt hash (legacy plain text),
+    // fall back to direct comparison and re-hash on successful login
+    let passwordValid = false;
+    if (user.password && user.password.startsWith('$2')) {
+      // Stored password is a bcrypt hash
+      passwordValid = await bcrypt.compare(password, user.password);
+    } else {
+      // Legacy plain text password — compare directly
+      passwordValid = (user.password === password);
+      // Auto-upgrade: re-hash the password for future logins
+      if (passwordValid) {
+        const upgraded = await bcrypt.hash(password, 10);
+        if (pool) {
+          try { await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [upgraded, lowerEmail]); }
+          catch (e) { console.warn('[DB] Password upgrade failed:', e.message); }
+        }
+        const memUser = memoryUsers.get(lowerEmail);
+        if (memUser) { memUser.password = upgraded; memoryUsers.set(lowerEmail, memUser); }
+      }
+    }
+
+    if (!passwordValid) {
       return res.status(400).json({ success: false, message: 'Invalid email or password.' });
     }
 
@@ -486,6 +537,13 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
     const { email, code, newPassword } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
 
+    // Fix #5: OTP brute-force protection on reset flow
+    const attempts = otpAttempts.get(lowerEmail);
+    if (attempts && attempts.count >= OTP_MAX_ATTEMPTS && (Date.now() - attempts.lastAttempt) < OTP_LOCKOUT_MS) {
+      const remainingMins = Math.ceil((OTP_LOCKOUT_MS - (Date.now() - attempts.lastAttempt)) / 60000);
+      return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${remainingMins} minutes.` });
+    }
+
     let storedCode, expiresAt;
     if (pool) {
       try {
@@ -505,23 +563,31 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
     }
 
     if (!storedCode || storedCode !== code || Date.now() > expiresAt) {
+      const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
+      otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
       return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
     }
 
+    // OTP verified — clear attempt counter
+    otpAttempts.delete(lowerEmail);
+
+    // Fix #1: Hash new password with bcrypt before storing
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
     if (pool) {
       try {
-        await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [newPassword, lowerEmail]);
+        await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashedPassword, lowerEmail]);
         await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
       } catch (dbErr) {
         console.error('[DB Warn] Update password DB query failed:', dbErr.message);
         const u = memoryUsers.get(lowerEmail) || {};
-        u.password = newPassword;
+        u.password = hashedPassword;
         memoryUsers.set(lowerEmail, u);
         memoryOtps.delete(lowerEmail);
       }
     } else {
       const u = memoryUsers.get(lowerEmail) || {};
-      u.password = newPassword;
+      u.password = hashedPassword;
       memoryUsers.set(lowerEmail, u);
       memoryOtps.delete(lowerEmail);
     }
@@ -583,23 +649,58 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
     const lowerEmail = (email || '').toLowerCase();
     const msgId = messageId || 0;
 
+    // Fix #4: Input validation — reject requests with missing critical fields
+    if (!lowerEmail || !lowerEmail.includes('@')) {
+      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    }
+    if (!fileName || !telegramFileId) {
+      return res.status(400).json({ success: false, message: 'fileName and telegramFileId are required.' });
+    }
+    // Reject fake/placeholder file IDs from old client bugs
+    if (telegramFileId.startsWith('tg_backup_') || telegramFileId.startsWith('quick_upload_')) {
+      return res.status(400).json({ success: false, message: 'Invalid telegramFileId — file must be actually uploaded.' });
+    }
+
     if (pool) {
       try {
+        // Fix #4: Use UPSERT to prevent duplicate file records for the same path+email
         await pool.query(
           `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT ON CONSTRAINT backed_files_email_path_unique DO UPDATE SET
+             telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7`,
           [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId]
         );
       } catch (dbErr) {
-        console.error('[DB Warn] Files backup DB save failed:', dbErr.message);
+        // If unique constraint doesn't exist yet, fall back to simple INSERT
+        if (dbErr.message && dbErr.message.includes('constraint')) {
+          try {
+            await pool.query(
+              `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId]
+            );
+          } catch (innerErr) {
+            console.error('[DB Warn] Files backup fallback INSERT failed:', innerErr.message);
+          }
+        } else {
+          console.error('[DB Warn] Files backup DB save failed:', dbErr.message);
+        }
         const list = memoryFiles.get(lowerEmail) || [];
-        list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
-        memoryFiles.set(lowerEmail, list);
+        // Prevent in-memory duplicates
+        const exists = list.find(f => f.path === path && f.email === lowerEmail);
+        if (!exists) {
+          list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
+          memoryFiles.set(lowerEmail, list);
+        }
       }
     } else {
       const list = memoryFiles.get(lowerEmail) || [];
-      list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
-      memoryFiles.set(lowerEmail, list);
+      const exists = list.find(f => f.path === path && f.email === lowerEmail);
+      if (!exists) {
+        list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
+        memoryFiles.set(lowerEmail, list);
+      }
     }
 
     return res.json({ success: true, message: 'File record synced to cloud database.' });
@@ -620,8 +721,24 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
     const { email, telegramFileId, path } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
 
+    // Fix #7: Input validation — require email and at least one identifier
+    if (!lowerEmail || !lowerEmail.includes('@')) {
+      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    }
+    if (!telegramFileId && !path) {
+      return res.status(400).json({ success: false, message: 'telegramFileId or path is required to identify the file.' });
+    }
+
+    // Fix #7: Verify the file belongs to this email before deleting
     if (pool) {
       try {
+        const check = await pool.query(
+          `SELECT id FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR path = $3) LIMIT 1`,
+          [lowerEmail, telegramFileId || '', path || '']
+        );
+        if (check.rows.length === 0) {
+          return res.status(404).json({ success: false, message: 'File not found for this account.' });
+        }
         await pool.query(
           `DELETE FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR path = $3)`,
           [lowerEmail, telegramFileId || '', path || '']
@@ -693,13 +810,16 @@ app.get('/', (req, res) => {
  * Catches all unhandled middleware errors, preventing raw 500 html pages on Vercel.
  */
 app.use((err, req, res, next) => {
+  // Log full error details server-side for debugging
   console.error('[Global Express Error Handler]:', err.message || err);
+  if (err.stack) console.error(err.stack);
   if (res.headersSent) {
     return next(err);
   }
+  // Fix #6: Never expose internal error details to clients in production
   return res.status(500).json({
     success: false,
-    message: err.message || 'Internal Server Error'
+    message: 'An internal server error occurred. Please try again later.'
   });
 });
 
