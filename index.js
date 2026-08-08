@@ -94,8 +94,25 @@ async function initDb() {
         timestamp BIGINT NOT NULL,
         message_id BIGINT DEFAULT 0
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
     `);
     console.log('[Neon Postgres] Database schema and tables initialized successfully!');
+
+    // Migration: Automatically hash any legacy plain-text passwords in PostgreSQL database using bcrypt (10 rounds)
+    try {
+      const plainUsers = await pool.query(`SELECT email, password_hash FROM users WHERE password_hash NOT LIKE '$2%'`);
+      if (plainUsers.rows.length > 0) {
+        console.log(`[Neon Postgres Migration] Encrypting ${plainUsers.rows.length} legacy plain-text password(s) with bcrypt...`);
+        for (const row of plainUsers.rows) {
+          const hashed = await bcrypt.hash(row.password_hash, 10);
+          await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashed, row.email]);
+        }
+        console.log(`[Neon Postgres Migration SUCCESS] All passwords in database are now 100% encrypted with bcrypt!`);
+      }
+    } catch (migErr) {
+      console.warn('[Neon Postgres Migration Warning]', migErr.message);
+    }
   } catch (err) {
     console.error('[Neon Postgres Error] Failed to initialize database tables:', err.message);
   }
@@ -186,6 +203,59 @@ function generateOTP() {
 }
 
 /**
+ * Unified OTP Resolver: Evaluates both PostgreSQL and memory store,
+ * returning the newest, active OTP record for the user.
+ */
+async function getLatestOtp(email) {
+  const lowerEmail = (email || '').trim().toLowerCase();
+  let dbOtp = null;
+  let memOtp = null;
+
+  if (pool) {
+    try {
+      const result = await pool.query(
+        `SELECT code, expires_at, type FROM otps WHERE LOWER(email) = $1 ORDER BY expires_at DESC LIMIT 1`,
+        [lowerEmail]
+      );
+      if (result.rows.length > 0) {
+        dbOtp = {
+          code: String(result.rows[0].code || '').trim(),
+          expiresAt: parseInt(result.rows[0].expires_at, 10),
+          type: result.rows[0].type
+        };
+      }
+    } catch (err) {
+      console.error('[DB Warn] getLatestOtp DB query error:', err.message);
+    }
+  }
+
+  const rec = memoryOtps.get(lowerEmail);
+  if (rec) {
+    memOtp = {
+      code: String(rec.code || '').trim(),
+      expiresAt: rec.expiresAt,
+      type: rec.type
+    };
+  }
+
+  if (dbOtp && memOtp) {
+    return dbOtp.expiresAt >= memOtp.expiresAt ? dbOtp : memOtp;
+  }
+  return dbOtp || memOtp || null;
+}
+
+/** Purges OTP from both PostgreSQL database and in-memory store */
+async function deleteOtp(email) {
+  const lowerEmail = (email || '').trim().toLowerCase();
+  memoryOtps.delete(lowerEmail);
+  if (pool) {
+    try {
+      await pool.query(`DELETE FROM otps WHERE LOWER(email) = $1`, [lowerEmail]);
+    } catch (_) {}
+  }
+}
+
+/**
  * -------------------------------------------------------------------------------------
  * 3. API ROUTE: SEND OTP VERIFICATION CODE
  * -------------------------------------------------------------------------------------
@@ -193,7 +263,7 @@ function generateOTP() {
  * Accepts: { email: string, type: 'register' | '2fa' }
  * Generates 6-digit code with 5-minute expiration and dispatches via Multi-SMTP.
  */
-app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res, next) => {
+app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/request-reset', '/auth/request-reset', '/request-reset'], async (req, res, next) => {
   try {
     const { email, type = 'register' } = req.body || {};
     if (!email || !email.includes('@')) {
@@ -201,10 +271,13 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res,
     }
 
     const code = generateOTP();
-    const lowerEmail = email.toLowerCase();
+    const lowerEmail = email.trim().toLowerCase();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 Minutes TTL
 
-    // Save OTP to Postgres DB or Memory Store
+    // Save to Memory Store ALWAYS for guaranteed instant fallback
+    memoryOtps.set(lowerEmail, { code, expiresAt, type });
+
+    // Also persist to PostgreSQL DB if available
     if (pool) {
       try {
         await pool.query(
@@ -213,11 +286,8 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res,
           [lowerEmail, code, expiresAt, type]
         );
       } catch (dbErr) {
-        console.error('[DB Warn] OTP DB save failed, falling back to memory store:', dbErr.message);
-        memoryOtps.set(lowerEmail, { code, expiresAt, type });
+        console.error('[DB Warn] OTP DB save failed, relying on memory store:', dbErr.message);
       }
-    } else {
-      memoryOtps.set(lowerEmail, { code, expiresAt, type });
     }
 
     // Construct Responsive HTML Email Template
@@ -238,7 +308,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp'], async (req, res,
       const sendResult = await sendMailWithFallback(mailOptions);
       return res.json({
         success: true,
-        message: `OTP sent to ${lowerEmail} via ${sendResult.provider}.`,
+        message: `OTP sent successfully! Please check your Inbox or Spam folder.`,
         provider: sendResult.provider
       });
     } catch (error) {
@@ -333,6 +403,10 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
     const { email, code, password } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
 
+    if (!lowerEmail || !lowerEmail.includes('@') || !code || !password) {
+      return res.status(400).json({ success: false, message: 'Email, verification code, and password are required.' });
+    }
+
     // Fix #5: OTP brute-force protection — check attempt count before verification
     const attempts = otpAttempts.get(lowerEmail);
     if (attempts && attempts.count >= OTP_MAX_ATTEMPTS && (Date.now() - attempts.lastAttempt) < OTP_LOCKOUT_MS) {
@@ -340,33 +414,31 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
       return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${remainingMins} minutes.` });
     }
 
-    let storedCode, expiresAt;
-    if (pool) {
-      try {
-        const result = await pool.query(`SELECT code, expires_at FROM otps WHERE email = $1`, [lowerEmail]);
-        if (result.rows.length > 0) {
-          storedCode = result.rows[0].code;
-          expiresAt = parseInt(result.rows[0].expires_at, 10);
-        }
-      } catch (dbErr) {
-        console.error('[DB Warn] OTP query failed:', dbErr.message);
-        const rec = memoryOtps.get(lowerEmail);
-        if (rec) { storedCode = rec.code; expiresAt = rec.expiresAt; }
-      }
-    } else {
-      const rec = memoryOtps.get(lowerEmail);
-      if (rec) { storedCode = rec.code; expiresAt = rec.expiresAt; }
+    const cleanCode = String(code || '').trim();
+    const otpRecord = await getLatestOtp(lowerEmail);
+
+    if (!otpRecord) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification code. Please request a new code.' });
     }
 
-    if (!storedCode || storedCode !== code || Date.now() > expiresAt) {
-      // Track failed attempt
+    const storedCode = otpRecord.code;
+    const expiresAt = otpRecord.expiresAt;
+
+    if (storedCode !== cleanCode || Date.now() > expiresAt) {
       const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
       otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
-      return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
+
+      if (Date.now() > expiresAt) {
+        await deleteOtp(lowerEmail);
+        return res.status(400).json({ success: false, message: 'Verification code expired after 5 minutes. Please request a new code.' });
+      }
+
+      return res.status(400).json({ success: false, message: 'Invalid verification code.' });
     }
 
-    // OTP verified — clear attempt counter
+    // OTP verified — clear attempt counter & purge OTP
     otpAttempts.delete(lowerEmail);
+    await deleteOtp(lowerEmail);
 
     // Fix #1: Hash password with bcrypt before storing (10 salt rounds)
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -408,6 +480,10 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
   try {
     const { email, password } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
+
+    if (!lowerEmail || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required.' });
+    }
 
     let user;
     if (pool) {
@@ -476,110 +552,100 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
 
 /**
  * -------------------------------------------------------------------------------------
- * 6. API ROUTE: REQUEST PASSWORD RESET OTP
- * -------------------------------------------------------------------------------------
- * Endpoint: POST /api/auth/request-reset (Aliases: /auth/request-reset, /request-reset)
- */
-app.post(['/api/auth/request-reset', '/auth/request-reset', '/request-reset'], async (req, res, next) => {
-  try {
-    const { email } = req.body || {};
-    const lowerEmail = (email || '').toLowerCase();
-    const code = generateOTP();
-    const expiresAt = Date.now() + 5 * 60 * 1000;
-
-    if (pool) {
-      try {
-        await pool.query(
-          `INSERT INTO otps (email, code, expires_at, type) VALUES ($1, $2, $3, 'reset')
-           ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3, type = 'reset'`,
-          [lowerEmail, code, expiresAt]
-        );
-      } catch (dbErr) {
-        console.error('[DB Warn] Request reset DB save failed:', dbErr.message);
-        memoryOtps.set(lowerEmail, { code, expiresAt, type: 'reset' });
-      }
-    } else {
-      memoryOtps.set(lowerEmail, { code, expiresAt, type: 'reset' });
-    }
-
-    const mailOptions = {
-      to: lowerEmail,
-      subject: 'Password Reset OTP - Telegram Backup Cloud',
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2>Reset Your Password</h2>
-          <p>Your OTP code to reset your password is:</p>
-          <h1 style="color: #0088cc;">${code}</h1>
-          <p>This code will expire in 5 minutes.</p>
-        </div>
-      `
-    };
-
-    try {
-      const sendResult = await sendMailWithFallback(mailOptions);
-      return res.json({ success: true, message: `Reset OTP sent to ${lowerEmail} via ${sendResult.provider}.` });
-    } catch (error) {
-      return res.json({ success: false, message: `Failed to send reset OTP. Please try again.` });
-    }
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * -------------------------------------------------------------------------------------
- * 7. API ROUTE: VERIFY RESET OTP & UPDATE PASSWORD
+ * 6. API ROUTE: VERIFY RESET OTP & UPDATE PASSWORD (BULLETPROOF)
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/auth/reset-password (Aliases: /auth/reset-password, /reset-password, /verify-reset)
+ *
+ * NOTE: The old standalone /api/auth/request-reset handler has been REMOVED.
+ * Password reset OTP is now sent exclusively via the unified /api/auth/send-otp route
+ * (which already includes /api/auth/request-reset as an alias).
+ *
+ * This handler is COMPLETELY SELF-CONTAINED — every code path returns JSON.
+ * It never calls next(err) to prevent Express from returning HTML error pages.
  */
-app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password', '/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], async (req, res, next) => {
+app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password', '/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], async (req, res) => {
+  // Force JSON content-type on ALL responses from this handler
+  res.setHeader('Content-Type', 'application/json');
   try {
-    const { email, code, newPassword } = req.body || {};
-    const lowerEmail = (email || '').toLowerCase();
+    console.log('[reset-password] Handler invoked. Body keys:', Object.keys(req.body || {}));
 
-    // Fix #5: OTP brute-force protection on reset flow
+    const { email, code, newPassword } = req.body || {};
+    const lowerEmail = (email || '').trim().toLowerCase();
+    const cleanCode = String(code || '').trim();
+
+    console.log('[reset-password] Parsed — email:', lowerEmail, '| codeLen:', cleanCode.length, '| hasNewPassword:', !!newPassword);
+
+    if (!lowerEmail || !lowerEmail.includes('@') || !cleanCode || !newPassword) {
+      console.log('[reset-password] REJECT: missing required fields');
+      return res.status(400).json({ success: false, message: 'Email, verification code, and new password are required.' });
+    }
+
+    // Brute-force protection
     const attempts = otpAttempts.get(lowerEmail);
     if (attempts && attempts.count >= OTP_MAX_ATTEMPTS && (Date.now() - attempts.lastAttempt) < OTP_LOCKOUT_MS) {
       const remainingMins = Math.ceil((OTP_LOCKOUT_MS - (Date.now() - attempts.lastAttempt)) / 60000);
+      console.log('[reset-password] REJECT: brute-force lockout for', lowerEmail);
       return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${remainingMins} minutes.` });
     }
 
-    let storedCode, expiresAt;
-    if (pool) {
-      try {
-        const result = await pool.query(`SELECT code, expires_at FROM otps WHERE email = $1 AND type = 'reset'`, [lowerEmail]);
-        if (result.rows.length > 0) {
-          storedCode = result.rows[0].code;
-          expiresAt = parseInt(result.rows[0].expires_at, 10);
-        }
-      } catch (dbErr) {
-        console.error('[DB Warn] Verify reset query failed:', dbErr.message);
-        const rec = memoryOtps.get(lowerEmail);
-        if (rec && rec.type === 'reset') { storedCode = rec.code; expiresAt = rec.expiresAt; }
-      }
-    } else {
-      const rec = memoryOtps.get(lowerEmail);
-      if (rec && rec.type === 'reset') { storedCode = rec.code; expiresAt = rec.expiresAt; }
+    // Retrieve OTP from DB + memory
+    let otpRecord = null;
+    try {
+      otpRecord = await getLatestOtp(lowerEmail);
+    } catch (otpErr) {
+      console.error('[reset-password] getLatestOtp CRASHED:', otpErr.message);
+    }
+    console.log('[reset-password] OTP record found:', !!otpRecord, otpRecord ? `storedCode=${otpRecord.code} expiresAt=${otpRecord.expiresAt} now=${Date.now()}` : 'null');
+
+    if (!otpRecord) {
+      console.log('[reset-password] REJECT: no OTP record found for', lowerEmail);
+      return res.status(400).json({ success: false, message: 'No verification code found. Please request a new OTP first.' });
     }
 
-    if (!storedCode || storedCode !== code || Date.now() > expiresAt) {
+    const storedCode = otpRecord.code;
+    const expiresAt = otpRecord.expiresAt;
+
+    // Check expiration first
+    if (Date.now() > expiresAt) {
+      console.log('[reset-password] REJECT: OTP expired. expiresAt:', expiresAt, 'now:', Date.now());
+      try { await deleteOtp(lowerEmail); } catch (_) {}
+      return res.status(400).json({ success: false, message: 'Verification code expired. Please request a new OTP.' });
+    }
+
+    // Check code match
+    if (storedCode !== cleanCode) {
+      console.log('[reset-password] REJECT: code mismatch. stored:', storedCode, 'submitted:', cleanCode);
       const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
       otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
-      return res.status(400).json({ success: false, message: 'Invalid or expired OTP code.' });
+      return res.status(400).json({ success: false, message: 'Invalid verification code. Please check your code and try again.' });
     }
 
-    // OTP verified — clear attempt counter
+    // OTP verified — clear attempt counter & purge OTP
+    console.log('[reset-password] OTP VERIFIED for', lowerEmail);
     otpAttempts.delete(lowerEmail);
+    try { await deleteOtp(lowerEmail); } catch (_) {}
 
-    // Fix #1: Hash new password with bcrypt before storing
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    // Hash new password with bcrypt
+    let hashedPassword;
+    try {
+      hashedPassword = await bcrypt.hash(newPassword, 10);
+    } catch (hashErr) {
+      console.error('[reset-password] bcrypt.hash CRASHED:', hashErr.message);
+      return res.status(500).json({ success: false, message: 'Failed to process new password. Please try again.' });
+    }
 
+    // Update password in DB
     if (pool) {
       try {
-        await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashedPassword, lowerEmail]);
-        await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
+        await pool.query(
+          `INSERT INTO users (email, password_hash) VALUES ($1, $2)
+           ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
+          [lowerEmail, hashedPassword]
+        );
+        try { await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]); } catch (_) {}
+        console.log('[reset-password] SUCCESS: password updated in PostgreSQL for', lowerEmail);
       } catch (dbErr) {
-        console.error('[DB Warn] Update password DB query failed:', dbErr.message);
+        console.error('[reset-password] DB update failed, using memory:', dbErr.message);
         const u = memoryUsers.get(lowerEmail) || {};
         u.password = hashedPassword;
         memoryUsers.set(lowerEmail, u);
@@ -590,11 +656,21 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
       u.password = hashedPassword;
       memoryUsers.set(lowerEmail, u);
       memoryOtps.delete(lowerEmail);
+      console.log('[reset-password] SUCCESS: password updated in memory for', lowerEmail);
     }
 
-    return res.json({ success: true, message: 'Password reset successfully!' });
+    return res.status(200).json({ success: true, message: 'Password reset successfully!' });
   } catch (err) {
-    next(err);
+    // CATCH-ALL: Never let an error escape to Express's default HTML error handler
+    console.error('[reset-password] UNCAUGHT ERROR:', err.message || err);
+    if (err.stack) console.error(err.stack);
+    try {
+      return res.status(500).json({ success: false, message: 'An unexpected error occurred. Please try again.' });
+    } catch (_) {
+      // Last resort: if res.json fails, manually write JSON
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: 'Internal server error.' }));
+    }
   }
 });
 
@@ -637,6 +713,42 @@ app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials',
 });
 
 /**
+ * Endpoint: GET /api/credentials/get (Aliases: /credentials/get, /api/user/credentials/get)
+ * Accepts: query ?email=user@domain.com
+ * Returns: { success: true, botToken: string, chatId: string }
+ */
+app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'], async (req, res, next) => {
+  try {
+    const email = ((req.query && req.query.email) || '').toLowerCase();
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email query parameter is required.' });
+    }
+
+    let botToken = '', chatId = '';
+    if (pool) {
+      try {
+        const result = await pool.query(`SELECT bot_token, chat_id FROM users WHERE email = $1`, [email]);
+        if (result.rows.length > 0) {
+          botToken = result.rows[0].bot_token || '';
+          chatId = result.rows[0].chat_id || '';
+        }
+      } catch (dbErr) {
+        console.error('[DB Warn] Get credentials DB query failed:', dbErr.message);
+      }
+    }
+    if (!botToken && memoryUsers.has(email)) {
+      const u = memoryUsers.get(email);
+      botToken = u.botToken || '';
+      chatId = u.chatId || '';
+    }
+
+    return res.json({ success: true, botToken, chatId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * -------------------------------------------------------------------------------------
  * 9. API ROUTE: INDEX / SYNC BACKED UP FILE RECORD TO DATABASE
  * -------------------------------------------------------------------------------------
@@ -663,44 +775,34 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
 
     if (pool) {
       try {
-        // Fix #4: Use UPSERT to prevent duplicate file records for the same path+email
+        // Fix #4: Use UPSERT with ON CONFLICT (email, path) to prevent duplicate file records
         await pool.query(
           `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT ON CONSTRAINT backed_files_email_path_unique DO UPDATE SET
-             telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7`,
+           ON CONFLICT (email, path) DO UPDATE SET
+             file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7`,
           [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId]
         );
       } catch (dbErr) {
-        // If unique constraint doesn't exist yet, fall back to simple INSERT
-        if (dbErr.message && dbErr.message.includes('constraint')) {
-          try {
-            await pool.query(
-              `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId]
-            );
-          } catch (innerErr) {
-            console.error('[DB Warn] Files backup fallback INSERT failed:', innerErr.message);
-          }
-        } else {
-          console.error('[DB Warn] Files backup DB save failed:', dbErr.message);
-        }
+        console.error('[DB Warn] Files backup DB save failed:', dbErr.message);
         const list = memoryFiles.get(lowerEmail) || [];
-        // Prevent in-memory duplicates
-        const exists = list.find(f => f.path === path && f.email === lowerEmail);
-        if (!exists) {
+        const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
+        if (idx >= 0) {
+          list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId };
+        } else {
           list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
-          memoryFiles.set(lowerEmail, list);
         }
+        memoryFiles.set(lowerEmail, list);
       }
     } else {
       const list = memoryFiles.get(lowerEmail) || [];
-      const exists = list.find(f => f.path === path && f.email === lowerEmail);
-      if (!exists) {
+      const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
+      if (idx >= 0) {
+        list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId };
+      } else {
         list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
-        memoryFiles.set(lowerEmail, list);
       }
+      memoryFiles.set(lowerEmail, list);
     }
 
     return res.json({ success: true, message: 'File record synced to cloud database.' });
@@ -721,7 +823,7 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
     const { email, telegramFileId, path } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
 
-    // Fix #7: Input validation — require email and at least one identifier
+    // Fix #7: Input validation — require valid email and at least one identifier
     if (!lowerEmail || !lowerEmail.includes('@')) {
       return res.status(400).json({ success: false, message: 'Valid email is required.' });
     }
@@ -733,14 +835,14 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
     if (pool) {
       try {
         const check = await pool.query(
-          `SELECT id FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR path = $3) LIMIT 1`,
+          `SELECT id FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != '')) LIMIT 1`,
           [lowerEmail, telegramFileId || '', path || '']
         );
         if (check.rows.length === 0) {
-          return res.status(404).json({ success: false, message: 'File not found for this account.' });
+          return res.status(404).json({ success: false, message: 'File record not found for this account.' });
         }
         await pool.query(
-          `DELETE FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR path = $3)`,
+          `DELETE FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != ''))`,
           [lowerEmail, telegramFileId || '', path || '']
         );
       } catch (dbErr) {
