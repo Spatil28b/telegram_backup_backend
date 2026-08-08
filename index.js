@@ -49,7 +49,9 @@ process.on('uncaughtException', (err) => {
  * If DATABASE_URL environment variable is missing or unreachable, the server automatically
  * degrades gracefully to in-memory storage without breaking API calls.
  */
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null;
+const pool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 3000, idleTimeoutMillis: 10000 })
+  : null;
 
 if (pool) {
   // Listen for unexpected errors on idle PostgreSQL clients
@@ -57,6 +59,22 @@ if (pool) {
     console.error('[Neon Postgres Pool Error]', err.message);
   });
 }
+
+/**
+ * Executes a PostgreSQL query with a strict timeout (default 3.5 seconds).
+ * If the database hangs or is unreachable, it throws a timeout error so the route handler
+ * can fall back to in-memory storage immediately instead of triggering a 504 Gateway Timeout.
+ */
+async function queryWithTimeout(text, params, timeoutMs = 3500) {
+  if (!pool) throw new Error('Database pool is disabled or null');
+  return Promise.race([
+    pool.query(text, params),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Database query timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
+
 
 /**
  * Automatically creates required database tables (users, otps, backed_files) on server boot.
@@ -213,7 +231,7 @@ async function getLatestOtp(email) {
 
   if (pool) {
     try {
-      const result = await pool.query(
+      const result = await queryWithTimeout(
         `SELECT code, expires_at, type FROM otps WHERE LOWER(email) = $1 ORDER BY expires_at DESC LIMIT 1`,
         [lowerEmail]
       );
@@ -250,8 +268,10 @@ async function deleteOtp(email) {
   memoryOtps.delete(lowerEmail);
   if (pool) {
     try {
-      await pool.query(`DELETE FROM otps WHERE LOWER(email) = $1`, [lowerEmail]);
-    } catch (_) {}
+      await queryWithTimeout(`DELETE FROM otps WHERE LOWER(email) = $1`, [lowerEmail]);
+    } catch (err) {
+      console.error('[DB Warn] deleteOtp DB query error:', err.message);
+    }
   }
 }
 
@@ -637,12 +657,12 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
     // Update password in DB
     if (pool) {
       try {
-        await pool.query(
+        await queryWithTimeout(
           `INSERT INTO users (email, password_hash) VALUES ($1, $2)
            ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
           [lowerEmail, hashedPassword]
         );
-        try { await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]); } catch (_) {}
+        try { await queryWithTimeout(`DELETE FROM otps WHERE email = $1`, [lowerEmail]); } catch (_) {}
         console.log('[reset-password] SUCCESS: password updated in PostgreSQL for', lowerEmail);
       } catch (dbErr) {
         console.error('[reset-password] DB update failed, using memory:', dbErr.message);
