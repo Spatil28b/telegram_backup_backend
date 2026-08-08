@@ -162,20 +162,26 @@ const OTP_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
  * Configures Primary and Secondary Gmail SMTP transporters. If Primary Gmail sender encounters
  * rate limits or authentication issues, system instantly falls back to Secondary SMTP.
  */
-const primarySender = process.env.SMTP_EMAIL || '';
-const primaryPass = process.env.SMTP_APP_PASSWORD || '';
+const primarySender = (process.env.SMTP_EMAIL || '').trim();
+const primaryPass = (process.env.SMTP_APP_PASSWORD || '').trim();
 
-const secondarySender = process.env.SMTP_EMAIL_2 || '';
-const secondaryPass = process.env.SMTP_APP_PASSWORD_2 || '';
+const secondarySender = (process.env.SMTP_EMAIL_2 || '').trim();
+const secondaryPass = (process.env.SMTP_APP_PASSWORD_2 || '').trim();
 
 const primaryTransporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: { user: primarySender, pass: primaryPass }
+  auth: { user: primarySender, pass: primaryPass },
+  connectionTimeout: 5000,
+  greetingTimeout: 5000,
+  socketTimeout: 8000
 });
 
 const secondaryTransporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: { user: secondarySender, pass: secondaryPass }
+  auth: { user: secondarySender, pass: secondaryPass },
+  connectionTimeout: 5000,
+  greetingTimeout: 5000,
+  socketTimeout: 8000
 });
 
 /**
@@ -184,20 +190,29 @@ const secondaryTransporter = nodemailer.createTransport({
  * @returns {Promise<{success: boolean, provider: string, info: Object}>}
  */
 async function sendMailWithFallback(mailOptions) {
-  // Attempt 1: Primary SMTP Transporter
-  try {
-    const optionsWithFrom = {
-      ...mailOptions,
-      from: mailOptions.from || `"Telegram Backup Cloud" <${primarySender}>`
-    };
-    console.log(`[SMTP Engine] Attempting Primary SMTP (${primarySender})...`);
-    const info = await primaryTransporter.sendMail(optionsWithFrom);
-    console.log(`[SMTP Engine SUCCESS] Primary SMTP (${primarySender}) sent email! Message ID: ${info.messageId}`);
-    return { success: true, provider: primarySender, info };
-  } catch (primaryErr) {
-    console.warn(`[SMTP Engine WARNING] Primary SMTP (${primarySender}) failed: ${primaryErr.message}. Initiating Secondary SMTP Fallback...`);
+  if (!primarySender && !secondarySender) {
+    console.error('[SMTP Engine ERROR] No SMTP credentials set in process.env (SMTP_EMAIL & SMTP_APP_PASSWORD missing)');
+    throw new Error('SMTP credentials not configured on server. Please set SMTP_EMAIL and SMTP_APP_PASSWORD in Vercel Environment Variables.');
+  }
 
-    // Attempt 2: Secondary SMTP Transporter Fallback
+  // Attempt 1: Primary SMTP Transporter
+  if (primarySender && primaryPass) {
+    try {
+      const optionsWithFrom = {
+        ...mailOptions,
+        from: mailOptions.from || `"Telegram Backup Cloud" <${primarySender}>`
+      };
+      console.log(`[SMTP Engine] Attempting Primary SMTP (${primarySender})...`);
+      const info = await primaryTransporter.sendMail(optionsWithFrom);
+      console.log(`[SMTP Engine SUCCESS] Primary SMTP (${primarySender}) sent email! Message ID: ${info.messageId}`);
+      return { success: true, provider: primarySender, info };
+    } catch (primaryErr) {
+      console.warn(`[SMTP Engine WARNING] Primary SMTP (${primarySender}) failed: ${primaryErr.message}. Initiating Secondary SMTP Fallback...`);
+    }
+  }
+
+  // Attempt 2: Secondary SMTP Transporter Fallback
+  if (secondarySender && secondaryPass) {
     try {
       const optionsWithFrom2 = {
         ...mailOptions,
@@ -207,10 +222,11 @@ async function sendMailWithFallback(mailOptions) {
       console.log(`[SMTP Engine SUCCESS] Secondary Fallback SMTP (${secondarySender}) sent email! Message ID: ${info2.messageId}`);
       return { success: true, provider: secondarySender, info: info2 };
     } catch (secondaryErr) {
-      console.error(`[SMTP Engine ERROR] Both Primary and Secondary SMTP failed! Primary: ${primaryErr.message} | Secondary: ${secondaryErr.message}`);
-      throw new Error(`Primary SMTP (${primarySender}) & Secondary SMTP (${secondarySender}) failed. Primary: ${primaryErr.message}`);
+      console.error(`[SMTP Engine ERROR] Secondary SMTP failed: ${secondaryErr.message}`);
     }
   }
+
+  throw new Error('Failed to send email via Primary and Secondary SMTP providers. Check Vercel SMTP environment variables & App Passwords.');
 }
 
 /**
