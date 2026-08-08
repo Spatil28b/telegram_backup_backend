@@ -701,11 +701,11 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
     console.error('[reset-password] UNCAUGHT ERROR:', err.message || err);
     if (err.stack) console.error(err.stack);
     try {
-      return res.status(500).json({ success: false, message: 'An unexpected error occurred. Please try again.' });
+      return res.status(500).json({ success: false, message: `Server error: ${err.message || 'An unexpected error occurred.'}` });
     } catch (_) {
       // Last resort: if res.json fails, manually write JSON
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, message: 'Internal server error.' }));
+      res.end(JSON.stringify({ success: false, message: `Internal server error: ${err.message}` }));
     }
   }
 });
@@ -954,10 +954,9 @@ app.use((err, req, res, next) => {
   if (res.headersSent) {
     return next(err);
   }
-  // Fix #6: Never expose internal error details to clients in production
   return res.status(500).json({
     success: false,
-    message: 'An internal server error occurred. Please try again later.'
+    message: `Server error: ${err.message || 'An internal server error occurred.'}`
   });
 });
 
