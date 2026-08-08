@@ -114,6 +114,7 @@ async function initDb() {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
+      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_drive_upload BOOLEAN DEFAULT FALSE;
     `);
     console.log('[Neon Postgres] Database schema and tables initialized successfully!');
 
@@ -868,9 +869,10 @@ app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings
  */
 app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backup'], async (req, res, next) => {
   try {
-    const { email, fileName, telegramFileId, size, path, timestamp, messageId } = req.body || {};
+    const { email, fileName, telegramFileId, size, path, timestamp, messageId, isDriveUpload, is_drive_upload } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
     const msgId = messageId || 0;
+    const isDrive = Boolean(isDriveUpload || is_drive_upload || telegramFileId === 'DIR_MARKER');
 
     // Fix #4: Input validation — reject requests with missing critical fields
     if (!lowerEmail || !lowerEmail.includes('@')) {
@@ -879,29 +881,25 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
     if (!fileName || !telegramFileId) {
       return res.status(400).json({ success: false, message: 'fileName and telegramFileId are required.' });
     }
-    // Reject fake/placeholder file IDs from old client bugs
-    if (telegramFileId.startsWith('tg_backup_') || telegramFileId.startsWith('quick_upload_')) {
-      return res.status(400).json({ success: false, message: 'Invalid telegramFileId — file must be actually uploaded.' });
-    }
 
     if (pool) {
       try {
         // Fix #4: Use UPSERT with ON CONFLICT (email, path) to prevent duplicate file records
         await queryWithTimeout(
-          `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (email, path) DO UPDATE SET
-             file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7`,
-          [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId]
+             file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8`,
+          [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId, isDrive]
         );
       } catch (dbErr) {
         console.error('[DB Warn] Files backup DB save failed:', dbErr.message);
         const list = memoryFiles.get(lowerEmail) || [];
         const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
         if (idx >= 0) {
-          list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId };
+          list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive };
         } else {
-          list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
+          list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive });
         }
         memoryFiles.set(lowerEmail, list);
       }
@@ -909,9 +907,9 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       const list = memoryFiles.get(lowerEmail) || [];
       const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
       if (idx >= 0) {
-        list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId };
+        list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive };
       } else {
-        list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId });
+        list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive });
       }
       memoryFiles.set(lowerEmail, list);
     }
@@ -987,7 +985,7 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
     if (pool) {
       try {
         const result = await queryWithTimeout(
-          `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId"
+          `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId", is_drive_upload as "isDriveUpload"
            FROM backed_files WHERE email = $1 ORDER BY timestamp DESC`,
           [email]
         );
