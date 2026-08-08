@@ -349,9 +349,9 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
       });
     } catch (error) {
       console.error('[OTP Dispatch Error]', error.message);
-      return res.json({
+      return res.status(400).json({
         success: false,
-        message: `Failed to send OTP email. Please try again.`
+        message: `Failed to send OTP email: ${error.message}`
       });
     }
   } catch (err) {
