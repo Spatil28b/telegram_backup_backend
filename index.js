@@ -786,6 +786,81 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
 
 /**
  * -------------------------------------------------------------------------------------
+ * 8b. API ROUTES: SAVE & FETCH USER APP SETTINGS JSON
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/user/settings (Aliases: /user/settings, /api/settings/save, /settings/save)
+ * Accepts: { email: string, settings: string }
+ */
+app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settings/save'], async (req, res, next) => {
+  try {
+    const { email, settings } = req.body || {};
+    const lowerEmail = (email || '').toLowerCase().trim();
+    if (!lowerEmail) {
+      return res.status(400).json({ success: false, message: 'Email is required.' });
+    }
+    const settingsStr = typeof settings === 'string' ? settings : JSON.stringify(settings || {});
+
+    if (pool) {
+      try {
+        await queryWithTimeout(
+          `UPDATE users SET settings_json = $1 WHERE email = $2`,
+          [settingsStr, lowerEmail]
+        );
+      } catch (dbErr) {
+        console.error('[DB Warn] Save settings query failed:', dbErr.message);
+        const u = memoryUsers.get(lowerEmail) || {};
+        u.settingsJson = settingsStr;
+        memoryUsers.set(lowerEmail, u);
+      }
+    } else {
+      const u = memoryUsers.get(lowerEmail) || {};
+      u.settingsJson = settingsStr;
+      memoryUsers.set(lowerEmail, u);
+    }
+
+    return res.json({ success: true, message: 'Settings saved successfully.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Endpoint: GET /api/user/settings (Aliases: /user/settings, /api/settings/get, /settings/get)
+ * Accepts: query ?email=user@domain.com
+ * Returns: { success: true, settings: string }
+ */
+app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings/get'], async (req, res, next) => {
+  try {
+    const email = ((req.query && req.query.email) || '').toLowerCase().trim();
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required.' });
+    }
+
+    let settings = null;
+    if (pool) {
+      try {
+        const result = await queryWithTimeout(`SELECT settings_json FROM users WHERE email = $1`, [email]);
+        if (result.rows.length > 0 && result.rows[0].settings_json) {
+          settings = result.rows[0].settings_json;
+        }
+      } catch (dbErr) {
+        console.error('[DB Warn] Get settings query failed:', dbErr.message);
+      }
+    }
+
+    if (!settings && memoryUsers.has(email)) {
+      const u = memoryUsers.get(email);
+      settings = u.settingsJson || null;
+    }
+
+    return res.json({ success: true, settings: settings || '{}' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
  * 9. API ROUTE: INDEX / SYNC BACKED UP FILE RECORD TO DATABASE
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/files/index (Aliases: /files/index, /api/files/backup, /files/backup)
