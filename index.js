@@ -85,7 +85,7 @@ async function initDb() {
     return;
   }
   try {
-    await pool.query(`
+    await queryWithTimeout(`
       CREATE TABLE IF NOT EXISTS users (
         email VARCHAR(255) PRIMARY KEY,
         password_hash TEXT NOT NULL,
@@ -119,12 +119,12 @@ async function initDb() {
 
     // Migration: Automatically hash any legacy plain-text passwords in PostgreSQL database using bcrypt (10 rounds)
     try {
-      const plainUsers = await pool.query(`SELECT email, password_hash FROM users WHERE password_hash NOT LIKE '$2%'`);
+      const plainUsers = await queryWithTimeout(`SELECT email, password_hash FROM users WHERE password_hash NOT LIKE '$2%'`);
       if (plainUsers.rows.length > 0) {
         console.log(`[Neon Postgres Migration] Encrypting ${plainUsers.rows.length} legacy plain-text password(s) with bcrypt...`);
         for (const row of plainUsers.rows) {
           const hashed = await bcrypt.hash(row.password_hash, 10);
-          await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashed, row.email]);
+          await queryWithTimeout(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashed, row.email]);
         }
         console.log(`[Neon Postgres Migration SUCCESS] All passwords in database are now 100% encrypted with bcrypt!`);
       }
@@ -300,7 +300,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
     // Also persist to PostgreSQL DB if available
     if (pool) {
       try {
-        await pool.query(
+        await queryWithTimeout(
           `INSERT INTO otps (email, code, expires_at, type) VALUES ($1, $2, $3, $4)
            ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3, type = $4`,
           [lowerEmail, code, expiresAt, type]
@@ -466,12 +466,12 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
     // Persist registered user into Database or Memory Store
     if (pool) {
       try {
-        await pool.query(
+        await queryWithTimeout(
           `INSERT INTO users (email, password_hash) VALUES ($1, $2)
            ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
           [lowerEmail, hashedPassword]
         );
-        await pool.query(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
+        await queryWithTimeout(`DELETE FROM otps WHERE email = $1`, [lowerEmail]);
       } catch (dbErr) {
         console.error('[DB Warn] User registration DB query failed, falling back to memory store:', dbErr.message);
         memoryUsers.set(lowerEmail, { password: hashedPassword, botToken: '', chatId: '', isLocked: false });
@@ -508,7 +508,7 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
     let user;
     if (pool) {
       try {
-        const result = await pool.query(`SELECT email, password_hash, bot_token, chat_id, is_locked FROM users WHERE email = $1`, [lowerEmail]);
+        const result = await queryWithTimeout(`SELECT email, password_hash, bot_token, chat_id, is_locked FROM users WHERE email = $1`, [lowerEmail]);
         if (result.rows.length > 0) {
           user = {
             email: result.rows[0].email,
@@ -544,7 +544,7 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
       if (passwordValid) {
         const upgraded = await bcrypt.hash(password, 10);
         if (pool) {
-          try { await pool.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [upgraded, lowerEmail]); }
+          try { await queryWithTimeout(`UPDATE users SET password_hash = $1 WHERE email = $2`, [upgraded, lowerEmail]); }
           catch (e) { console.warn('[DB] Password upgrade failed:', e.message); }
         }
         const memUser = memoryUsers.get(lowerEmail);
@@ -708,7 +708,7 @@ app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials',
 
     if (pool) {
       try {
-        await pool.query(
+        await queryWithTimeout(
           `UPDATE users SET bot_token = $1, chat_id = $2 WHERE email = $3`,
           [botToken, chatId, lowerEmail]
         );
@@ -747,7 +747,7 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
     let botToken = '', chatId = '';
     if (pool) {
       try {
-        const result = await pool.query(`SELECT bot_token, chat_id FROM users WHERE email = $1`, [email]);
+        const result = await queryWithTimeout(`SELECT bot_token, chat_id FROM users WHERE email = $1`, [email]);
         if (result.rows.length > 0) {
           botToken = result.rows[0].bot_token || '';
           chatId = result.rows[0].chat_id || '';
@@ -796,7 +796,7 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
     if (pool) {
       try {
         // Fix #4: Use UPSERT with ON CONFLICT (email, path) to prevent duplicate file records
-        await pool.query(
+        await queryWithTimeout(
           `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (email, path) DO UPDATE SET
@@ -854,14 +854,14 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
     // Fix #7: Verify the file belongs to this email before deleting
     if (pool) {
       try {
-        const check = await pool.query(
+        const check = await queryWithTimeout(
           `SELECT id FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != '')) LIMIT 1`,
           [lowerEmail, telegramFileId || '', path || '']
         );
         if (check.rows.length === 0) {
           return res.status(404).json({ success: false, message: 'File record not found for this account.' });
         }
-        await pool.query(
+        await queryWithTimeout(
           `DELETE FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != ''))`,
           [lowerEmail, telegramFileId || '', path || '']
         );
@@ -895,7 +895,7 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
 
     if (pool) {
       try {
-        const result = await pool.query(
+        const result = await queryWithTimeout(
           `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId"
            FROM backed_files WHERE email = $1 ORDER BY timestamp DESC`,
           [email]
