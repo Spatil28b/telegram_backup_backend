@@ -1139,10 +1139,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 23,
-    versionName: "2.1.20",
+    versionCode: 24,
+    versionName: "2.1.21",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 Release v2.1.20 (Build 23): Fixed Telegram Channel message deletion verification & individual delete engine."
+    releaseNotes: "🧹 Release v2.1.21: Intelligent top-down unlisted file scanner loop with dynamic 200-miss stopping threshold & pre-signed high-speed Azure CDN downloads."
   });
 });
 
