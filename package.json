@@ -4,7 +4,8 @@
   "description": "Vercel Serverless Backend for Telegram Backup App with Neon Postgres, Google SMTP OTP & 2FA Security",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "release": "node release.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.9.3",
