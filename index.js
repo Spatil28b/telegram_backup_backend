@@ -1149,11 +1149,21 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || 'REDACTED_GITHUB_PERSONAL_ACCESS_TOKEN_01';
 const GITHUB_REPO_PATH = 'spatil28a/telegram_backup_backend';
 
-/**
- * Endpoint: GET /api/app/download-latest (Aliases: /app/download-latest, /api/app/download-apk)
- * Resolves pre-signed high-speed CDN download URL for the latest GitHub Release APK.
- */
 app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-apk'], async (req, res) => {
+  const releasesDir = path.join(__dirname, 'Releases');
+  const candidates = [
+    path.join(releasesDir, 'TelegramBackup-latest.apk'),
+    path.join(releasesDir, 'TelegramBackup-v2.1.20.apk')
+  ];
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="TelegramBackup.apk"');
+      return res.sendFile(p);
+    }
+  }
+
   try {
     const https = require('https');
     const getOptions = {
