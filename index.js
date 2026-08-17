@@ -1151,8 +1151,8 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
   const releasesDir = path.join(__dirname, 'Releases');
   const candidates = [
     path.join(releasesDir, 'TelegramBackup-latest.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.19.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.18.apk')
+    path.join(releasesDir, 'TelegramBackup-v2.1.20.apk'),
+    path.join(releasesDir, 'TelegramBackup-v2.1.19.apk')
   ];
 
   let targetApk = null;
@@ -1175,7 +1175,8 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
     res.setHeader('Content-Disposition', 'attachment; filename="TelegramBackup.apk"');
     return res.sendFile(targetApk);
   } else {
-    return res.status(404).json({ success: false, message: 'APK file not found on server.' });
+    // Redirect to high-bandwidth GitHub release raw link
+    return res.redirect(302, 'https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-latest.apk');
   }
 });
 
