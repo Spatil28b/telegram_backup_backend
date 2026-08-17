@@ -1137,10 +1137,10 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
 app.get(['/api/app/latest-version', '/app/latest-version'], async (req, res) => {
   return res.json({
     success: true,
-    versionCode: 2,
-    versionName: "2.0.0",
-    downloadUrl: "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-v2.0.0.apk",
-    releaseNotes: "🚀 In-App Online Auto-Updater, System Health Diagnostics, Cloud Restore Wizard & Deep Telegram Purger."
+    versionCode: 3,
+    versionName: "2.1.0",
+    downloadUrl: "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-v2.1.0.apk",
+    releaseNotes: "🚀 App Info & Update Center, 1-Tap Online Auto-Installer, Health Diagnostics & Resilient Telegram Storage Purger."
   });
 });
 
