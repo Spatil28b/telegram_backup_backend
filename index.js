@@ -15,6 +15,8 @@ const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 const { Pool } = require('@neondatabase/serverless');
 
 // Initialize Express Application Instance
@@ -1135,13 +1137,31 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
  * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)
  */
 app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
+  const host = req.headers.host || 'telegram-backup-backend.vercel.app';
+  const protocol = req.headers['x-forwarded-proto'] || 'https';
+  const downloadUrl = `${protocol}://${host}/api/app/download-latest`;
+
   return res.json({
     success: true,
     versionCode: 4,
     versionName: "2.1.1",
-    downloadUrl: "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-v2.1.1.apk",
+    downloadUrl: downloadUrl,
     releaseNotes: "🚀 New Release v2.1.1: Features Dynamic Top Floating Process Bar, Settings Persistence across Updates/Re-logins, and SemVer Auto-Installer!"
   });
+});
+
+/**
+ * Endpoint: GET /api/app/download-latest (Aliases: /app/download-latest, /api/app/download-apk)
+ * Direct streaming APK download route for in-app auto-updater.
+ */
+app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-apk'], (req, res) => {
+  const apkPath = path.join(__dirname, 'Releases', 'TelegramBackup-v2.1.1.apk');
+  if (fs.existsSync(apkPath)) {
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    return res.sendFile(apkPath);
+  } else {
+    return res.status(404).json({ success: false, message: 'APK file not found on server.' });
+  }
 });
 
 /**

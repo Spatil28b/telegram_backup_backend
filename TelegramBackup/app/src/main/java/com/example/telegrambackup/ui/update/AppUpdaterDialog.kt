@@ -150,7 +150,7 @@ fun AppUpdaterDialog(
                             if (!res.isSuccessful || body == null) {
                                 withContext(Dispatchers.Main) {
                                     isDownloading = false
-                                    Toast.makeText(context, "Download failed. Please check internet connection.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Download failed (HTTP ${res.code}). Server error or URL issue.", Toast.LENGTH_LONG).show()
                                 }
                                 return@launch
                             }
