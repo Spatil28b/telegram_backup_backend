@@ -28,6 +28,9 @@ yarn-error.log*
 *.tmp
 *.temp
 
+# Entire TelegramBackup android folder (kept in parent workspace)
+TelegramBackup/
+
 # Android & Gradle Build Artifacts / IDE Configs
 TelegramBackup/.gradle/
 TelegramBackup/build/
