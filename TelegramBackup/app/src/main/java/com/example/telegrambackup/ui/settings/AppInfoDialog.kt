@@ -135,7 +135,8 @@ fun AppInfoDialog(
                         val versionInfo = ServerApi().getLatestAppVersion(prefs.serverUrl)
                         withContext(Dispatchers.Main) {
                             isCheckingUpdate = false
-                            if (versionInfo.success && versionInfo.versionCode > currentAppInfo.second && versionInfo.downloadUrl.isNotEmpty()) {
+                            val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentAppInfo.first)
+                            if (versionInfo.success && isNewerSemVer && versionInfo.downloadUrl.isNotEmpty()) {
                                 updateInfoAvailable = versionInfo
                                 upToDateText = ""
                             } else {

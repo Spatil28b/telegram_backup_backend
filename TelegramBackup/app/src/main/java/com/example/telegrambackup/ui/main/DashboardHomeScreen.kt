@@ -91,12 +91,12 @@ fun DashboardHomeScreen(
         val serverUrl = prefs.serverUrl
         if (serverUrl.isNotEmpty()) {
             val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
-            val currentCode = try {
-                val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) pkgInfo.longVersionCode.toInt() else @Suppress("DEPRECATION") pkgInfo.versionCode
-            } catch (_: Exception) { 1 }
+            val currentVersionName = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.0"
+            } catch (_: Exception) { "2.1.0" }
 
-            if (versionInfo.success && versionInfo.versionCode > currentCode && versionInfo.downloadUrl.isNotEmpty()) {
+            val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
+            if (versionInfo.success && isNewerSemVer && versionInfo.downloadUrl.isNotEmpty()) {
                 updateInfoAvailable = versionInfo
             }
         }
