@@ -1135,7 +1135,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
   res.setHeader('Expires', '0');
   const host = req.headers.host || 'telegram-backup-backend.vercel.app';
   const protocol = req.headers['x-forwarded-proto'] || 'https';
-  const downloadUrl = `https://github.com/spatil28a/telegram_backup_backend/releases/download/v2.1.20/TelegramBackup-v2.1.20.apk`;
+  const downloadUrl = `${protocol}://${host}/api/app/download-latest`;
 
   return res.json({
     success: true,
@@ -1146,12 +1146,75 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
   });
 });
 
+const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || 'REDACTED_GITHUB_PERSONAL_ACCESS_TOKEN_01';
+const GITHUB_REPO_PATH = 'spatil28a/telegram_backup_backend';
+
 /**
  * Endpoint: GET /api/app/download-latest (Aliases: /app/download-latest, /api/app/download-apk)
- * Direct streaming APK download route for in-app auto-updater.
+ * Resolves pre-signed high-speed CDN download URL for the latest GitHub Release APK.
  */
-app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-apk'], (req, res) => {
-  return res.redirect(302, 'https://github.com/spatil28a/telegram_backup_backend/releases/download/v2.1.20/TelegramBackup-v2.1.20.apk');
+app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-apk'], async (req, res) => {
+  try {
+    const https = require('https');
+    const getOptions = {
+      hostname: 'api.github.com',
+      path: `/repos/${GITHUB_REPO_PATH}/releases/latest`,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'TelegramBackup-Server',
+        'Authorization': `Bearer ${GITHUB_RELEASE_TOKEN}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    };
+
+    const ghReq = https.request(getOptions, (ghRes) => {
+      let body = '';
+      ghRes.on('data', c => body += c);
+      ghRes.on('end', () => {
+        try {
+          const json = JSON.parse(body);
+          const assets = json.assets || [];
+          const apkAsset = assets.find(a => a.name && a.name.endsWith('.apk')) || assets[0];
+
+          if (!apkAsset) {
+            return res.status(404).json({ success: false, message: 'No APK asset found in latest GitHub release.' });
+          }
+
+          // Request octet-stream from GitHub to get pre-signed Azure/Cloudflare CDN direct download URL
+          const assetReq = https.request({
+            hostname: 'api.github.com',
+            path: `/repos/${GITHUB_REPO_PATH}/releases/assets/${apkAsset.id}`,
+            method: 'GET',
+            headers: {
+              'User-Agent': 'TelegramBackup-Server',
+              'Authorization': `Bearer ${GITHUB_RELEASE_TOKEN}`,
+              'Accept': 'application/octet-stream'
+            }
+          }, (assetRes) => {
+            if (assetRes.statusCode === 302 && assetRes.headers.location) {
+              return res.redirect(302, assetRes.headers.location);
+            } else {
+              return res.redirect(302, apkAsset.browser_download_url);
+            }
+          });
+          assetReq.on('error', (err) => {
+            console.error('Error fetching asset redirect:', err);
+            return res.redirect(302, apkAsset.browser_download_url);
+          });
+          assetReq.end();
+        } catch (err) {
+          return res.status(500).json({ success: false, message: err.message });
+        }
+      });
+    });
+    ghReq.on('error', (err) => {
+      console.error('Error fetching release:', err);
+      return res.status(500).json({ success: false, message: err.message });
+    });
+    ghReq.end();
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
 });
 
 /**
