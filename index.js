@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 11,
-    versionName: "2.1.8",
+    versionCode: 12,
+    versionName: "2.1.9",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.8: Public Storage Directory Downloads, System Scoped Storage Scoped Bypass, and 100% Guaranteed In-App Package Installation!"
+    releaseNotes: "🚀 Test Update v2.1.9: Verification release for Seamless Public Storage In-App Auto-Installer and Deterministic Certificate Verification!"
   });
 });
 
