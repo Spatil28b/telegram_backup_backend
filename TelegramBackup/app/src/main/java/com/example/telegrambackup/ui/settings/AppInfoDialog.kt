@@ -47,8 +47,8 @@ fun AppInfoDialog(
         try {
             val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
             val code = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) pkg.longVersionCode.toInt() else @Suppress("DEPRECATION") pkg.versionCode
-            Pair(pkg.versionName ?: "2.1.3", if (code > 0) code else 6)
-        } catch (_: Exception) { Pair("2.1.3", 6) }
+            Pair(pkg.versionName ?: "2.1.4", if (code > 0) code else 7)
+        } catch (_: Exception) { Pair("2.1.4", 7) }
     }
 
     if (updateInfoAvailable != null) {

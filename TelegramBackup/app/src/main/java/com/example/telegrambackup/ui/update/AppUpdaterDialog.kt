@@ -34,6 +34,9 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 
+import android.content.pm.PackageManager
+import android.util.Log
+
 data class AppVersionInfo(
     val success: Boolean,
     val versionCode: Int,
@@ -57,9 +60,14 @@ fun AppUpdaterDialog(
 
     fun installApk(apkFile: File) {
         try {
+            if (!apkFile.exists() || apkFile.length() == 0L) {
+                Toast.makeText(context, "Downloaded update APK is missing or empty.", Toast.LENGTH_LONG).show()
+                return
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (!context.packageManager.canRequestPackageInstalls()) {
-                    Toast.makeText(context, "Please enable 'Install Unknown Apps' permission to proceed with update", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Please allow 'Install Unknown Apps' for My Backup to install update", Toast.LENGTH_LONG).show()
                     val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                         data = Uri.parse("package:${context.packageName}")
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -77,11 +85,21 @@ fun AppUpdaterDialog(
 
             val installIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(apkUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
+
+            // Grant read URI permission to all package installer handlers on device
+            val resInfoList = context.packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolveInfo in resInfoList) {
+                val packageName = resolveInfo.activityInfo.packageName
+                context.grantUriPermission(packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
             context.startActivity(installIntent)
+            Toast.makeText(context, "Tap 'Update' or 'Install' on package installer prompt", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            Toast.makeText(context, "Error opening installer: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            Log.e("AppUpdater", "Failed to launch package installer", e)
+            Toast.makeText(context, "Error opening package installer: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -156,7 +174,8 @@ fun AppUpdaterDialog(
                             }
 
                             val totalBytes = body.contentLength()
-                            val updateFile = File(context.cacheDir, "TelegramBackup_${versionInfo.versionName}.apk")
+                            val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+                            val updateFile = File(downloadsDir, "TelegramBackup_${versionInfo.versionName}.apk")
 
                             body.byteStream().use { input ->
                                 FileOutputStream(updateFile).use { output ->

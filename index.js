@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 6,
-    versionName: "2.1.3",
+    versionCode: 7,
+    versionName: "2.1.4",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.3: Sequential SemVer Auto-Update System, Integrated Settings App Info & Check for Updates Center, and Refined Deletion Engine!"
+    releaseNotes: "🚀 New Release v2.1.4: Enhanced In-App Auto-Installer Engine with Explicit FileProvider Grants, External Downloads Directory, and Direct Package Installation!"
   });
 });
 
