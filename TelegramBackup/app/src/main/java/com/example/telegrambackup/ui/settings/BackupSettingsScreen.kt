@@ -1304,7 +1304,13 @@ fun BackupSettingsScreen(
                                         val scannedCount = result.second
                                         withContext(Dispatchers.Main) {
                                             com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
-                                            Toast.makeText(context, "✅ Telegram Deep Clean Complete! ($deletedCount items purged out of $scannedCount scanned in '${chatInfo.title}')", Toast.LENGTH_LONG).show()
+                                            if (deletedCount == -1) {
+                                                Toast.makeText(context, "🚫 Bot CANNOT delete messages! Make bot Admin with 'Delete Messages' permission in channel '${chatInfo.title}'", Toast.LENGTH_LONG).show()
+                                            } else if (deletedCount > 0) {
+                                                Toast.makeText(context, "✅ ACTUALLY deleted $deletedCount messages from Telegram channel '${chatInfo.title}' ($scannedCount IDs scanned)", Toast.LENGTH_LONG).show()
+                                            } else {
+                                                Toast.makeText(context, "Channel '${chatInfo.title}' is already clean — 0 messages found in $scannedCount scanned IDs", Toast.LENGTH_LONG).show()
+                                            }
                                         }
                                     }
                                 }
@@ -1323,7 +1329,7 @@ fun BackupSettingsScreen(
                     Text("App Version & Update Center", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = TelegramBlue))
                     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
                         Column {
-                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.19" } catch (_: Exception) { "2.1.19" } }
+                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.20" } catch (_: Exception) { "2.1.20" } }
                             SettingCategoryRow(Icons.Default.Info, "App Info & Check for Updates", "Installed Version v$currentVersion • Tap to check updates", TelegramBlue) {
                                 triggerHapticFeedback(context, haptic)
                                 showAppInfoModal = true

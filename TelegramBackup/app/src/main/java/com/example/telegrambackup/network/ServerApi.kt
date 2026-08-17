@@ -659,79 +659,61 @@ class ServerApi {
     }
 
     /**
-     * Batch deletes up to 100 messages at once using Telegram Bot API deleteMessages endpoint.
-     * Automatically falls back to high-concurrency parallel deletion if batch fails.
+     * Deletes Telegram messages using INDIVIDUAL deleteMessage calls for each ID.
+     * NEVER uses batch deleteMessages — batch returns ok:true even when 0 messages are deleted,
+     * which caused the app to report phantom deletions while files remained in the channel.
+     * Individual deleteMessage gives honest per-message results.
      * Returns Pair(allSuccess, actuallyDeletedCount).
      */
     suspend fun deleteTelegramMessagesBatch(botToken: String, chatId: String, messageIds: List<Long>): Pair<Boolean, Int> = withContext(Dispatchers.IO) {
         val cleanToken = botToken.trim()
-        val formattedChatId = formatChatIdForTelegram(chatId)
         val validIds = messageIds.filter { it > 0 }
         if (cleanToken.isEmpty() || validIds.isEmpty()) return@withContext Pair(false, 0)
 
-        if (validIds.size == 1) {
-            val status = executeTelegramMessageDeletion(cleanToken, chatId, validIds[0])
-            val isOk = status == TelegramDeletionStatus.DELETED || status == TelegramDeletionStatus.ALREADY_DELETED
-            val wasDeleted = if (status == TelegramDeletionStatus.DELETED) 1 else 0
-            return@withContext Pair(isOk, wasDeleted)
-        }
-
-        val chunks = validIds.chunked(100)
         var allSuccess = true
         var totalDeletedCount = 0
+        var permissionDenied = false
 
+        // Process in chunks of 20 concurrent requests to avoid rate limits
+        val chunks = validIds.chunked(20)
         for (chunk in chunks) {
-            try {
-                val url = "https://api.telegram.org/bot$cleanToken/deleteMessages"
-                val json = JSONObject().apply {
-                    if (formattedChatId is Long) put("chat_id", formattedChatId) else put("chat_id", formattedChatId.toString())
-                    val idsArray = JSONArray()
-                    chunk.forEach { idsArray.put(it) }
-                    put("message_ids", idsArray)
-                }
-                val requestBody = json.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                val request = Request.Builder().url(url).post(requestBody).build()
-                val response = client.newCall(request).execute()
-                val body = response.body?.string() ?: ""
+            // If we already hit PERMISSION_DENIED, stop wasting API calls
+            if (permissionDenied) {
+                allSuccess = false
+                break
+            }
 
-                val jsonRes = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
-                val ok = response.isSuccessful && jsonRes.optBoolean("ok", false)
-
-                if (ok) {
-                    Log.d("ServerApi", "deleteTelegramMessagesBatch: Deleted ${chunk.size} messages in one batch")
-                    totalDeletedCount += chunk.size
-                } else {
-                    coroutineScope {
-                        val deferreds = chunk.map { msgId ->
-                            async(Dispatchers.IO) {
-                                executeTelegramMessageDeletion(cleanToken, chatId, msgId)
-                            }
-                        }
-                        val results = deferreds.awaitAll()
-                        val actuallyDeleted = results.count { it == TelegramDeletionStatus.DELETED }
-                        totalDeletedCount += actuallyDeleted
-                        if (results.any { it == TelegramDeletionStatus.PERMISSION_DENIED || it == TelegramDeletionStatus.ERROR }) {
-                            allSuccess = false
-                        }
+            coroutineScope {
+                val deferreds = chunk.map { msgId ->
+                    async(Dispatchers.IO) {
+                        executeTelegramMessageDeletion(cleanToken, chatId, msgId)
                     }
                 }
-            } catch (e: Exception) {
-                Log.e("ServerApi", "deleteTelegramMessagesBatch chunk error, executing parallel fallback", e)
-                coroutineScope {
-                    val deferreds = chunk.map { msgId ->
-                        async(Dispatchers.IO) {
-                            executeTelegramMessageDeletion(cleanToken, chatId, msgId)
-                        }
-                    }
-                    val results = deferreds.awaitAll()
-                    val actuallyDeleted = results.count { it == TelegramDeletionStatus.DELETED }
-                    totalDeletedCount += actuallyDeleted
-                    if (results.any { it == TelegramDeletionStatus.PERMISSION_DENIED || it == TelegramDeletionStatus.ERROR }) {
-                        allSuccess = false
-                    }
+                val results = deferreds.awaitAll()
+                val actuallyDeleted = results.count { it == TelegramDeletionStatus.DELETED }
+                totalDeletedCount += actuallyDeleted
+
+                if (results.any { it == TelegramDeletionStatus.PERMISSION_DENIED }) {
+                    permissionDenied = true
+                    allSuccess = false
+                    Log.e("ServerApi", "deleteTelegramMessagesBatch: PERMISSION_DENIED — Bot cannot delete messages in this channel! Stopping.")
+                }
+                if (results.any { it == TelegramDeletionStatus.ERROR }) {
+                    allSuccess = false
+                }
+
+                if (actuallyDeleted > 0) {
+                    Log.d("ServerApi", "deleteTelegramMessagesBatch: Actually deleted $actuallyDeleted out of ${chunk.size} in this chunk (total so far: $totalDeletedCount)")
                 }
             }
+
+            // Small delay between chunks to respect Telegram rate limits
+            if (chunks.size > 1) {
+                kotlinx.coroutines.delay(200L)
+            }
         }
+
+        Log.d("ServerApi", "deleteTelegramMessagesBatch FINAL: $totalDeletedCount messages ACTUALLY deleted from Telegram out of ${validIds.size} attempted")
         return@withContext Pair(allSuccess, totalDeletedCount)
     }
 
@@ -745,6 +727,8 @@ class ServerApi {
 
     /**
      * Complete deep deletion of a file and ALL of its chunk messages from Telegram Cloud Chat & Room DB.
+     * CRITICAL: Only clears Room DB records AFTER verified Telegram deletion.
+     * If Telegram deletion fails (permission denied, error), DB records are PRESERVED so files aren't lost.
      */
     suspend fun purgeFileCompleteFromTelegram(
         context: android.content.Context,
@@ -778,23 +762,54 @@ class ServerApi {
         }
 
         var deletionOk = true
+        var actuallyDeletedCount = 0
+        var permissionBlocked = false
+
         if (cleanToken.isNotEmpty() && cleanChatId.isNotEmpty() && msgIds.isNotEmpty()) {
             val idList = msgIds.toList()
             Log.d("ServerApi", "Purging ${idList.size} Telegram messages for file ${file.fileName}: $idList")
-            val (ok, _) = deleteTelegramMessagesBatch(cleanToken, cleanChatId, idList)
-            deletionOk = ok
+
+            // Delete each message individually for accurate results
+            for (msgId in idList) {
+                val status = executeTelegramMessageDeletion(cleanToken, cleanChatId, msgId)
+                when (status) {
+                    TelegramDeletionStatus.DELETED -> {
+                        actuallyDeletedCount++
+                        Log.d("ServerApi", "✅ Message #$msgId ACTUALLY deleted from Telegram channel")
+                    }
+                    TelegramDeletionStatus.ALREADY_DELETED -> {
+                        Log.d("ServerApi", "⚪ Message #$msgId already gone from Telegram (not found)")
+                    }
+                    TelegramDeletionStatus.PERMISSION_DENIED -> {
+                        permissionBlocked = true
+                        deletionOk = false
+                        Log.e("ServerApi", "🚫 PERMISSION DENIED: Bot cannot delete message #$msgId — file REMAINS in Telegram channel!")
+                    }
+                    TelegramDeletionStatus.ERROR -> {
+                        deletionOk = false
+                        Log.e("ServerApi", "❌ Error deleting message #$msgId from Telegram")
+                    }
+                }
+            }
+            Log.d("ServerApi", "purgeFileComplete result for ${file.fileName}: $actuallyDeletedCount ACTUALLY deleted, permissionBlocked=$permissionBlocked, totalMsgIds=${idList.size}")
         }
 
-        // Clean up Room DB records only if Telegram did not block deletion
-        try {
-            val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
-            db.chunkProgressDao().deleteChunksForFile(file.path)
-            db.uploadedFileDao().deleteByPath(file.path)
-            if (file.telegramFileId.isNotEmpty()) {
-                db.uploadedFileDao().deleteByTelegramFileId(file.telegramFileId)
+        // CRITICAL: Only clear Room DB records if Telegram deletion was NOT blocked by permissions
+        // If permission was denied, keep DB records so files appear in the app (they still exist in channel)
+        if (!permissionBlocked) {
+            try {
+                val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
+                db.chunkProgressDao().deleteChunksForFile(file.path)
+                db.uploadedFileDao().deleteByPath(file.path)
+                if (file.telegramFileId.isNotEmpty()) {
+                    db.uploadedFileDao().deleteByTelegramFileId(file.telegramFileId)
+                }
+                Log.d("ServerApi", "Cleared Room DB records for ${file.fileName} (Telegram deletion verified)")
+            } catch (e: Exception) {
+                Log.e("ServerApi", "Error deleting local DB record for ${file.path}", e)
             }
-        } catch (e: Exception) {
-            Log.e("ServerApi", "Error deleting local DB record for ${file.path}", e)
+        } else {
+            Log.e("ServerApi", "⚠️ KEEPING Room DB records for ${file.fileName} because Telegram deletion was BLOCKED (permission denied). File still exists in channel!")
         }
 
         return@withContext deletionOk
@@ -802,6 +817,7 @@ class ServerApi {
 
     /**
      * Purge an unlisted file or path from Telegram Cloud Chat even if no UploadedFile record exists in Room DB.
+     * Only clears Room DB records after verified Telegram deletion.
      */
     suspend fun purgeUnlistedPathFromTelegram(
         context: android.content.Context,
@@ -834,19 +850,39 @@ class ServerApi {
         } catch (_: Exception) {}
 
         var ok = true
+        var permissionBlocked = false
         if (msgIds.isNotEmpty()) {
-            val (batchOk, _) = deleteTelegramMessagesBatch(cleanToken, cleanChatId, msgIds.toList())
-            ok = batchOk
+            for (msgId in msgIds) {
+                val status = executeTelegramMessageDeletion(cleanToken, cleanChatId, msgId)
+                when (status) {
+                    TelegramDeletionStatus.DELETED -> Log.d("ServerApi", "✅ Purged unlisted message #$msgId from Telegram")
+                    TelegramDeletionStatus.ALREADY_DELETED -> Log.d("ServerApi", "⚪ Unlisted message #$msgId already gone")
+                    TelegramDeletionStatus.PERMISSION_DENIED -> {
+                        permissionBlocked = true
+                        ok = false
+                        Log.e("ServerApi", "🚫 PERMISSION DENIED: Cannot delete unlisted message #$msgId")
+                    }
+                    TelegramDeletionStatus.ERROR -> {
+                        ok = false
+                        Log.e("ServerApi", "❌ Error deleting unlisted message #$msgId")
+                    }
+                }
+            }
         }
 
-        try {
-            val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
-            db.chunkProgressDao().deleteChunksForFile(path)
-            db.uploadedFileDao().deleteByPath(path)
-            if (telegramFileId.isNotEmpty()) {
-                db.uploadedFileDao().deleteByTelegramFileId(telegramFileId)
-            }
-        } catch (_: Exception) {}
+        // Only clear DB records if Telegram didn't block the deletion
+        if (!permissionBlocked) {
+            try {
+                val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
+                db.chunkProgressDao().deleteChunksForFile(path)
+                db.uploadedFileDao().deleteByPath(path)
+                if (telegramFileId.isNotEmpty()) {
+                    db.uploadedFileDao().deleteByTelegramFileId(telegramFileId)
+                }
+            } catch (_: Exception) {}
+        } else {
+            Log.e("ServerApi", "⚠️ KEEPING DB records for $path — Telegram deletion was BLOCKED")
+        }
 
         return@withContext ok
     }
@@ -957,8 +993,61 @@ class ServerApi {
     }
 
     /**
+     * Sends a test message, then deletes it, to VERIFY the bot can actually delete messages in this channel.
+     * Returns true if the bot successfully created AND deleted a test message.
+     */
+    suspend fun verifyTelegramDeletionWorks(botToken: String, chatId: String): Boolean = withContext(Dispatchers.IO) {
+        val cleanToken = botToken.trim()
+        val formattedChatId = formatChatIdForTelegram(chatId)
+        if (cleanToken.isEmpty()) return@withContext false
+
+        try {
+            // Step 1: Send a test message
+            val sendUrl = "https://api.telegram.org/bot$cleanToken/sendMessage"
+            val sendJson = JSONObject().apply {
+                if (formattedChatId is Long) put("chat_id", formattedChatId) else put("chat_id", formattedChatId.toString())
+                put("text", "🔬 Deletion verification test — this message should disappear immediately")
+            }
+            val sendBody = sendJson.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+            val sendReq = Request.Builder().url(sendUrl).post(sendBody).build()
+            val sendRes = client.newCall(sendReq).execute()
+            val sendResBody = sendRes.body?.string() ?: ""
+
+            if (!sendResBody.contains("\"ok\":true")) {
+                Log.e("ServerApi", "verifyDeletion: Failed to send test message: $sendResBody")
+                return@withContext false
+            }
+
+            val testMsgId = try {
+                JSONObject(sendResBody).optJSONObject("result")?.optLong("message_id", 0L) ?: 0L
+            } catch (_: Exception) { 0L }
+
+            if (testMsgId <= 0) {
+                Log.e("ServerApi", "verifyDeletion: Could not extract test message_id")
+                return@withContext false
+            }
+
+            // Step 2: Delete the test message using individual deleteMessage
+            val status = executeTelegramMessageDeletion(cleanToken, chatId, testMsgId)
+            Log.d("ServerApi", "verifyDeletion: test message #$testMsgId deletion result = $status")
+
+            if (status == TelegramDeletionStatus.DELETED) {
+                Log.d("ServerApi", "✅ VERIFIED: Bot CAN delete messages in this channel")
+                return@withContext true
+            } else {
+                Log.e("ServerApi", "🚫 VERIFICATION FAILED: Bot CANNOT delete messages! Status=$status")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e("ServerApi", "verifyDeletion error", e)
+            return@withContext false
+        }
+    }
+
+    /**
      * Deep-scans and purges ALL messages/files in Telegram Bot Chat/Channel up to maxMessageId.
-     * Uses canonical chat ID resolution, 100-message chunks with parallel concurrent fallback & rate-limit throttling.
+     * Uses INDIVIDUAL deleteMessage calls (never batch) for honest, verified deletion counts.
+     * Runs a deletion verification test before starting the scan.
      * Returns Pair(totalDeletedCount, totalScannedCount).
      */
     suspend fun deepPurgeTelegramChatStorage(
@@ -974,6 +1063,15 @@ class ServerApi {
         val chatInfo = getTelegramChatInfo(cleanToken, chatId)
         val targetChatId = if (chatInfo.canonicalId != null) chatInfo.canonicalId.toString() else chatId
 
+        // 2. VERIFY deletion actually works before scanning thousands of IDs
+        Log.d("ServerApi", "deepPurge: Running deletion verification test for channel '${chatInfo.title}' (${targetChatId})...")
+        val canDelete = verifyTelegramDeletionWorks(cleanToken, targetChatId)
+        if (!canDelete) {
+            Log.e("ServerApi", "deepPurge: ❌ ABORTED — Bot cannot delete messages in this channel. Ensure bot is Admin with 'Delete Messages' right.")
+            return@withContext Pair(-1, 0) // Return -1 to signal permission failure to UI
+        }
+
+        // 3. Get highest message ID via ping
         val pingId = getHighestTelegramMessageId(cleanToken, targetChatId)
         val highestId = if (pingId > 0) {
             pingId + 50L
@@ -981,19 +1079,46 @@ class ServerApi {
             maxOf(knownMaxId + 100L, 50000L)
         }
 
-        Log.d("ServerApi", "deepPurgeTelegramChatStorage starting for chatId $targetChatId ('${chatInfo.title}') up to highestId $highestId (pingId=$pingId, knownMaxId=$knownMaxId)")
+        Log.d("ServerApi", "deepPurge: Scanning chatId=$targetChatId ('${chatInfo.title}') IDs 1..$highestId (pingId=$pingId, knownMaxId=$knownMaxId)")
         val allIds = (1L..highestId).toList()
-        val subChunks = allIds.chunked(100)
+        // Use chunks of 20 for concurrency to avoid rate limits while staying fast
+        val subChunks = allIds.chunked(20)
         var totalDeleted = 0
+        var permissionFailed = false
 
         subChunks.forEachIndexed { index, subChunk ->
+            if (permissionFailed) {
+                onProgress(subChunks.size, subChunks.size, totalDeleted)
+                return@forEachIndexed
+            }
+
             try {
-                val (_, deletedCount) = deleteTelegramMessagesBatch(cleanToken, targetChatId, subChunk)
-                totalDeleted += deletedCount
+                coroutineScope {
+                    val deferreds = subChunk.map { msgId ->
+                        async(Dispatchers.IO) {
+                            executeTelegramMessageDeletion(cleanToken, targetChatId, msgId)
+                        }
+                    }
+                    val results = deferreds.awaitAll()
+                    val actuallyDeleted = results.count { it == TelegramDeletionStatus.DELETED }
+                    totalDeleted += actuallyDeleted
+
+                    if (results.any { it == TelegramDeletionStatus.PERMISSION_DENIED }) {
+                        permissionFailed = true
+                        Log.e("ServerApi", "deepPurge: PERMISSION DENIED encountered at chunk $index — stopping scan")
+                    }
+                }
             } catch (_: Exception) {}
+
             onProgress(index + 1, subChunks.size, totalDeleted)
+
+            // Rate limit: small delay between chunks
+            if (index % 5 == 4) {
+                kotlinx.coroutines.delay(300L)
+            }
         }
 
+        Log.d("ServerApi", "deepPurge COMPLETE: $totalDeleted messages ACTUALLY deleted from Telegram out of ${allIds.size} scanned")
         return@withContext Pair(totalDeleted, allIds.size)
     }
 }

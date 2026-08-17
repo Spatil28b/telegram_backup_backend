@@ -437,14 +437,7 @@ fun ClearDataAccountDialog(
                                         withContext(Dispatchers.Main) { statusMessage = "Purging ${allMsgIds.size} file messages from Telegram Cloud..." }
                                         val chunks = allMsgIds.chunked(20)
                                         for (chunk in chunks) {
-                                            val (batchSuccess, _) = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
-                                            if (!batchSuccess) {
-                                                coroutineScope {
-                                                    chunk.map { msgId: Long ->
-                                                        launch { ServerApi().deleteTelegramMessage(botToken, chatId, msgId) }
-                                                    }.joinAll()
-                                                }
-                                            }
+                                            ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
                                         }
                                     }
 
@@ -509,16 +502,9 @@ fun ClearDataAccountDialog(
 
                                 if (accountPurgeTelegram && botToken.isNotEmpty() && chatId.isNotEmpty() && allMsgIds.isNotEmpty()) {
                                     withContext(Dispatchers.Main) { statusMessage = "Purging ${allMsgIds.size} files from Telegram Cloud..." }
-                                    val chunks = allMsgIds.chunked(100)
+                                    val chunks = allMsgIds.chunked(20)
                                     for (chunk in chunks) {
-                                        val (batchSuccess, _) = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
-                                        if (!batchSuccess) {
-                                            coroutineScope {
-                                                chunk.map { msgId: Long ->
-                                                    launch { ServerApi().deleteTelegramMessage(botToken, chatId, msgId) }
-                                                }.joinAll()
-                                            }
-                                        }
+                                        ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
                                     }
                                 }
 

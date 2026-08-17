@@ -217,7 +217,7 @@ class AppPrefs(private val context: Context) {
         set(value) = prefs.edit().putString("backup_schedule_time", value).apply()
 
     var appVersionStr: String
-        get() = prefs.getString("app_version_str", "2.1.19") ?: "2.1.19"
+        get() = prefs.getString("app_version_str", "2.1.20") ?: "2.1.20"
         set(value) = prefs.edit().putString("app_version_str", value).apply()
 
     // Smart Backup Mode: 0 = Continuous, 1 = Custom Schedule, 2 = Night Express

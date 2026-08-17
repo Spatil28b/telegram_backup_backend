@@ -201,7 +201,13 @@ fun TrashBinScreen() {
                                     )
                                     withContext(Dispatchers.Main) {
                                         com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
-                                        Toast.makeText(context, "✅ Cleaned Channel '${chatInfo.title}'! Purged ${result.first} unlisted messages out of ${result.second} scanned.", Toast.LENGTH_LONG).show()
+                                        if (result.first == -1) {
+                                            Toast.makeText(context, "🚫 Bot CANNOT delete messages! Make bot Admin with 'Delete Messages' permission in channel '${chatInfo.title}'", Toast.LENGTH_LONG).show()
+                                        } else if (result.first > 0) {
+                                            Toast.makeText(context, "✅ ACTUALLY deleted ${result.first} messages from Telegram channel '${chatInfo.title}' (scanned ${result.second} IDs)", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            Toast.makeText(context, "Channel '${chatInfo.title}' is already clean — 0 messages found in ${result.second} scanned IDs", Toast.LENGTH_LONG).show()
+                                        }
                                         refreshTrash()
                                     }
                                 } catch (e: Exception) {
