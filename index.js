@@ -1130,6 +1130,22 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
 
 /**
  * -------------------------------------------------------------------------------------
+ * 11. API ROUTE: FETCH LATEST APP VERSION & APK DOWNLOAD LINK FOR AUTO-UPDATER
+ * -------------------------------------------------------------------------------------
+ * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)
+ */
+app.get(['/api/app/latest-version', '/app/latest-version'], async (req, res) => {
+  return res.json({
+    success: true,
+    versionCode: 2,
+    versionName: "2.0.0",
+    downloadUrl: "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-v2.0.0.apk",
+    releaseNotes: "🚀 In-App Online Auto-Updater, System Health Diagnostics, Cloud Restore Wizard & Deep Telegram Purger."
+  });
+});
+
+/**
+ * -------------------------------------------------------------------------------------
  * ROOT HEALTH CHECK ENDPOINT
  * -------------------------------------------------------------------------------------
  * Endpoint: GET /
