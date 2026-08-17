@@ -1142,7 +1142,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
     versionCode: 23,
     versionName: "2.1.20",
     downloadUrl: downloadUrl,
-    releaseNotes: "🔧 CRITICAL FIX v2.1.20: Telegram batch deleteMessages API was returning ok:true even when 0 messages were deleted — causing phantom deletions. Now uses individual deleteMessage for each ID with verified per-message results. DB records only cleared after confirmed channel deletion. Deletion verification test runs before deep purge."
+    releaseNotes: "🚀 Release v2.1.20 (Build 23): Fixed Telegram Channel message deletion verification & individual delete engine."
   });
 });
 
