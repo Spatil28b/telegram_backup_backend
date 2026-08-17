@@ -1123,11 +1123,12 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
   }
 });
 
+const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || 'REDACTED_GITHUB_PERSONAL_ACCESS_TOKEN_01';
+const GITHUB_REPO_PATH = 'spatil28a/telegram_backup_backend';
+
 /**
- * -------------------------------------------------------------------------------------
- * 11. API ROUTE: FETCH LATEST APP VERSION & APK DOWNLOAD LINK FOR AUTO-UPDATER
- * -------------------------------------------------------------------------------------
  * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)
+ * Dynamically queries GitHub Releases in real-time for instantaneous update availability.
  */
 app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -1137,17 +1138,59 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
   const protocol = req.headers['x-forwarded-proto'] || 'https';
   const downloadUrl = `${protocol}://${host}/api/app/download-latest`;
 
-  return res.json({
-    success: true,
-    versionCode: 24,
-    versionName: "2.1.21",
-    downloadUrl: downloadUrl,
-    releaseNotes: "🧹 Release v2.1.21: Intelligent top-down unlisted file scanner loop with dynamic 200-miss stopping threshold & pre-signed high-speed Azure CDN downloads."
+  const https = require('https');
+  const getOptions = {
+    hostname: 'api.github.com',
+    path: `/repos/${GITHUB_REPO_PATH}/releases/latest`,
+    method: 'GET',
+    headers: {
+      'User-Agent': 'TelegramBackup-Server',
+      'Authorization': `Bearer ${GITHUB_RELEASE_TOKEN}`,
+      'Accept': 'application/vnd.github.v3+json'
+    }
+  };
+
+  https.get(getOptions, (ghRes) => {
+    let body = '';
+    ghRes.on('data', c => body += c);
+    ghRes.on('end', () => {
+      try {
+        const json = JSON.parse(body);
+        if (json && json.tag_name) {
+          const tag = json.tag_name;
+          const name = tag.replace(/^v/, '');
+          let code = 24;
+          const parts = name.split('.').map(p => parseInt(p, 10));
+          if (parts.length >= 3 && !isNaN(parts[2])) {
+            code = parts[2] + 3;
+          }
+          return res.json({
+            success: true,
+            versionCode: code,
+            versionName: name,
+            downloadUrl: downloadUrl,
+            releaseNotes: json.body || `Release ${tag}`
+          });
+        }
+      } catch (_) {}
+      return res.json({
+        success: true,
+        versionCode: 24,
+        versionName: "2.1.21",
+        downloadUrl: downloadUrl,
+        releaseNotes: "🧹 Release v2.1.21: Intelligent top-down unlisted file scanner loop with dynamic 200-miss stopping threshold & pre-signed high-speed Azure CDN downloads."
+      });
+    });
+  }).on('error', () => {
+    return res.json({
+      success: true,
+      versionCode: 24,
+      versionName: "2.1.21",
+      downloadUrl: downloadUrl,
+      releaseNotes: "🧹 Release v2.1.21: Intelligent top-down unlisted file scanner loop with dynamic 200-miss stopping threshold & pre-signed high-speed Azure CDN downloads."
+    });
   });
 });
-
-const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || 'REDACTED_GITHUB_PERSONAL_ACCESS_TOKEN_01';
-const GITHUB_REPO_PATH = 'spatil28a/telegram_backup_backend';
 
 /**
  * Endpoint: GET /api/app/download-latest (Aliases: /app/download-latest, /api/app/download-apk)
