@@ -945,13 +945,6 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
     // Fix #7: Verify the file belongs to this email before deleting
     if (pool) {
       try {
-        const check = await queryWithTimeout(
-          `SELECT id FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != '')) LIMIT 1`,
-          [lowerEmail, telegramFileId || '', path || '']
-        );
-        if (check.rows.length === 0) {
-          return res.status(404).json({ success: false, message: 'File record not found for this account.' });
-        }
         await queryWithTimeout(
           `DELETE FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != ''))`,
           [lowerEmail, telegramFileId || '', path || '']
@@ -1143,10 +1136,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 15,
-    versionName: "2.1.12",
+    versionCode: 17,
+    versionName: "2.1.14",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.12: Direct High-Speed APK Streaming from Vercel Endpoint, Fixed 404 URL Resolution, and Seamless 1-Tap In-App Updates!"
+    releaseNotes: "🚀 Release v2.1.14: High-Performance Telegram Cloud Deep Purge, Resilient Unlisted/Orphaned File Deletion, Idempotent Server Sync & Bulletproof In-App Auto-Updater!"
   });
 });
 
@@ -1158,7 +1151,8 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
   const releasesDir = path.join(__dirname, 'Releases');
   const candidates = [
     path.join(releasesDir, 'TelegramBackup-latest.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.12.apk')
+    path.join(releasesDir, 'TelegramBackup-v2.1.14.apk'),
+    path.join(releasesDir, 'TelegramBackup-v2.1.13.apk')
   ];
 
   let targetApk = null;

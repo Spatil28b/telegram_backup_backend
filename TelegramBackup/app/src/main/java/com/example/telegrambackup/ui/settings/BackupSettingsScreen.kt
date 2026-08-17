@@ -1249,12 +1249,27 @@ fun BackupSettingsScreen(
                                 if (token.isEmpty() || chat.isEmpty()) {
                                     Toast.makeText(context, "Telegram Bot Token & Chat ID required!", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    Toast.makeText(context, "🧹 Deep cleaning Telegram Chat Storage...", Toast.LENGTH_LONG).show()
+                                    com.example.telegrambackup.utils.DynamicProcessTracker.startProcess(
+                                        title = "Deep Clean Telegram Chat",
+                                        subtitle = "Scanning Telegram chat storage...",
+                                        icon = Icons.Default.CleaningServices
+                                    )
                                     scope.launch(Dispatchers.IO) {
-                                        val result = ServerApi().deepPurgeTelegramChatStorage(token, chat)
+                                        val result = ServerApi().deepPurgeTelegramChatStorage(
+                                            token,
+                                            chat,
+                                            onProgress = { currentBatch, totalBatches, count ->
+                                                val fraction = if (totalBatches > 0) currentBatch.toFloat() / totalBatches.toFloat() else 0f
+                                                com.example.telegrambackup.utils.DynamicProcessTracker.updateProgress(
+                                                    progress = fraction,
+                                                    subtitle = "Purging unlisted items: $count purged ($currentBatch/$totalBatches)"
+                                                )
+                                            }
+                                        )
                                         val deletedCount = result.first
                                         val scannedCount = result.second
                                         withContext(Dispatchers.Main) {
+                                            com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
                                             Toast.makeText(context, "✅ Telegram Deep Clean Complete! ($deletedCount items purged out of $scannedCount scanned)", Toast.LENGTH_LONG).show()
                                         }
                                     }
@@ -1274,7 +1289,7 @@ fun BackupSettingsScreen(
                     Text("App Version & Update Center", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = TelegramBlue))
                     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
                         Column {
-                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.12" } catch (_: Exception) { "2.1.12" } }
+                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.14" } catch (_: Exception) { "2.1.14" } }
                             SettingCategoryRow(Icons.Default.Info, "App Info & Check for Updates", "Installed Version v$currentVersion • Tap to check updates", TelegramBlue) {
                                 triggerHapticFeedback(context, haptic)
                                 showAppInfoModal = true

@@ -150,19 +150,39 @@ fun TrashBinScreen() {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(
                         onClick = {
+                            val token = prefs.botToken
+                            val chat = prefs.chatId
+                            if (token.isEmpty() || chat.isEmpty()) {
+                                Toast.makeText(context, "Telegram Bot Token & Chat ID required!", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            com.example.telegrambackup.utils.DynamicProcessTracker.startProcess(
+                                title = "Purge Unlisted Telegram Files",
+                                subtitle = "Scanning Telegram chat storage...",
+                                icon = Icons.Default.CleaningServices
+                            )
                             scope.launch(Dispatchers.IO) {
                                 try {
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "Scanning & purging unlisted Telegram cloud files...", Toast.LENGTH_SHORT).show()
-                                    }
                                     val serverApi = com.example.telegrambackup.network.ServerApi()
-                                    val result = serverApi.deepPurgeTelegramChatStorage(prefs.botToken, prefs.chatId)
+                                    val result = serverApi.deepPurgeTelegramChatStorage(
+                                        token,
+                                        chat,
+                                        onProgress = { currentBatch, totalBatches, count ->
+                                            val fraction = if (totalBatches > 0) currentBatch.toFloat() / totalBatches.toFloat() else 0f
+                                            com.example.telegrambackup.utils.DynamicProcessTracker.updateProgress(
+                                                progress = fraction,
+                                                subtitle = "Purging unlisted items: $count purged ($currentBatch/$totalBatches)"
+                                            )
+                                        }
+                                    )
                                     withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "Deep Cleaned Telegram! Purged ${result.first} unlisted cloud items.", Toast.LENGTH_LONG).show()
+                                        com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
+                                        Toast.makeText(context, "Deep Cleaned Telegram! Purged ${result.first} unlisted items out of ${result.second} scanned.", Toast.LENGTH_LONG).show()
                                         refreshTrash()
                                     }
                                 } catch (e: Exception) {
                                     withContext(Dispatchers.Main) {
+                                        com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
                                         Toast.makeText(context, "Deep Clean failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
                                     }
                                 }

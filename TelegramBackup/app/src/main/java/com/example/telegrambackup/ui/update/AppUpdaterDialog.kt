@@ -1,18 +1,26 @@
 package com.example.telegrambackup.ui.update
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.NewReleases
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,9 +41,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-
-import android.content.pm.PackageManager
-import android.util.Log
+import java.util.Locale
 
 data class AppVersionInfo(
     val success: Boolean,
@@ -60,6 +66,95 @@ fun AppUpdaterDialog(
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var downloadStatusText by remember { mutableStateOf("") }
 
+    fun openApkFileManually(apkFile: File) {
+        try {
+            apkFile.setReadable(true, false)
+            val apkUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                clipData = ClipData.newRawUri("TelegramBackupUpdate", apkUri)
+            }
+            val chooser = Intent.createChooser(viewIntent, "Install update with...")
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error: ${e.localizedMessage}. File at: ${apkFile.absolutePath}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun triggerInstallation(apkFile: File) {
+        try {
+            if (!apkFile.exists() || apkFile.length() == 0L) {
+                Toast.makeText(context, "Downloaded update APK is missing or empty.", Toast.LENGTH_LONG).show()
+                return
+            }
+
+            // Verify package archive integrity
+            val pm = context.packageManager
+            val pkgInfo = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    pm.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(0))
+                } else {
+                    @Suppress("DEPRECATION")
+                    pm.getPackageArchiveInfo(apkFile.absolutePath, 0)
+                }
+            } catch (_: Exception) { null }
+
+            if (pkgInfo == null) {
+                downloadStatusText = "⚠️ Downloaded APK is incomplete or corrupted. Please try updating again."
+                Toast.makeText(context, "Downloaded file is corrupted or not a valid APK.", Toast.LENGTH_LONG).show()
+                return
+            }
+
+            apkFile.setReadable(true, false)
+            val apkUri: Uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                clipData = ClipData.newRawUri("TelegramBackupUpdate", apkUri)
+            }
+
+            val resInfoList = context.packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolveInfo in resInfoList) {
+                val packageName = resolveInfo.activityInfo.packageName
+                context.grantUriPermission(packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            context.startActivity(installIntent)
+            isInstallerLaunched = true
+            downloadStatusText = "🚀 Package Installer launched!\nTap 'Update' on the Android system prompt to finish."
+            Toast.makeText(context, "Tap 'Update' on the Android installer prompt", Toast.LENGTH_LONG).show()
+            Log.d("AppUpdater", "Launched FileProvider install Intent successfully with URI: $apkUri")
+        } catch (e: Exception) {
+            Log.e("AppUpdater", "FileProvider install failed: ${e.message}", e)
+            Toast.makeText(context, "Launching default installer failed. Trying chooser...", Toast.LENGTH_SHORT).show()
+            openApkFileManually(apkFile)
+        }
+    }
+
+    val unknownAppSourcesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (context.packageManager.canRequestPackageInstalls()) {
+                downloadedApkFile?.let { apk ->
+                    triggerInstallation(apk)
+                }
+            } else {
+                Toast.makeText(context, "Permission to install unknown apps was not granted.", Toast.LENGTH_LONG).show()
+                downloadStatusText = "⚠️ Unknown app installation permission required to proceed."
+            }
+        }
+    }
+
     fun installApk(apkFile: File) {
         try {
             if (!apkFile.exists() || apkFile.length() == 0L) {
@@ -72,58 +167,28 @@ fun AppUpdaterDialog(
                     Toast.makeText(context, "Please allow 'Install Unknown Apps' for My Backup to install update", Toast.LENGTH_LONG).show()
                     val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                         data = Uri.parse("package:${context.packageName}")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
-                    context.startActivity(settingsIntent)
+                    unknownAppSourcesLauncher.launch(settingsIntent)
                     return
                 }
             }
 
-            // 1. Try Direct File URI (bypasses FileProvider process lock on package replacement)
-            try {
-                val policy = android.os.StrictMode.VmPolicy.Builder().build()
-                android.os.StrictMode.setVmPolicy(policy)
-
-                val fileUri = Uri.fromFile(apkFile)
-                val directIntent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(fileUri, "application/vnd.android.package-archive")
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-                }
-                context.startActivity(directIntent)
-                isInstallerLaunched = true
-                downloadStatusText = "🚀 Package Installer launched!\nTap 'Update' on the system prompt to complete installation."
-                Toast.makeText(context, "Tap 'Update' on the Android system installer prompt", Toast.LENGTH_LONG).show()
-                return
-            } catch (e: Exception) {
-                Log.w("AppUpdater", "Direct file URI launch failed, falling back to FileProvider", e)
-            }
-
-            // 2. Fallback to FileProvider URI
-            val apkUri: Uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                apkFile
-            )
-
-            val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
-            }
-
-            val resInfoList = context.packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
-            for (resolveInfo in resInfoList) {
-                val packageName = resolveInfo.activityInfo.packageName
-                context.grantUriPermission(packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            }
-
-            context.startActivity(installIntent)
-            isInstallerLaunched = true
-            downloadStatusText = "🚀 Package Installer launched!\nTap 'Update' on the system prompt to complete installation."
-            Toast.makeText(context, "Tap 'Update' on the Android system installer prompt", Toast.LENGTH_LONG).show()
+            triggerInstallation(apkFile)
         } catch (e: Exception) {
             Log.e("AppUpdater", "Failed to launch package installer", e)
             Toast.makeText(context, "Error opening package installer: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun copyToDownloads(apkFile: File) {
+        try {
+            val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!publicDir.exists()) publicDir.mkdirs()
+            val destFile = File(publicDir, "TelegramBackup_v${versionInfo.versionName}.apk")
+            apkFile.copyTo(destFile, overwrite = true)
+            Toast.makeText(context, "Saved to Downloads: ${destFile.name}", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "Could not save to Downloads: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -174,7 +239,7 @@ fun AppUpdaterDialog(
                     }
                 }
 
-                if (isDownloading || isInstallerLaunched) {
+                if (isDownloading || isInstallerLaunched || downloadedApkFile != null) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         downloadStatusText,
@@ -188,24 +253,51 @@ fun AppUpdaterDialog(
                             trackColor = Color.White.copy(alpha = 0.2f)
                         )
                     }
-                    if (isInstallerLaunched) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "💡 Tip: If installer closes without updating, uninstall your previous build once so the new signature key takes effect! All future updates will update with 1 tap.",
-                            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.6f))
-                        )
-                    }
                 }
             }
         },
         confirmButton = {
-            if (isInstallerLaunched) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(
-                        onClick = { restartAppProcess() },
-                        colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
-                    ) {
-                        Text("⚡ Restart App Now", fontWeight = FontWeight.Bold)
+            if (downloadedApkFile != null) {
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { installApk(downloadedApkFile!!) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = TelegramEmerald)
+                        ) {
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Install Now", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { openApkFileManually(downloadedApkFile!!) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Open File", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { copyToDownloads(downloadedApkFile!!) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White.copy(alpha = 0.8f))
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("To Downloads", fontSize = 12.sp)
+                        }
+                        Button(
+                            onClick = { restartAppProcess() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("⚡ Restart", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
                     }
                 }
             } else {
@@ -226,19 +318,21 @@ fun AppUpdaterDialog(
                                     withContext(Dispatchers.Main) {
                                         isDownloading = false
                                         Toast.makeText(context, "Download failed (HTTP ${res.code}). Server error or URL issue.", Toast.LENGTH_LONG).show()
+                                        downloadStatusText = "❌ Download failed (HTTP ${res.code})"
                                     }
                                     return@launch
                                 }
 
                                 val totalBytes = body.contentLength()
-                                val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                if (!publicDir.exists()) try { publicDir.mkdirs() } catch (_: Exception) {}
-                                val downloadsDir = if (publicDir.exists() && publicDir.canWrite()) publicDir else (context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir)
-                                val updateFile = File(downloadsDir, "TelegramBackup_v${versionInfo.versionName}.apk")
+                                val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
+                                val updateFile = File(updateDir, "TelegramBackup_v${versionInfo.versionName}.apk")
+                                if (updateFile.exists()) {
+                                    updateFile.delete()
+                                }
 
                                 body.byteStream().use { input ->
                                     FileOutputStream(updateFile).use { output ->
-                                        val buffer = ByteArray(8192)
+                                        val buffer = ByteArray(16384)
                                         var bytesRead: Int
                                         var downloadedBytes = 0L
 
@@ -248,11 +342,16 @@ fun AppUpdaterDialog(
 
                                             if (totalBytes > 0) {
                                                 val progress = downloadedBytes.toFloat() / totalBytes.toFloat()
-                                                val mbDownloaded = downloadedBytes / (1024 * 1024)
-                                                val mbTotal = totalBytes / (1024 * 1024)
+                                                val mbDownloaded = String.format(Locale.US, "%.1f", downloadedBytes / (1024f * 1024f))
+                                                val mbTotal = String.format(Locale.US, "%.1f", totalBytes / (1024f * 1024f))
                                                 withContext(Dispatchers.Main) {
                                                     downloadProgress = progress
                                                     downloadStatusText = "Downloading update... $mbDownloaded MB / $mbTotal MB (${(progress * 100).toInt()}%)"
+                                                }
+                                            } else {
+                                                val mbDownloaded = String.format(Locale.US, "%.1f", downloadedBytes / (1024f * 1024f))
+                                                withContext(Dispatchers.Main) {
+                                                    downloadStatusText = "Downloading update... $mbDownloaded MB"
                                                 }
                                             }
                                         }
@@ -263,13 +362,14 @@ fun AppUpdaterDialog(
                                 withContext(Dispatchers.Main) {
                                     isDownloading = false
                                     downloadedApkFile = updateFile
-                                    downloadStatusText = "Opening Package Installer..."
+                                    downloadStatusText = "Verifying package & opening installer..."
                                     installApk(updateFile)
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
                                     isDownloading = false
                                     Toast.makeText(context, "Download error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                    downloadStatusText = "❌ Download error: ${e.localizedMessage}"
                                 }
                             }
                         }
@@ -287,7 +387,7 @@ fun AppUpdaterDialog(
         },
         dismissButton = {
             TextButton(onClick = { if (!isDownloading) onDismiss() }) {
-                Text(if (isInstallerLaunched) "Close" else "Later", color = Color.White.copy(alpha = 0.7f))
+                Text(if (isInstallerLaunched || downloadedApkFile != null) "Close" else "Later", color = Color.White.copy(alpha = 0.7f))
             }
         }
     )
