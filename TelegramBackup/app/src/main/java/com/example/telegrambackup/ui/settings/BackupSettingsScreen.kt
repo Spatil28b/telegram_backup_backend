@@ -1305,7 +1305,7 @@ fun BackupSettingsScreen(
                     Text("App Version & Update Center", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = TelegramBlue))
                     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
                         Column {
-                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.17" } catch (_: Exception) { "2.1.17" } }
+                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.18" } catch (_: Exception) { "2.1.18" } }
                             SettingCategoryRow(Icons.Default.Info, "App Info & Check for Updates", "Installed Version v$currentVersion • Tap to check updates", TelegramBlue) {
                                 triggerHapticFeedback(context, haptic)
                                 showAppInfoModal = true

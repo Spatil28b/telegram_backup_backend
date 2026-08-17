@@ -1136,10 +1136,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 20,
-    versionName: "2.1.17",
+    versionCode: 21,
+    versionName: "2.1.18",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 Release v2.1.17: Complete Telegram Channel Deletion Engine, Dual-Protocol Deletion (JSON + Form Fallback), Automatic Channel ID Normalization & All-Chunk Tracking for Drive!"
+    releaseNotes: "🚀 Release v2.1.18: Telegram Channel Live Inspection & Unlisted Message Scanner, Canonical Channel Resolution via getChat, and Verified Bot Admin Permission Purger!"
   });
 });
 
@@ -1151,8 +1151,8 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
   const releasesDir = path.join(__dirname, 'Releases');
   const candidates = [
     path.join(releasesDir, 'TelegramBackup-latest.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.17.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.16.apk')
+    path.join(releasesDir, 'TelegramBackup-v2.1.18.apk'),
+    path.join(releasesDir, 'TelegramBackup-v2.1.17.apk')
   ];
 
   let targetApk = null;

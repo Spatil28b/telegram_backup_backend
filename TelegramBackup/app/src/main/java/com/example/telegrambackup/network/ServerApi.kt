@@ -830,6 +830,79 @@ class ServerApi {
         return@withContext ok
     }
 
+    data class TelegramChatInfo(
+        val success: Boolean,
+        val canonicalId: Long? = null,
+        val title: String = "",
+        val type: String = "",
+        val isBotAdmin: Boolean = false,
+        val canDeleteMessages: Boolean = false,
+        val errorMessage: String = ""
+    )
+
+    /**
+     * Inspects the Telegram Channel / Chat, retrieves official canonical ID, title, and verifies bot Admin Delete rights.
+     */
+    suspend fun getTelegramChatInfo(botToken: String, rawChatId: String): TelegramChatInfo = withContext(Dispatchers.IO) {
+        val cleanToken = botToken.trim()
+        val formattedChatId = formatChatIdForTelegram(rawChatId)
+        if (cleanToken.isEmpty()) return@withContext TelegramChatInfo(false, errorMessage = "Bot token is empty")
+
+        try {
+            // 1. Query getChat
+            val chatUrl = "https://api.telegram.org/bot$cleanToken/getChat?chat_id=$formattedChatId"
+            val chatReq = Request.Builder().url(chatUrl).build()
+            val chatRes = client.newCall(chatReq).execute()
+            val chatBody = chatRes.body?.string() ?: ""
+
+            if (!chatRes.isSuccessful || !chatBody.contains("\"ok\":true")) {
+                val errorDesc = try { JSONObject(chatBody).optString("description", "Chat not found") } catch (_: Exception) { "Chat not found" }
+                return@withContext TelegramChatInfo(false, errorMessage = errorDesc)
+            }
+
+            val chatJson = JSONObject(chatBody).optJSONObject("result")
+            val canonicalId = chatJson?.optLong("id")
+            val title = chatJson?.optString("title", "") ?: ""
+            val type = chatJson?.optString("type", "") ?: ""
+
+            // 2. Query getMe to get bot's ID
+            val meUrl = "https://api.telegram.org/bot$cleanToken/getMe"
+            val meReq = Request.Builder().url(meUrl).build()
+            val meRes = client.newCall(meReq).execute()
+            val meBody = meRes.body?.string() ?: ""
+            val botId = try { JSONObject(meBody).optJSONObject("result")?.optLong("id") } catch (_: Exception) { null }
+
+            var isBotAdmin = false
+            var canDeleteMessages = false
+
+            if (botId != null && canonicalId != null) {
+                // 3. Query getChatMember to check admin delete rights
+                val memberUrl = "https://api.telegram.org/bot$cleanToken/getChatMember?chat_id=$canonicalId&user_id=$botId"
+                val memberReq = Request.Builder().url(memberUrl).build()
+                val memberRes = client.newCall(memberReq).execute()
+                val memberBody = memberRes.body?.string() ?: ""
+
+                if (memberBody.contains("\"ok\":true")) {
+                    val memberObj = JSONObject(memberBody).optJSONObject("result")
+                    val status = memberObj?.optString("status", "") ?: ""
+                    isBotAdmin = status == "administrator" || status == "creator"
+                    canDeleteMessages = isBotAdmin && (memberObj?.optBoolean("can_delete_messages", true) ?: true)
+                }
+            }
+
+            return@withContext TelegramChatInfo(
+                success = true,
+                canonicalId = canonicalId,
+                title = title,
+                type = type,
+                isBotAdmin = isBotAdmin,
+                canDeleteMessages = canDeleteMessages
+            )
+        } catch (e: Exception) {
+            return@withContext TelegramChatInfo(false, errorMessage = e.localizedMessage ?: "Network error")
+        }
+    }
+
     /**
      * Sends a temporary ping message to Telegram chat/channel to discover current highest message_id.
      */
@@ -864,7 +937,7 @@ class ServerApi {
 
     /**
      * Deep-scans and purges ALL messages/files in Telegram Bot Chat/Channel up to maxMessageId.
-     * Uses 100-message chunks with parallel concurrent fallback & rate-limit throttling to guarantee 100% deletion.
+     * Uses canonical chat ID resolution, 100-message chunks with parallel concurrent fallback & rate-limit throttling.
      * Returns Pair(totalDeletedCount, totalScannedCount).
      */
     suspend fun deepPurgeTelegramChatStorage(
@@ -874,20 +947,23 @@ class ServerApi {
         onProgress: (Int, Int, Int) -> Unit = { _, _, _ -> }
     ): Pair<Int, Int> = withContext(Dispatchers.IO) {
         val cleanToken = botToken.trim()
-        val formattedChatId = formatChatIdForTelegram(chatId)
         if (cleanToken.isEmpty()) return@withContext Pair(0, 0)
 
-        val pingId = getHighestTelegramMessageId(cleanToken, chatId)
-        val highestId = maxOf(pingId + 20L, knownMaxId + 20L, 2000L)
+        // 1. Resolve canonical chat ID and verify channel status
+        val chatInfo = getTelegramChatInfo(cleanToken, chatId)
+        val targetChatId = if (chatInfo.canonicalId != null) chatInfo.canonicalId.toString() else chatId
 
-        Log.d("ServerApi", "deepPurgeTelegramChatStorage starting for chatId $formattedChatId up to highestId $highestId (pingId=$pingId, knownMaxId=$knownMaxId)")
+        val pingId = getHighestTelegramMessageId(cleanToken, targetChatId)
+        val highestId = maxOf(pingId + 50L, knownMaxId + 50L, 2000L)
+
+        Log.d("ServerApi", "deepPurgeTelegramChatStorage starting for chatId $targetChatId ('${chatInfo.title}') up to highestId $highestId (pingId=$pingId, knownMaxId=$knownMaxId)")
         val allIds = (1L..highestId).toList()
         val subChunks = allIds.chunked(100)
         var totalDeleted = 0
 
         subChunks.forEachIndexed { index, subChunk ->
             try {
-                val (_, deletedCount) = deleteTelegramMessagesBatch(cleanToken, chatId, subChunk)
+                val (_, deletedCount) = deleteTelegramMessagesBatch(cleanToken, targetChatId, subChunk)
                 totalDeleted += deletedCount
             } catch (_: Exception) {}
             onProgress(index + 1, subChunks.size, totalDeleted)

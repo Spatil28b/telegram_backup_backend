@@ -157,33 +157,51 @@ fun TrashBinScreen() {
                                 return@Button
                             }
                             com.example.telegrambackup.utils.DynamicProcessTracker.startProcess(
-                                title = "Purge Unlisted Telegram Files",
-                                subtitle = "Scanning Telegram chat storage...",
+                                title = "Purging Telegram Channel",
+                                subtitle = "Inspecting Telegram channel & permissions...",
                                 icon = Icons.Default.CleaningServices
                             )
                             scope.launch(Dispatchers.IO) {
                                 try {
+                                    val serverApi = com.example.telegrambackup.network.ServerApi()
+                                    val chatInfo = serverApi.getTelegramChatInfo(token, chat)
+
+                                    if (!chatInfo.success) {
+                                        withContext(Dispatchers.Main) {
+                                            com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
+                                            Toast.makeText(context, "Telegram Error: ${chatInfo.errorMessage}", Toast.LENGTH_LONG).show()
+                                        }
+                                        return@launch
+                                    }
+
+                                    if (chatInfo.isBotAdmin && !chatInfo.canDeleteMessages) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "⚠️ Please give the bot 'Delete Messages' permission in channel '${chatInfo.title}'", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+
                                     val db = AppDatabase.getDatabase(context)
                                     val max1 = db.uploadedFileDao().getMaxMessageId() ?: 0L
                                     val max2 = db.chunkProgressDao().getMaxMessageId() ?: 0L
                                     val knownMax = maxOf(max1, max2)
 
-                                    val serverApi = com.example.telegrambackup.network.ServerApi()
+                                    val targetChatId = if (chatInfo.canonicalId != null) chatInfo.canonicalId.toString() else chat
+
                                     val result = serverApi.deepPurgeTelegramChatStorage(
                                         token,
-                                        chat,
+                                        targetChatId,
                                         knownMaxId = knownMax,
                                         onProgress = { currentBatch, totalBatches, count ->
                                             val fraction = if (totalBatches > 0) currentBatch.toFloat() / totalBatches.toFloat() else 0f
                                             com.example.telegrambackup.utils.DynamicProcessTracker.updateProgress(
                                                 progress = fraction,
-                                                subtitle = "Purging unlisted items: $count purged ($currentBatch/$totalBatches)"
+                                                subtitle = "Scanning '${chatInfo.title}': $count purged ($currentBatch/$totalBatches)"
                                             )
                                         }
                                     )
                                     withContext(Dispatchers.Main) {
                                         com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
-                                        Toast.makeText(context, "Deep Cleaned Telegram! Purged ${result.first} unlisted items out of ${result.second} scanned.", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "✅ Cleaned Channel '${chatInfo.title}'! Purged ${result.first} unlisted messages out of ${result.second} scanned.", Toast.LENGTH_LONG).show()
                                         refreshTrash()
                                     }
                                 } catch (e: Exception) {
