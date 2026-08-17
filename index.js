@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 10,
-    versionName: "2.1.7",
+    versionCode: 11,
+    versionName: "2.1.8",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.7: Deterministic Project Signing Certificate, Direct FileProvider Intent Flags, and Guaranteed Seamless In-App APK Updates!"
+    releaseNotes: "🚀 New Release v2.1.8: Public Storage Directory Downloads, System Scoped Storage Scoped Bypass, and 100% Guaranteed In-App Package Installation!"
   });
 });
 

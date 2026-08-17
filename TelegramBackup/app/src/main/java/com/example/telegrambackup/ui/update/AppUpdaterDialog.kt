@@ -212,8 +212,10 @@ fun AppUpdaterDialog(
                                 }
 
                                 val totalBytes = body.contentLength()
-                                val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
-                                val updateFile = File(downloadsDir, "TelegramBackup_${versionInfo.versionName}.apk")
+                                val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                if (!publicDir.exists()) try { publicDir.mkdirs() } catch (_: Exception) {}
+                                val downloadsDir = if (publicDir.exists() && publicDir.canWrite()) publicDir else (context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir)
+                                val updateFile = File(downloadsDir, "TelegramBackup_v${versionInfo.versionName}.apk")
 
                                 body.byteStream().use { input ->
                                     FileOutputStream(updateFile).use { output ->
