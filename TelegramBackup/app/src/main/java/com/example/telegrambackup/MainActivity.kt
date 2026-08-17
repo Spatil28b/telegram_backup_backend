@@ -154,18 +154,28 @@ fun MainApp(
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
-            val serverUrl = prefs.serverUrl.ifEmpty { "https://telegram-backup-backend.vercel.app" }
-            val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
-            val currentVersionName = try {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.14"
-            } catch (_: Exception) { "2.1.14" }
+            try {
+                val serverUrl = prefs.serverUrl.ifEmpty { "https://telegram-backup-backend.vercel.app" }
+                val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
+                val currentPkg = try {
+                    context.packageManager.getPackageInfo(context.packageName, 0)
+                } catch (_: Exception) { null }
 
-            val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
-            val isNotDismissed = versionInfo.versionName != prefs.dismissedUpdateVersion
-            if (versionInfo.success && isNewerSemVer && isNotDismissed && versionInfo.downloadUrl.isNotEmpty()) {
-                withContext(Dispatchers.Main) {
-                    appUpdateInfo = versionInfo
+                val currentVersionName = currentPkg?.versionName ?: "1.0.0"
+                val currentVersionCode = if (currentPkg != null) {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) currentPkg.longVersionCode.toInt() else @Suppress("DEPRECATION") currentPkg.versionCode
+                } else 1
+
+                val isNewerVersionCode = versionInfo.versionCode > currentVersionCode
+                val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
+
+                if (versionInfo.success && (isNewerVersionCode || isNewerSemVer) && versionInfo.downloadUrl.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        appUpdateInfo = versionInfo
+                    }
                 }
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "App update check error on launch", e)
             }
         }
     }
@@ -783,7 +793,6 @@ fun MainApp(
         com.example.telegrambackup.ui.update.AppUpdaterDialog(
             versionInfo = appUpdateInfo!!,
             onDismiss = {
-                prefs.dismissedUpdateVersion = appUpdateInfo!!.versionName
                 appUpdateInfo = null
             }
         )

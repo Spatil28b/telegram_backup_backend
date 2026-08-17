@@ -496,12 +496,22 @@ fun BackupSettingsScreen(
                                 triggerHapticFeedback(context, haptic)
                                 Toast.makeText(context, "Checking online update server...", Toast.LENGTH_SHORT).show()
                                 scope.launch(Dispatchers.IO) {
-                                    val versionInfo = ServerApi().getLatestAppVersion(prefs.serverUrl)
+                                    val serverUrl = prefs.serverUrl.ifEmpty { "https://telegram-backup-backend.vercel.app" }
+                                    val versionInfo = ServerApi().getLatestAppVersion(serverUrl)
+                                    val currentPkg = try { context.packageManager.getPackageInfo(context.packageName, 0) } catch (_: Exception) { null }
+                                    val currentVersionName = currentPkg?.versionName ?: "1.0.0"
+                                    val currentVersionCode = if (currentPkg != null) {
+                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) currentPkg.longVersionCode.toInt() else @Suppress("DEPRECATION") currentPkg.versionCode
+                                    } else 1
+
+                                    val isNewerVersionCode = versionInfo.versionCode > currentVersionCode
+                                    val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
+
                                     withContext(Dispatchers.Main) {
-                                        if (versionInfo.success && versionInfo.versionCode > 3 && versionInfo.downloadUrl.isNotEmpty()) {
+                                        if (versionInfo.success && (isNewerVersionCode || isNewerSemVer) && versionInfo.downloadUrl.isNotEmpty()) {
                                             manualUpdateInfo = versionInfo
                                         } else {
-                                            Toast.makeText(context, "✅ App is fully up to date! (v2.1.0)", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "✅ App is fully up to date! (v$currentVersionName)", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 }

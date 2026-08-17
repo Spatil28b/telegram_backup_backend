@@ -84,30 +84,7 @@ fun DashboardHomeScreen(
         )
     }
 
-    var updateInfoAvailable by remember { mutableStateOf<com.example.telegrambackup.ui.update.AppVersionInfo?>(null) }
 
-    LaunchedEffect(Unit) {
-        val prefs = com.example.telegrambackup.utils.AppPrefs(context)
-        val serverUrl = prefs.serverUrl
-        if (serverUrl.isNotEmpty()) {
-            val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
-            val currentVersionName = try {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.0"
-            } catch (_: Exception) { "2.1.0" }
-
-            val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
-            if (versionInfo.success && isNewerSemVer && versionInfo.downloadUrl.isNotEmpty()) {
-                updateInfoAvailable = versionInfo
-            }
-        }
-    }
-
-    if (updateInfoAvailable != null) {
-        com.example.telegrambackup.ui.update.AppUpdaterDialog(
-            versionInfo = updateInfoAvailable!!,
-            onDismiss = { updateInfoAvailable = null }
-        )
-    }
 
     LazyColumn(
         modifier = Modifier

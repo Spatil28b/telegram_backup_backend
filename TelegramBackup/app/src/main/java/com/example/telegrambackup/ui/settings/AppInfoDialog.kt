@@ -132,11 +132,13 @@ fun AppInfoDialog(
                     isCheckingUpdate = true
                     upToDateText = "Checking online server for updates..."
                     scope.launch(Dispatchers.IO) {
-                        val versionInfo = ServerApi().getLatestAppVersion(prefs.serverUrl)
+                        val serverUrl = prefs.serverUrl.ifEmpty { "https://telegram-backup-backend.vercel.app" }
+                        val versionInfo = ServerApi().getLatestAppVersion(serverUrl)
                         withContext(Dispatchers.Main) {
                             isCheckingUpdate = false
+                            val isNewerVersionCode = versionInfo.versionCode > currentAppInfo.second
                             val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentAppInfo.first)
-                            if (versionInfo.success && isNewerSemVer && versionInfo.downloadUrl.isNotEmpty()) {
+                            if (versionInfo.success && (isNewerVersionCode || isNewerSemVer) && versionInfo.downloadUrl.isNotEmpty()) {
                                 updateInfoAvailable = versionInfo
                                 upToDateText = ""
                             } else {
