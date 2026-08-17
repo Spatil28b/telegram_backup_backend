@@ -430,24 +430,25 @@ fun ClearDataAccountDialog(
                                 val serverMsgIds = result.second
                                 val allMsgIds = (localMsgIds + serverMsgIds).toSet().toList()
 
-                                if (purgeTelegramMessages && botToken.isNotEmpty() && chatId.isNotEmpty() && allMsgIds.isNotEmpty()) {
-                                    withContext(Dispatchers.Main) { statusMessage = "Purging ${allMsgIds.size} files from Telegram Cloud..." }
-                                    val chunks = allMsgIds.chunked(100)
-                                    for (chunk in chunks) {
-                                        val batchSuccess = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
-                                        if (!batchSuccess) {
-                                            coroutineScope {
-                                                chunk.map { msgId: Long ->
-                                                    launch { ServerApi().deleteTelegramMessage(botToken, chatId, msgId) }
-                                                }.joinAll()
+                                var deepDeletedCount = 0
+                                val shouldRunDeepPurge = purgeTelegramMessages || deepCleanTelegramChat
+                                if (shouldRunDeepPurge && botToken.isNotEmpty() && chatId.isNotEmpty()) {
+                                    if (allMsgIds.isNotEmpty()) {
+                                        withContext(Dispatchers.Main) { statusMessage = "Purging ${allMsgIds.size} file messages from Telegram Cloud..." }
+                                        val chunks = allMsgIds.chunked(20)
+                                        for (chunk in chunks) {
+                                            val batchSuccess = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
+                                            if (!batchSuccess) {
+                                                coroutineScope {
+                                                    chunk.map { msgId: Long ->
+                                                        launch { ServerApi().deleteTelegramMessage(botToken, chatId, msgId) }
+                                                    }.joinAll()
+                                                }
                                             }
                                         }
                                     }
-                                }
 
-                                // Deep Clean scan of entire Telegram Bot chat range
-                                var deepDeletedCount = 0
-                                if (deepCleanTelegramChat && botToken.isNotEmpty() && chatId.isNotEmpty()) {
+                                    // Deep Clean scan of entire Telegram Bot chat range to catch any unindexed or orphaned files
                                     withContext(Dispatchers.Main) { statusMessage = "Deep scanning & purging Telegram Chat storage..." }
                                     val res = ServerApi().deepPurgeTelegramChatStorage(
                                         botToken,

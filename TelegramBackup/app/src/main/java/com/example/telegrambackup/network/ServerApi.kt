@@ -608,6 +608,8 @@ class ServerApi {
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: ""
 
+            Log.d("ServerApi", "deleteTelegramMessage msgId #$messageId HTTP ${response.code}: $body")
+
             // Handle HTTP 429 Rate Limiting
             if (response.code == 429 || body.contains("TOO_MANY_REQUESTS")) {
                 val retryAfterSec = try { JSONObject(body).optJSONObject("parameters")?.optInt("retry_after", 2) ?: 2 } catch (_: Exception) { 2 }
@@ -616,7 +618,9 @@ class ServerApi {
                 return@withContext deleteTelegramMessage(cleanToken, cleanChatId, messageId)
             }
 
-            return@withContext response.isSuccessful && JSONObject(body).optBoolean("ok", false)
+            // Treat "message to delete not found" as success since it means message is gone from Telegram
+            val isOk = response.isSuccessful && (JSONObject(body).optBoolean("ok", false) || body.contains("message to delete not found"))
+            return@withContext isOk
         } catch (e: Exception) {
             Log.e("ServerApi", "deleteTelegramMessage error for msgId #$messageId", e)
             return@withContext false
