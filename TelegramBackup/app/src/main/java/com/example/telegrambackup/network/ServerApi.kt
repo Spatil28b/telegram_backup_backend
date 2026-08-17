@@ -583,10 +583,85 @@ class ServerApi {
         return clean
     }
 
+    enum class TelegramDeletionStatus {
+        DELETED,            // Message was present in channel and successfully deleted by Telegram
+        ALREADY_DELETED,    // Message does not exist or was already deleted (400 not found)
+        PERMISSION_DENIED,  // Bot lacks administrator or delete messages rights
+        ERROR               // Network failure or timeout
+    }
+
+    /**
+     * Executes single message deletion on Telegram Bot API with accurate status classification.
+     */
+    suspend fun executeTelegramMessageDeletion(botToken: String, chatId: String, messageId: Long): TelegramDeletionStatus = withContext(Dispatchers.IO) {
+        val cleanToken = botToken.trim()
+        val formattedChatId = formatChatIdForTelegram(chatId)
+        if (cleanToken.isEmpty() || messageId <= 0) return@withContext TelegramDeletionStatus.ERROR
+
+        try {
+            val url = "https://api.telegram.org/bot$cleanToken/deleteMessage"
+            val json = JSONObject().apply {
+                if (formattedChatId is Long) put("chat_id", formattedChatId) else put("chat_id", formattedChatId.toString())
+                put("message_id", messageId)
+            }
+            val requestBody = json.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+            val request = Request.Builder().url(url).post(requestBody).build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+
+            // Handle HTTP 429 Rate Limiting
+            if (response.code == 429 || body.contains("TOO_MANY_REQUESTS")) {
+                val retryAfterSec = try { JSONObject(body).optJSONObject("parameters")?.optInt("retry_after", 2) ?: 2 } catch (_: Exception) { 2 }
+                Log.w("ServerApi", "Telegram 429 Rate Limit hit. Waiting ${retryAfterSec}s before retry...")
+                kotlinx.coroutines.delay(retryAfterSec * 1000L)
+                return@withContext executeTelegramMessageDeletion(cleanToken, chatId, messageId)
+            }
+
+            val jsonRes = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
+            val ok = jsonRes.optBoolean("ok", false)
+            val desc = jsonRes.optString("description", "")
+
+            if (ok) return@withContext TelegramDeletionStatus.DELETED
+
+            if (desc.contains("message to delete not found", ignoreCase = true) ||
+                desc.contains("MESSAGE_ID_INVALID", ignoreCase = true) ||
+                desc.contains("message identifier is not specified", ignoreCase = true)) {
+                return@withContext TelegramDeletionStatus.ALREADY_DELETED
+            }
+
+            if (desc.contains("not enough rights", ignoreCase = true) ||
+                desc.contains("CHAT_ADMIN_REQUIRED", ignoreCase = true) ||
+                desc.contains("message can't be deleted", ignoreCase = true)) {
+                Log.w("ServerApi", "Bot needs Admin Delete rights in Telegram Channel: $formattedChatId. Desc: $desc")
+                return@withContext TelegramDeletionStatus.PERMISSION_DENIED
+            }
+
+            // Fallback via URL query parameter
+            val fallbackUrl = "https://api.telegram.org/bot$cleanToken/deleteMessage?chat_id=$formattedChatId&message_id=$messageId"
+            val fallbackReq = Request.Builder().url(fallbackUrl).post("".toRequestBody(null)).build()
+            val fallbackRes = client.newCall(fallbackReq).execute()
+            val fallbackBody = fallbackRes.body?.string() ?: ""
+
+            if (fallbackRes.isSuccessful && fallbackBody.contains("\"ok\":true")) {
+                return@withContext TelegramDeletionStatus.DELETED
+            }
+
+            if (fallbackBody.contains("message to delete not found", ignoreCase = true) ||
+                fallbackBody.contains("MESSAGE_ID_INVALID", ignoreCase = true)) {
+                return@withContext TelegramDeletionStatus.ALREADY_DELETED
+            }
+
+            return@withContext TelegramDeletionStatus.ERROR
+        } catch (e: Exception) {
+            Log.e("ServerApi", "executeTelegramMessageDeletion error for msgId #$messageId", e)
+            return@withContext TelegramDeletionStatus.ERROR
+        }
+    }
+
     /**
      * Batch deletes up to 100 messages at once using Telegram Bot API deleteMessages endpoint.
      * Automatically falls back to high-concurrency parallel deletion if batch fails.
-     * Returns Pair(allSuccess, deletedCount).
+     * Returns Pair(allSuccess, actuallyDeletedCount).
      */
     suspend fun deleteTelegramMessagesBatch(botToken: String, chatId: String, messageIds: List<Long>): Pair<Boolean, Int> = withContext(Dispatchers.IO) {
         val cleanToken = botToken.trim()
@@ -595,8 +670,10 @@ class ServerApi {
         if (cleanToken.isEmpty() || validIds.isEmpty()) return@withContext Pair(false, 0)
 
         if (validIds.size == 1) {
-            val ok = deleteTelegramMessage(cleanToken, chatId, validIds[0])
-            return@withContext Pair(ok, if (ok) 1 else 0)
+            val status = executeTelegramMessageDeletion(cleanToken, chatId, validIds[0])
+            val isOk = status == TelegramDeletionStatus.DELETED || status == TelegramDeletionStatus.ALREADY_DELETED
+            val wasDeleted = if (status == TelegramDeletionStatus.DELETED) 1 else 0
+            return@withContext Pair(isOk, wasDeleted)
         }
 
         val chunks = validIds.chunked(100)
@@ -624,17 +701,18 @@ class ServerApi {
                     Log.d("ServerApi", "deleteTelegramMessagesBatch: Deleted ${chunk.size} messages in one batch")
                     totalDeletedCount += chunk.size
                 } else {
-                    Log.d("ServerApi", "deleteTelegramMessagesBatch batch not ok ($body), executing concurrent individual fallback for ${chunk.size} messages")
                     coroutineScope {
                         val deferreds = chunk.map { msgId ->
                             async(Dispatchers.IO) {
-                                deleteTelegramMessage(cleanToken, chatId, msgId)
+                                executeTelegramMessageDeletion(cleanToken, chatId, msgId)
                             }
                         }
                         val results = deferreds.awaitAll()
-                        val deletedInFallback = results.count { it }
-                        totalDeletedCount += deletedInFallback
-                        if (results.any { !it }) allSuccess = false
+                        val actuallyDeleted = results.count { it == TelegramDeletionStatus.DELETED }
+                        totalDeletedCount += actuallyDeleted
+                        if (results.any { it == TelegramDeletionStatus.PERMISSION_DENIED || it == TelegramDeletionStatus.ERROR }) {
+                            allSuccess = false
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -642,13 +720,15 @@ class ServerApi {
                 coroutineScope {
                     val deferreds = chunk.map { msgId ->
                         async(Dispatchers.IO) {
-                            deleteTelegramMessage(cleanToken, chatId, msgId)
+                            executeTelegramMessageDeletion(cleanToken, chatId, msgId)
                         }
                     }
                     val results = deferreds.awaitAll()
-                    val deletedInFallback = results.count { it }
-                    totalDeletedCount += deletedInFallback
-                    if (results.any { !it }) allSuccess = false
+                    val actuallyDeleted = results.count { it == TelegramDeletionStatus.DELETED }
+                    totalDeletedCount += actuallyDeleted
+                    if (results.any { it == TelegramDeletionStatus.PERMISSION_DENIED || it == TelegramDeletionStatus.ERROR }) {
+                        allSuccess = false
+                    }
                 }
             }
         }
@@ -656,70 +736,11 @@ class ServerApi {
     }
 
     /**
-     * Sends HTTP deleteMessage request directly to Telegram Bot API with 429 Rate Limit retry support,
-     * query parameter fallback, and idempotent handling for already-deleted messages or channel messages.
+     * Sends HTTP deleteMessage request directly to Telegram Bot API.
      */
     suspend fun deleteTelegramMessage(botToken: String, chatId: String, messageId: Long): Boolean = withContext(Dispatchers.IO) {
-        val cleanToken = botToken.trim()
-        val formattedChatId = formatChatIdForTelegram(chatId)
-        if (cleanToken.isEmpty() || messageId <= 0) return@withContext false
-        try {
-            // Method 1: POST with application/json body
-            val url = "https://api.telegram.org/bot$cleanToken/deleteMessage"
-            val json = JSONObject().apply {
-                if (formattedChatId is Long) put("chat_id", formattedChatId) else put("chat_id", formattedChatId.toString())
-                put("message_id", messageId)
-            }
-            val requestBody = json.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-            val request = Request.Builder().url(url).post(requestBody).build()
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: ""
-
-            // Handle HTTP 429 Rate Limiting
-            if (response.code == 429 || body.contains("TOO_MANY_REQUESTS")) {
-                val retryAfterSec = try { JSONObject(body).optJSONObject("parameters")?.optInt("retry_after", 2) ?: 2 } catch (_: Exception) { 2 }
-                Log.w("ServerApi", "Telegram 429 Rate Limit hit. Waiting ${retryAfterSec}s before retry...")
-                kotlinx.coroutines.delay(retryAfterSec * 1000L)
-                return@withContext deleteTelegramMessage(cleanToken, chatId, messageId)
-            }
-
-            val jsonRes = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
-            val ok = jsonRes.optBoolean("ok", false)
-            val desc = jsonRes.optString("description", "")
-
-            if (ok) return@withContext true
-
-            // Treat already deleted or missing messages as successfully cleared
-            val isAlreadyGone = desc.contains("message to delete not found", ignoreCase = true) ||
-                    desc.contains("MESSAGE_ID_INVALID", ignoreCase = true) ||
-                    desc.contains("message identifier is not specified", ignoreCase = true)
-
-            if (isAlreadyGone) return@withContext true
-
-            // Method 2: Fallback to URL-Encoded form parameters
-            val fallbackUrl = "https://api.telegram.org/bot$cleanToken/deleteMessage?chat_id=$formattedChatId&message_id=$messageId"
-            val fallbackReq = Request.Builder().url(fallbackUrl).post("".toRequestBody(null)).build()
-            val fallbackRes = client.newCall(fallbackReq).execute()
-            val fallbackBody = fallbackRes.body?.string() ?: ""
-
-            if (fallbackRes.isSuccessful && fallbackBody.contains("\"ok\":true")) {
-                return@withContext true
-            }
-
-            if (fallbackBody.contains("message to delete not found", ignoreCase = true) ||
-                fallbackBody.contains("MESSAGE_ID_INVALID", ignoreCase = true)) {
-                return@withContext true
-            }
-
-            if (desc.contains("not enough rights", ignoreCase = true) || desc.contains("CHAT_ADMIN_REQUIRED", ignoreCase = true) || desc.contains("message can't be deleted", ignoreCase = true)) {
-                Log.w("ServerApi", "Bot needs Admin Delete rights in Telegram Channel/Chat: $formattedChatId. Desc: $desc")
-            }
-
-            return@withContext false
-        } catch (e: Exception) {
-            Log.e("ServerApi", "deleteTelegramMessage error for msgId #$messageId", e)
-            return@withContext false
-        }
+        val status = executeTelegramMessageDeletion(botToken, chatId, messageId)
+        return@withContext (status == TelegramDeletionStatus.DELETED || status == TelegramDeletionStatus.ALREADY_DELETED)
     }
 
     /**
@@ -764,7 +785,7 @@ class ServerApi {
             deletionOk = ok
         }
 
-        // Clean up Room DB records
+        // Clean up Room DB records only if Telegram did not block deletion
         try {
             val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
             db.chunkProgressDao().deleteChunksForFile(file.path)
@@ -954,7 +975,11 @@ class ServerApi {
         val targetChatId = if (chatInfo.canonicalId != null) chatInfo.canonicalId.toString() else chatId
 
         val pingId = getHighestTelegramMessageId(cleanToken, targetChatId)
-        val highestId = maxOf(pingId + 50L, knownMaxId + 50L, 2000L)
+        val highestId = if (pingId > 0) {
+            pingId + 50L
+        } else {
+            maxOf(knownMaxId + 100L, 50000L)
+        }
 
         Log.d("ServerApi", "deepPurgeTelegramChatStorage starting for chatId $targetChatId ('${chatInfo.title}') up to highestId $highestId (pingId=$pingId, knownMaxId=$knownMaxId)")
         val allIds = (1L..highestId).toList()

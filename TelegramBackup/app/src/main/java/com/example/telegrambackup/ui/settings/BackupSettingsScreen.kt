@@ -1261,24 +1261,42 @@ fun BackupSettingsScreen(
                                 } else {
                                     com.example.telegrambackup.utils.DynamicProcessTracker.startProcess(
                                         title = "Deep Clean Telegram Chat",
-                                        subtitle = "Scanning Telegram chat storage...",
+                                        subtitle = "Inspecting Telegram channel & permissions...",
                                         icon = Icons.Default.CleaningServices
                                     )
                                     scope.launch(Dispatchers.IO) {
+                                        val serverApi = ServerApi()
+                                        val chatInfo = serverApi.getTelegramChatInfo(token, chat)
+
+                                        if (!chatInfo.success) {
+                                            withContext(Dispatchers.Main) {
+                                                com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
+                                                Toast.makeText(context, "Telegram Error: ${chatInfo.errorMessage}", Toast.LENGTH_LONG).show()
+                                            }
+                                            return@launch
+                                        }
+
+                                        if (chatInfo.isBotAdmin && !chatInfo.canDeleteMessages) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "⚠️ Please give the bot 'Delete Messages' permission in channel '${chatInfo.title}'", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+
                                         val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
                                         val max1 = db.uploadedFileDao().getMaxMessageId() ?: 0L
                                         val max2 = db.chunkProgressDao().getMaxMessageId() ?: 0L
                                         val knownMax = maxOf(max1, max2)
+                                        val targetChatId = if (chatInfo.canonicalId != null) chatInfo.canonicalId.toString() else chat
 
-                                        val result = ServerApi().deepPurgeTelegramChatStorage(
+                                        val result = serverApi.deepPurgeTelegramChatStorage(
                                             token,
-                                            chat,
+                                            targetChatId,
                                             knownMaxId = knownMax,
                                             onProgress = { currentBatch, totalBatches, count ->
                                                 val fraction = if (totalBatches > 0) currentBatch.toFloat() / totalBatches.toFloat() else 0f
                                                 com.example.telegrambackup.utils.DynamicProcessTracker.updateProgress(
                                                     progress = fraction,
-                                                    subtitle = "Purging unlisted items: $count purged ($currentBatch/$totalBatches)"
+                                                    subtitle = "Scanning '${chatInfo.title}': $count purged ($currentBatch/$totalBatches)"
                                                 )
                                             }
                                         )
@@ -1286,7 +1304,7 @@ fun BackupSettingsScreen(
                                         val scannedCount = result.second
                                         withContext(Dispatchers.Main) {
                                             com.example.telegrambackup.utils.DynamicProcessTracker.finishProcess()
-                                            Toast.makeText(context, "✅ Telegram Deep Clean Complete! ($deletedCount items purged out of $scannedCount scanned)", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "✅ Telegram Deep Clean Complete! ($deletedCount items purged out of $scannedCount scanned in '${chatInfo.title}')", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 }
@@ -1305,7 +1323,7 @@ fun BackupSettingsScreen(
                     Text("App Version & Update Center", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = TelegramBlue))
                     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
                         Column {
-                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.18" } catch (_: Exception) { "2.1.18" } }
+                            val currentVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.19" } catch (_: Exception) { "2.1.19" } }
                             SettingCategoryRow(Icons.Default.Info, "App Info & Check for Updates", "Installed Version v$currentVersion • Tap to check updates", TelegramBlue) {
                                 triggerHapticFeedback(context, haptic)
                                 showAppInfoModal = true
