@@ -1134,13 +1134,13 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
  * -------------------------------------------------------------------------------------
  * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)
  */
-app.get(['/api/app/latest-version', '/app/latest-version'], async (req, res) => {
+app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
   return res.json({
     success: true,
-    versionCode: 3,
-    versionName: "2.1.0",
-    downloadUrl: "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-v2.1.0.apk",
-    releaseNotes: "🚀 App Info & Update Center, 1-Tap Online Auto-Installer, Health Diagnostics & Resilient Telegram Storage Purger."
+    versionCode: 4,
+    versionName: "2.1.1",
+    downloadUrl: "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-v2.1.1.apk",
+    releaseNotes: "🚀 New Release v2.1.1: Features Dynamic Top Floating Process Bar, Settings Persistence across Updates/Re-logins, and SemVer Auto-Installer!"
   });
 });
 
