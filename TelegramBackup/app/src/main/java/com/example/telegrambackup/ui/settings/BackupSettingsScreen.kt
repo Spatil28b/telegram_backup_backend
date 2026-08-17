@@ -235,11 +235,16 @@ fun BackupSettingsScreen(
     var showClearDataAccountDialog by remember { mutableStateOf(false) }
     var dialogInitialTab by remember { mutableIntStateOf(0) }
     var showDiagnosticModal by remember { mutableStateOf(false) }
+    var showAppInfoModal by remember { mutableStateOf(false) }
     var manualUpdateInfo by remember { mutableStateOf<com.example.telegrambackup.ui.update.AppVersionInfo?>(null) }
     var zeroKnowledgeActive by remember { mutableStateOf(prefs.isZeroKnowledgeEnabled) }
 
     if (showDiagnosticModal) {
         SystemHealthDiagnosticDialog(onDismiss = { showDiagnosticModal = false })
+    }
+
+    if (showAppInfoModal) {
+        AppInfoDialog(onDismiss = { showAppInfoModal = false })
     }
 
     if (manualUpdateInfo != null) {
@@ -482,16 +487,21 @@ fun BackupSettingsScreen(
                                 showDiagnosticModal = true
                             }
                             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                            SettingCategoryRow(Icons.Default.Info, "📱 App Info & Update Center", "View specs, architecture & check for updates", Color(0xFF8B5CF6)) {
+                                triggerHapticFeedback(context, haptic)
+                                showAppInfoModal = true
+                            }
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                             SettingCategoryRow(Icons.Default.SystemUpdate, "🚀 Check for Online App Updates", "Queries GitHub/Server for new version & updates in-app", Color(0xFF3B82F6)) {
                                 triggerHapticFeedback(context, haptic)
                                 Toast.makeText(context, "Checking online update server...", Toast.LENGTH_SHORT).show()
                                 scope.launch(Dispatchers.IO) {
                                     val versionInfo = ServerApi().getLatestAppVersion(prefs.serverUrl)
                                     withContext(Dispatchers.Main) {
-                                        if (versionInfo.success && versionInfo.versionCode > 2 && versionInfo.downloadUrl.isNotEmpty()) {
+                                        if (versionInfo.success && versionInfo.versionCode > 3 && versionInfo.downloadUrl.isNotEmpty()) {
                                             manualUpdateInfo = versionInfo
                                         } else {
-                                            Toast.makeText(context, "✅ App is fully up to date! (v2.0.0)", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "✅ App is fully up to date! (v2.1.0)", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 }

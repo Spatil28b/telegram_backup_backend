@@ -91,7 +91,7 @@ fun DashboardHomeScreen(
         val serverUrl = prefs.serverUrl
         if (serverUrl.isNotEmpty()) {
             val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
-            if (versionInfo.success && versionInfo.versionCode > 2 && versionInfo.downloadUrl.isNotEmpty()) {
+            if (versionInfo.success && versionInfo.versionCode > 3 && versionInfo.downloadUrl.isNotEmpty()) {
                 updateInfoAvailable = versionInfo
             }
         }
