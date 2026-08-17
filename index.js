@@ -1130,6 +1130,9 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
  * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)
  */
 app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   const host = req.headers.host || 'telegram-backup-backend.vercel.app';
   const protocol = req.headers['x-forwarded-proto'] || 'https';
   const downloadUrl = `${protocol}://${host}/api/app/download-latest`;
