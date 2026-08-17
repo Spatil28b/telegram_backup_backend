@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 7,
-    versionName: "2.1.4",
+    versionCode: 8,
+    versionName: "2.1.5",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.4: Enhanced In-App Auto-Installer Engine with Explicit FileProvider Grants, External Downloads Directory, and Direct Package Installation!"
+    releaseNotes: "🚀 New Release v2.1.5: Auto-Restart Installer Engine with Dual Intent Fallback, Memory Process Clearing, and Guaranteed In-Place Package Updating!"
   });
 });
 

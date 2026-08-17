@@ -55,6 +55,8 @@ fun AppUpdaterDialog(
     val scope = rememberCoroutineScope()
 
     var isDownloading by remember { mutableStateOf(false) }
+    var isInstallerLaunched by remember { mutableStateOf(false) }
+    var downloadedApkFile by remember { mutableStateOf<File?>(null) }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var downloadStatusText by remember { mutableStateOf("") }
 
@@ -96,10 +98,26 @@ fun AppUpdaterDialog(
             }
 
             context.startActivity(installIntent)
-            Toast.makeText(context, "Tap 'Update' or 'Install' on package installer prompt", Toast.LENGTH_LONG).show()
+            isInstallerLaunched = true
+            downloadStatusText = "🚀 Package Installer launched!\nTap 'Update' on the system prompt to complete installation."
+            Toast.makeText(context, "Tap 'Update' on the Android system installer prompt", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Log.e("AppUpdater", "Failed to launch package installer", e)
             Toast.makeText(context, "Error opening package installer: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun restartAppProcess() {
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            if (intent != null) {
+                context.startActivity(intent)
+            }
+            Runtime.getRuntime().exit(0)
+        } catch (_: Exception) {
+            System.exit(0)
         }
     }
 
@@ -136,98 +154,111 @@ fun AppUpdaterDialog(
                     }
                 }
 
-                if (isDownloading) {
+                if (isDownloading || isInstallerLaunched) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         downloadStatusText,
-                        style = MaterialTheme.typography.bodySmall.copy(color = Color.White, fontWeight = FontWeight.Bold)
+                        style = MaterialTheme.typography.bodySmall.copy(color = if (isInstallerLaunched) TelegramEmerald else Color.White, fontWeight = FontWeight.Bold)
                     )
-                    LinearProgressIndicator(
-                        progress = { downloadProgress },
-                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                        color = TelegramEmerald,
-                        trackColor = Color.White.copy(alpha = 0.2f)
-                    )
+                    if (isDownloading) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                            color = TelegramEmerald,
+                            trackColor = Color.White.copy(alpha = 0.2f)
+                        )
+                    }
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    if (isDownloading) return@Button
-                    isDownloading = true
-                    downloadStatusText = "Connecting to update server..."
+            if (isInstallerLaunched) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = { restartAppProcess() },
+                        colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
+                    ) {
+                        Text("⚡ Restart App Now", fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                Button(
+                    onClick = {
+                        if (isDownloading) return@Button
+                        isDownloading = true
+                        downloadStatusText = "Connecting to update server..."
 
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val client = HttpClientProvider.client
-                            val req = Request.Builder().url(versionInfo.downloadUrl).build()
-                            val res = client.newCall(req).execute()
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val client = HttpClientProvider.client
+                                val req = Request.Builder().url(versionInfo.downloadUrl).build()
+                                val res = client.newCall(req).execute()
 
-                            val body = res.body
-                            if (!res.isSuccessful || body == null) {
-                                withContext(Dispatchers.Main) {
-                                    isDownloading = false
-                                    Toast.makeText(context, "Download failed (HTTP ${res.code}). Server error or URL issue.", Toast.LENGTH_LONG).show()
+                                val body = res.body
+                                if (!res.isSuccessful || body == null) {
+                                    withContext(Dispatchers.Main) {
+                                        isDownloading = false
+                                        Toast.makeText(context, "Download failed (HTTP ${res.code}). Server error or URL issue.", Toast.LENGTH_LONG).show()
+                                    }
+                                    return@launch
                                 }
-                                return@launch
-                            }
 
-                            val totalBytes = body.contentLength()
-                            val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
-                            val updateFile = File(downloadsDir, "TelegramBackup_${versionInfo.versionName}.apk")
+                                val totalBytes = body.contentLength()
+                                val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+                                val updateFile = File(downloadsDir, "TelegramBackup_${versionInfo.versionName}.apk")
 
-                            body.byteStream().use { input ->
-                                FileOutputStream(updateFile).use { output ->
-                                    val buffer = ByteArray(8192)
-                                    var bytesRead: Int
-                                    var downloadedBytes = 0L
+                                body.byteStream().use { input ->
+                                    FileOutputStream(updateFile).use { output ->
+                                        val buffer = ByteArray(8192)
+                                        var bytesRead: Int
+                                        var downloadedBytes = 0L
 
-                                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                                        output.write(buffer, 0, bytesRead)
-                                        downloadedBytes += bytesRead
+                                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                                            output.write(buffer, 0, bytesRead)
+                                            downloadedBytes += bytesRead
 
-                                        if (totalBytes > 0) {
-                                            val progress = downloadedBytes.toFloat() / totalBytes.toFloat()
-                                            val mbDownloaded = downloadedBytes / (1024 * 1024)
-                                            val mbTotal = totalBytes / (1024 * 1024)
-                                            withContext(Dispatchers.Main) {
-                                                downloadProgress = progress
-                                                downloadStatusText = "Downloading update... $mbDownloaded MB / $mbTotal MB (${(progress * 100).toInt()}%)"
+                                            if (totalBytes > 0) {
+                                                val progress = downloadedBytes.toFloat() / totalBytes.toFloat()
+                                                val mbDownloaded = downloadedBytes / (1024 * 1024)
+                                                val mbTotal = totalBytes / (1024 * 1024)
+                                                withContext(Dispatchers.Main) {
+                                                    downloadProgress = progress
+                                                    downloadStatusText = "Downloading update... $mbDownloaded MB / $mbTotal MB (${(progress * 100).toInt()}%)"
+                                                }
                                             }
                                         }
+                                        output.flush()
                                     }
-                                    output.flush()
+                                }
+
+                                withContext(Dispatchers.Main) {
+                                    isDownloading = false
+                                    downloadedApkFile = updateFile
+                                    downloadStatusText = "Opening Package Installer..."
+                                    installApk(updateFile)
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    isDownloading = false
+                                    Toast.makeText(context, "Download error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                 }
                             }
-
-                            withContext(Dispatchers.Main) {
-                                isDownloading = false
-                                downloadStatusText = "Opening Package Installer..."
-                                installApk(updateFile)
-                                onDismiss()
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                isDownloading = false
-                                Toast.makeText(context, "Download error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                            }
                         }
+                    },
+                    enabled = !isDownloading,
+                    colors = ButtonDefaults.buttonColors(containerColor = TelegramEmerald)
+                ) {
+                    if (isDownloading) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    } else {
+                        Text("🚀 Update Now", fontWeight = FontWeight.Bold)
                     }
-                },
-                enabled = !isDownloading,
-                colors = ButtonDefaults.buttonColors(containerColor = TelegramEmerald)
-            ) {
-                if (isDownloading) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-                } else {
-                    Text("🚀 Update Now", fontWeight = FontWeight.Bold)
                 }
             }
         },
         dismissButton = {
             TextButton(onClick = { if (!isDownloading) onDismiss() }) {
-                Text("Later", color = Color.White.copy(alpha = 0.7f))
+                Text(if (isInstallerLaunched) "Close" else "Later", color = Color.White.copy(alpha = 0.7f))
             }
         }
     )
