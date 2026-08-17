@@ -628,6 +628,68 @@ class ServerApi {
     }
 
     /**
+     * Complete deep deletion of a file and ALL of its chunk messages from Telegram Cloud Chat & Room DB.
+     */
+    suspend fun purgeFileCompleteFromTelegram(
+        context: android.content.Context,
+        botToken: String,
+        chatId: String,
+        file: com.example.telegrambackup.data.UploadedFile
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanToken = botToken.trim()
+        val cleanChatId = chatId.trim()
+
+        val msgIds = mutableSetOf<Long>()
+        if (file.messageId > 0) {
+            msgIds.add(file.messageId)
+        }
+
+        // Query all chunk message IDs for this file path from Room database
+        try {
+            val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
+            val chunks = db.chunkProgressDao().getUploadedChunksForFile(file.path)
+            chunks.forEach { chunk ->
+                if (chunk.messageId > 0) {
+                    msgIds.add(chunk.messageId)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("ServerApi", "Error querying chunk message IDs for ${file.path}", e)
+        }
+
+        var deletionOk = true
+        if (cleanToken.isNotEmpty() && cleanChatId.isNotEmpty() && msgIds.isNotEmpty()) {
+            val idList = msgIds.toList()
+            Log.d("ServerApi", "Purging ${idList.size} Telegram messages for file ${file.fileName}: $idList")
+
+            deletionOk = if (idList.size == 1) {
+                deleteTelegramMessage(cleanToken, cleanChatId, idList[0])
+            } else {
+                var batchOk = deleteTelegramMessagesBatch(cleanToken, cleanChatId, idList)
+                if (!batchOk) {
+                    batchOk = true
+                    idList.forEach { id ->
+                        val ok = deleteTelegramMessage(cleanToken, cleanChatId, id)
+                        if (!ok) batchOk = false
+                    }
+                }
+                batchOk
+            }
+        }
+
+        // Clean up Room DB records
+        try {
+            val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
+            db.chunkProgressDao().deleteChunksForFile(file.path)
+            db.uploadedFileDao().deleteByPath(file.path)
+        } catch (e: Exception) {
+            Log.e("ServerApi", "Error deleting local DB record for ${file.path}", e)
+        }
+
+        return@withContext deletionOk
+    }
+
+    /**
      * Sends a temporary ping message to Telegram chat to discover current highest message_id.
      */
     suspend fun getHighestTelegramMessageId(botToken: String, chatId: String): Long = withContext(Dispatchers.IO) {

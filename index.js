@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 8,
-    versionName: "2.1.5",
+    versionCode: 9,
+    versionName: "2.1.6",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.5: Auto-Restart Installer Engine with Dual Intent Fallback, Memory Process Clearing, and Guaranteed In-Place Package Updating!"
+    releaseNotes: "🚀 New Release v2.1.6: Multi-Chunk Telegram Message Purge Engine, Bulk Selection Cloud Chat Deletion, and Guaranteed Telegram File Erasure!"
   });
 });
 

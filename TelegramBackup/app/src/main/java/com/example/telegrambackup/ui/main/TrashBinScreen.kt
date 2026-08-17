@@ -158,11 +158,8 @@ fun TrashBinScreen() {
                                     val userEmail = authPrefs.getString("user_email", "") ?: prefs.recoveryEmail
                                     
                                     trashFiles.forEach { file ->
-                                        db.uploadedFileDao().deleteByPath(file.path)
-                                        // 1. Delete from Telegram Cloud Chat if botToken, chatId & messageId exist
-                                        if (prefs.botToken.isNotEmpty() && prefs.chatId.isNotEmpty() && file.messageId > 0) {
-                                            try { serverApi.deleteTelegramMessage(prefs.botToken, prefs.chatId, file.messageId) } catch (_: Exception) {}
-                                        }
+                                        // 1. Delete from Telegram Cloud Chat (all chunks & message IDs) + Room DB
+                                        try { serverApi.purgeFileCompleteFromTelegram(context, prefs.botToken, prefs.chatId, file) } catch (_: Exception) {}
                                         // 2. Delete from PostgreSQL Server DB
                                         if (userEmail.isNotEmpty()) {
                                             try { serverApi.deleteFile(prefs.serverUrl, userEmail, file.telegramFileId, file.path) } catch (_: Exception) {}
@@ -254,9 +251,13 @@ fun TrashBinScreen() {
 
                                         pathsToDelete.forEach { path ->
                                             val fileRecord = dao.getFileByPath(path)
-                                            dao.deleteByPath(path)
-                                            if (fileRecord != null && userEmail.isNotEmpty()) {
-                                                try { serverApi.deleteFile(prefs.serverUrl, userEmail, fileRecord.telegramFileId, path) } catch (_: Exception) {}
+                                            if (fileRecord != null) {
+                                                try { serverApi.purgeFileCompleteFromTelegram(context, prefs.botToken, prefs.chatId, fileRecord) } catch (_: Exception) {}
+                                                if (userEmail.isNotEmpty()) {
+                                                    try { serverApi.deleteFile(prefs.serverUrl, userEmail, fileRecord.telegramFileId, path) } catch (_: Exception) {}
+                                                }
+                                            } else {
+                                                dao.deleteByPath(path)
                                             }
                                         }
                                         withContext(Dispatchers.Main) {
@@ -432,10 +433,9 @@ fun TrashBinScreen() {
                                                     val authPrefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
                                                     val userEmail = authPrefs.getString("user_email", "") ?: prefs.recoveryEmail
 
-                                                    db.uploadedFileDao().deleteByPath(file.path)
-                                                    if (prefs.botToken.isNotEmpty() && prefs.chatId.isNotEmpty() && file.messageId > 0) {
-                                                        try { serverApi.deleteTelegramMessage(prefs.botToken, prefs.chatId, file.messageId) } catch (_: Exception) {}
-                                                    }
+                                                    // 1. Delete from Telegram Cloud Chat (all chunks & message IDs) + Room DB
+                                                    try { serverApi.purgeFileCompleteFromTelegram(context, prefs.botToken, prefs.chatId, file) } catch (_: Exception) {}
+                                                    // 2. Delete from PostgreSQL Server DB
                                                     if (userEmail.isNotEmpty()) {
                                                         try { serverApi.deleteFile(prefs.serverUrl, userEmail, file.telegramFileId, file.path) } catch (_: Exception) {}
                                                     }
