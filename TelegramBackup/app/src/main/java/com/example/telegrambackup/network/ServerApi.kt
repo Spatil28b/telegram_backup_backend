@@ -48,26 +48,105 @@ class ServerApi {
     /**
      * Checks online server for the latest released app version & APK download link.
      */
+    /**
+     * Checks online server & GitHub for the latest released app version & APK download link.
+     * Supports both backend endpoint and direct GitHub Releases / app-version.json fallback.
+     */
     suspend fun getLatestAppVersion(serverUrl: String): com.example.telegrambackup.ui.update.AppVersionInfo = withContext(Dispatchers.IO) {
+        val candidates = mutableListOf<com.example.telegrambackup.ui.update.AppVersionInfo>()
+
+        // 1. Try Backend Vercel Endpoint
         try {
             val url = cleanUrl(serverUrl, "/api/app/latest-version")
-            val request = Request.Builder().url(url).build()
+            val request = Request.Builder().url(url).cacheControl(okhttp3.CacheControl.FORCE_NETWORK).build()
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: ""
 
             if (response.isSuccessful && body.contains("\"success\":true")) {
                 val json = JSONObject(body)
-                return@withContext com.example.telegrambackup.ui.update.AppVersionInfo(
+                val info = com.example.telegrambackup.ui.update.AppVersionInfo(
                     success = true,
                     versionCode = json.optInt("versionCode", 1),
                     versionName = json.optString("versionName", "1.0.0"),
                     downloadUrl = json.optString("downloadUrl", ""),
                     releaseNotes = json.optString("releaseNotes", "New performance and feature updates.")
                 )
+                candidates.add(info)
             }
         } catch (e: Exception) {
-            Log.e("ServerApi", "getLatestAppVersion error", e)
+            Log.e("ServerApi", "getLatestAppVersion backend check error", e)
         }
+
+        // 2. Try GitHub raw app-version.json (direct repository source)
+        try {
+            val ghRawUrl = "https://raw.githubusercontent.com/spatil28a/telegram_backup_backend/main/app-version.json"
+            val request = Request.Builder().url(ghRawUrl).cacheControl(okhttp3.CacheControl.FORCE_NETWORK).build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+
+            if (response.isSuccessful && body.contains("\"versionCode\"")) {
+                val json = JSONObject(body)
+                val dlUrl = json.optString("downloadUrl", "").ifEmpty { json.optString("directApkUrl", "") }
+                val info = com.example.telegrambackup.ui.update.AppVersionInfo(
+                    success = true,
+                    versionCode = json.optInt("versionCode", 1),
+                    versionName = json.optString("versionName", "1.0.0"),
+                    downloadUrl = dlUrl,
+                    releaseNotes = json.optString("releaseNotes", "New performance and feature updates.")
+                )
+                candidates.add(info)
+            }
+        } catch (e: Exception) {
+            Log.e("ServerApi", "getLatestAppVersion GitHub raw check error", e)
+        }
+
+        // 3. Try GitHub Releases API
+        try {
+            val ghReleasesUrl = "https://api.github.com/repos/spatil28a/telegram_backup_backend/releases/latest"
+            val request = Request.Builder().url(ghReleasesUrl).header("Accept", "application/vnd.github.v3+json").cacheControl(okhttp3.CacheControl.FORCE_NETWORK).build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+
+            if (response.isSuccessful && body.contains("\"tag_name\"")) {
+                val json = JSONObject(body)
+                val tagName = json.optString("tag_name", "").removePrefix("v")
+                val bodyText = json.optString("body", "New updates on GitHub.")
+                val assets = json.optJSONArray("assets")
+                var apkUrl = ""
+                if (assets != null) {
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.optJSONObject(i)
+                        val name = asset?.optString("name", "") ?: ""
+                        if (name.endsWith(".apk", ignoreCase = true)) {
+                            apkUrl = asset?.optString("browser_download_url", "") ?: ""
+                            break
+                        }
+                    }
+                }
+                if (apkUrl.isEmpty()) {
+                    apkUrl = "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-latest.apk"
+                }
+                // Try parse code from tag or version string
+                val code = tagName.replace(".", "").toIntOrNull() ?: 1
+                candidates.add(
+                    com.example.telegrambackup.ui.update.AppVersionInfo(
+                        success = true,
+                        versionCode = code,
+                        versionName = tagName.ifEmpty { "1.0.0" },
+                        downloadUrl = apkUrl,
+                        releaseNotes = bodyText
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("ServerApi", "getLatestAppVersion GitHub Releases API error", e)
+        }
+
+        // Return candidate with highest version code / SemVer
+        if (candidates.isNotEmpty()) {
+            return@withContext candidates.maxByOrNull { it.versionCode } ?: candidates.first()
+        }
+
         return@withContext com.example.telegrambackup.ui.update.AppVersionInfo(false, 1, "1.0.0", "", "")
     }
 

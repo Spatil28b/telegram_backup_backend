@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "versionCode": 23,
+  "versionName": "2.1.20",
+  "downloadUrl": "https://github.com/spatil28a/telegram_backup_backend/releases/download/v2.1.20/TelegramBackup-v2.1.20.apk",
+  "directApkUrl": "https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-v2.1.20.apk",
+  "releaseNotes": "🔧 CRITICAL FIX v2.1.20: Verified Telegram Channel individual message deletion engine, deletion verification check before purge, and honest deletion reporting."
+}
