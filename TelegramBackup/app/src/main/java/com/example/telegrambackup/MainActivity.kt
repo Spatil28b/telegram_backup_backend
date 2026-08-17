@@ -157,11 +157,12 @@ fun MainApp(
             val serverUrl = prefs.serverUrl.ifEmpty { "https://telegram-backup-backend.vercel.app" }
             val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
             val currentVersionName = try {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.1"
-            } catch (_: Exception) { "2.1.1" }
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.2"
+            } catch (_: Exception) { "2.1.2" }
 
             val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
-            if (versionInfo.success && isNewerSemVer && versionInfo.downloadUrl.isNotEmpty()) {
+            val isNotDismissed = versionInfo.versionName != prefs.dismissedUpdateVersion
+            if (versionInfo.success && isNewerSemVer && isNotDismissed && versionInfo.downloadUrl.isNotEmpty()) {
                 withContext(Dispatchers.Main) {
                     appUpdateInfo = versionInfo
                 }
@@ -781,7 +782,10 @@ fun MainApp(
     if (appUpdateInfo != null) {
         com.example.telegrambackup.ui.update.AppUpdaterDialog(
             versionInfo = appUpdateInfo!!,
-            onDismiss = { appUpdateInfo = null }
+            onDismiss = {
+                prefs.dismissedUpdateVersion = appUpdateInfo!!.versionName
+                appUpdateInfo = null
+            }
         )
     }
 }
