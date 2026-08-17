@@ -1,8 +1,43 @@
-node_modules/
+# Environment & Secret Credential Files
 .env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+*.pfx
+local.properties
+google-services.json
+GoogleService-Info.plist
+
+# Node & Server Dependencies / Logs / Deployment
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vercel
 .vercel/
 .DS_Store
 *.log
+*.tmp
+*.temp
 
-.vercel
-.env*
+# Android & Gradle Build Artifacts / IDE Configs
+TelegramBackup/.gradle/
+TelegramBackup/build/
+TelegramBackup/app/build/
+TelegramBackup/.idea/
+TelegramBackup/local.properties
+TelegramBackup/captures/
+TelegramBackup/.externalNativeBuild/
+TelegramBackup/.cxx/
+TelegramBackup/*.iml
+TelegramBackup/app/*.iml
+.idea/
+*.iml
