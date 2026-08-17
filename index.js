@@ -1135,7 +1135,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
   res.setHeader('Expires', '0');
   const host = req.headers.host || 'telegram-backup-backend.vercel.app';
   const protocol = req.headers['x-forwarded-proto'] || 'https';
-  const downloadUrl = `${protocol}://${host}/api/app/download-latest`;
+  const downloadUrl = `https://github.com/spatil28a/telegram_backup_backend/releases/download/v2.1.20/TelegramBackup-v2.1.20.apk`;
 
   return res.json({
     success: true,
@@ -1151,36 +1151,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
  * Direct streaming APK download route for in-app auto-updater.
  */
 app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-apk'], (req, res) => {
-  const releasesDir = path.join(__dirname, 'Releases');
-  const candidates = [
-    path.join(releasesDir, 'TelegramBackup-latest.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.20.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.19.apk')
-  ];
-
-  let targetApk = null;
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      targetApk = p;
-      break;
-    }
-  }
-
-  if (!targetApk && fs.existsSync(releasesDir)) {
-    const files = fs.readdirSync(releasesDir).filter(f => f.endsWith('.apk'));
-    if (files.length > 0) {
-      targetApk = path.join(releasesDir, files[files.length - 1]);
-    }
-  }
-
-  if (targetApk && fs.existsSync(targetApk)) {
-    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition', 'attachment; filename="TelegramBackup.apk"');
-    return res.sendFile(targetApk);
-  } else {
-    // Redirect to high-bandwidth GitHub release raw link
-    return res.redirect(302, 'https://github.com/spatil28a/telegram_backup_backend/raw/main/Releases/TelegramBackup-latest.apk');
-  }
+  return res.redirect(302, 'https://github.com/spatil28a/telegram_backup_backend/releases/download/v2.1.20/TelegramBackup-v2.1.20.apk');
 });
 
 /**
