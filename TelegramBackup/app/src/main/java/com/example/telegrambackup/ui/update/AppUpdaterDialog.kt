@@ -83,6 +83,69 @@ fun AppUpdaterDialog(
         }
     }
 
+    fun findSystemPackageInstallerIntent(apkUri: Uri): Intent {
+        val baseIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            clipData = ClipData.newRawUri("TelegramBackupUpdate", apkUri)
+        }
+
+        val pm = context.packageManager
+        val resolvedList = try {
+            pm.queryIntentActivities(baseIntent, PackageManager.MATCH_DEFAULT_ONLY)
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val knownInstallerPackages = listOf(
+            "com.google.android.packageinstaller",
+            "com.android.packageinstaller",
+            "com.samsung.android.packageinstaller",
+            "com.miui.packageinstaller",
+            "com.coloros.packageinstaller",
+            "com.vivo.packageinstaller",
+            "com.oppo.packageinstaller",
+            "com.transsion.packageinstaller",
+            "com.huawei.appmarket",
+            "com.huawei.packageinstaller"
+        )
+
+        // 1. First priority: match known official OEM/Google package installers
+        var targetResolveInfo = resolvedList.firstOrNull { resolveInfo ->
+            val pkg = resolveInfo.activityInfo.packageName.lowercase()
+            knownInstallerPackages.any { pkg == it || pkg.contains("packageinstaller") }
+        }
+
+        // 2. Second priority: any system-level package that can install packages
+        if (targetResolveInfo == null) {
+            targetResolveInfo = resolvedList.firstOrNull { resolveInfo ->
+                val isSystem = (resolveInfo.activityInfo.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+                val pkg = resolveInfo.activityInfo.packageName.lowercase()
+                isSystem && pkg != context.packageName && !pkg.contains("zip") && !pkg.contains("rar") && !pkg.contains("file") && !pkg.contains("archiver")
+            }
+        }
+
+        if (targetResolveInfo != null) {
+            val targetPkg = targetResolveInfo.activityInfo.packageName
+            val targetClass = targetResolveInfo.activityInfo.name
+            Log.d("AppUpdater", "Targeting system package installer: $targetPkg/$targetClass")
+            context.grantUriPermission(targetPkg, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            return Intent(baseIntent).apply {
+                setClassName(targetPkg, targetClass)
+            }
+        }
+
+        // 3. Fallback: grant permissions to all candidates and return base intent
+        for (resolveInfo in resolvedList) {
+            try {
+                context.grantUriPermission(resolveInfo.activityInfo.packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: Exception) {}
+        }
+        return baseIntent
+    }
+
     fun triggerInstallation(apkFile: File) {
         try {
             if (!apkFile.exists() || apkFile.length() == 0L) {
@@ -114,21 +177,20 @@ fun AppUpdaterDialog(
                 apkFile
             )
 
-            val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkUri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                clipData = ClipData.newRawUri("TelegramBackupUpdate", apkUri)
+            val installIntent = findSystemPackageInstallerIntent(apkUri)
+
+            try {
+                context.startActivity(installIntent)
+            } catch (targetedException: Exception) {
+                Log.w("AppUpdater", "Targeted installer failed, falling back to generic VIEW intent", targetedException)
+                val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(apkUri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    clipData = ClipData.newRawUri("TelegramBackupUpdate", apkUri)
+                }
+                context.startActivity(fallbackIntent)
             }
 
-            val resInfoList = context.packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
-            for (resolveInfo in resInfoList) {
-                val packageName = resolveInfo.activityInfo.packageName
-                context.grantUriPermission(packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-
-            context.startActivity(installIntent)
             isInstallerLaunched = true
             downloadStatusText = "🚀 Package Installer launched!\nTap 'Update' on the Android system prompt to finish."
             Toast.makeText(context, "Tap 'Update' on the Android installer prompt", Toast.LENGTH_LONG).show()
