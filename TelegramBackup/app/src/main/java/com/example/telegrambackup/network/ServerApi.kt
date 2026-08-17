@@ -643,6 +643,17 @@ class ServerApi {
         if (file.messageId > 0) {
             msgIds.add(file.messageId)
         }
+        val directId = file.telegramFileId.toLongOrNull()
+        if (directId != null && directId > 0) {
+            msgIds.add(directId)
+        }
+        val regex = Regex("""(?i)(?:msg|message|chunk|id)?[_\-\:\s]*(\d{2,12})""")
+        regex.findAll("${file.telegramFileId} ${file.path} ${file.fileName}").forEach { match ->
+            val parsedId = match.groupValues[1].toLongOrNull()
+            if (parsedId != null && parsedId > 0) {
+                msgIds.add(parsedId)
+            }
+        }
 
         // Query all chunk message IDs for this file path from Room database
         try {
@@ -687,6 +698,63 @@ class ServerApi {
         }
 
         return@withContext deletionOk
+    }
+
+    /**
+     * Purge an unlisted file or path from Telegram Cloud Chat even if no UploadedFile record exists in Room DB.
+     */
+    suspend fun purgeUnlistedPathFromTelegram(
+        context: android.content.Context,
+        botToken: String,
+        chatId: String,
+        path: String,
+        telegramFileId: String = ""
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanToken = botToken.trim()
+        val cleanChatId = chatId.trim()
+        if (cleanToken.isEmpty() || cleanChatId.isEmpty()) return@withContext false
+
+        val msgIds = mutableSetOf<Long>()
+        val directId = telegramFileId.toLongOrNull()
+        if (directId != null && directId > 0) {
+            msgIds.add(directId)
+        }
+
+        val regex = Regex("""(?i)(?:msg|message|chunk|id)?[_\-\:\s]*(\d{2,12})""")
+        regex.findAll("$path $telegramFileId").forEach { match ->
+            val parsedId = match.groupValues[1].toLongOrNull()
+            if (parsedId != null && parsedId > 0) {
+                msgIds.add(parsedId)
+            }
+        }
+
+        try {
+            val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
+            val chunks = db.chunkProgressDao().getUploadedChunksForFile(path)
+            chunks.forEach { chunk ->
+                if (chunk.messageId > 0) msgIds.add(chunk.messageId)
+            }
+        } catch (_: Exception) {}
+
+        var ok = true
+        if (msgIds.isNotEmpty()) {
+            val idList = msgIds.toList()
+            ok = deleteTelegramMessagesBatch(cleanToken, cleanChatId, idList)
+            if (!ok) {
+                ok = true
+                idList.forEach { id ->
+                    if (!deleteTelegramMessage(cleanToken, cleanChatId, id)) ok = false
+                }
+            }
+        }
+
+        try {
+            val db = com.example.telegrambackup.data.AppDatabase.getDatabase(context)
+            db.chunkProgressDao().deleteChunksForFile(path)
+            db.uploadedFileDao().deleteByPath(path)
+        } catch (_: Exception) {}
+
+        return@withContext ok
     }
 
     /**

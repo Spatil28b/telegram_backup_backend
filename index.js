@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 13,
-    versionName: "2.1.10",
+    versionCode: 14,
+    versionName: "2.1.11",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.10: Direct File URI Launcher, FileProvider Process Unload Bypass, and 100% Identical Installation to Manual File Manager Click!"
+    releaseNotes: "🚀 New Release v2.1.11: Deep Telegram Regex Message ID Extraction, Unlisted Path Cloud Purge Engine, and Dedicated Purge Unlisted Button in Trash Bin!"
   });
 });
 

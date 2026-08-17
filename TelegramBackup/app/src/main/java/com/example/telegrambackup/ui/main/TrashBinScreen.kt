@@ -147,40 +147,69 @@ fun TrashBinScreen() {
                     }
                 }
 
-                if (trashFiles.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(
                         onClick = {
                             scope.launch(Dispatchers.IO) {
                                 try {
-                                    val db = AppDatabase.getDatabase(context)
-                                    val serverApi = com.example.telegrambackup.network.ServerApi()
-                                    val authPrefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
-                                    val userEmail = authPrefs.getString("user_email", "") ?: prefs.recoveryEmail
-                                    
-                                    trashFiles.forEach { file ->
-                                        // 1. Delete from Telegram Cloud Chat (all chunks & message IDs) + Room DB
-                                        try { serverApi.purgeFileCompleteFromTelegram(context, prefs.botToken, prefs.chatId, file) } catch (_: Exception) {}
-                                        // 2. Delete from PostgreSQL Server DB
-                                        if (userEmail.isNotEmpty()) {
-                                            try { serverApi.deleteFile(prefs.serverUrl, userEmail, file.telegramFileId, file.path) } catch (_: Exception) {}
-                                        }
-                                    }
                                     withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "Emptied Trash Bin permanently!", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Scanning & purging unlisted Telegram cloud files...", Toast.LENGTH_SHORT).show()
+                                    }
+                                    val serverApi = com.example.telegrambackup.network.ServerApi()
+                                    val result = serverApi.deepPurgeTelegramChatStorage(prefs.botToken, prefs.chatId)
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Deep Cleaned Telegram! Purged ${result.first} unlisted cloud items.", Toast.LENGTH_LONG).show()
                                         refreshTrash()
                                     }
                                 } catch (e: Exception) {
                                     withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "Error emptying trash: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Deep Clean failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Empty Trash", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                        Text("🧹 Purge Unlisted", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                    }
+
+                    if (trashFiles.isNotEmpty()) {
+                        Button(
+                            onClick = {
+                                scope.launch(Dispatchers.IO) {
+                                    try {
+                                        val db = AppDatabase.getDatabase(context)
+                                        val serverApi = com.example.telegrambackup.network.ServerApi()
+                                        val authPrefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+                                        val userEmail = authPrefs.getString("user_email", "") ?: prefs.recoveryEmail
+                                        
+                                        trashFiles.forEach { file ->
+                                            // 1. Delete from Telegram Cloud Chat (all chunks & message IDs) + Room DB
+                                            try { serverApi.purgeFileCompleteFromTelegram(context, prefs.botToken, prefs.chatId, file) } catch (_: Exception) {}
+                                            // 2. Delete from PostgreSQL Server DB
+                                            if (userEmail.isNotEmpty()) {
+                                                try { serverApi.deleteFile(prefs.serverUrl, userEmail, file.telegramFileId, file.path) } catch (_: Exception) {}
+                                            }
+                                        }
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Emptied Trash Bin permanently!", Toast.LENGTH_SHORT).show()
+                                            refreshTrash()
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Error emptying trash: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Empty Trash", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                        }
                     }
                 }
             }
@@ -257,6 +286,10 @@ fun TrashBinScreen() {
                                                     try { serverApi.deleteFile(prefs.serverUrl, userEmail, fileRecord.telegramFileId, path) } catch (_: Exception) {}
                                                 }
                                             } else {
+                                                try { serverApi.purgeUnlistedPathFromTelegram(context, prefs.botToken, prefs.chatId, path) } catch (_: Exception) {}
+                                                if (userEmail.isNotEmpty()) {
+                                                    try { serverApi.deleteFile(prefs.serverUrl, userEmail, "", path) } catch (_: Exception) {}
+                                                }
                                                 dao.deleteByPath(path)
                                             }
                                         }
