@@ -974,6 +974,130 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
 
 /**
  * -------------------------------------------------------------------------------------
+ * 9c. API ROUTE: PURGE DATA (Clear file records with custom filters while keeping account)
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/files/purge (Aliases: /files/purge)
+ * Accepts: { email: string, mode: "ALL" | "DRIVE_ONLY" | "AUTO_BACKUP_ONLY" | "OLDER_THAN_DAYS", olderThanDays?: number }
+ */
+app.post(['/api/files/purge', '/files/purge'], async (req, res, next) => {
+  try {
+    const { email, mode, olderThanDays } = req.body || {};
+    const lowerEmail = (email || '').toLowerCase();
+    const purgeMode = mode || 'ALL';
+
+    if (!lowerEmail || !lowerEmail.includes('@')) {
+      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    }
+
+    let queryText = 'WHERE email = $1';
+    const queryParams = [lowerEmail];
+
+    if (purgeMode === 'DRIVE_ONLY') {
+      queryText += ` AND (is_drive_upload = true OR telegram_file_id = 'DIR_MARKER' OR path LIKE 'Internal Storage%')`;
+    } else if (purgeMode === 'AUTO_BACKUP_ONLY') {
+      queryText += ` AND (is_drive_upload = false AND telegram_file_id != 'DIR_MARKER' AND path NOT LIKE 'Internal Storage%')`;
+    } else if (purgeMode === 'OLDER_THAN_DAYS') {
+      const days = parseInt(olderThanDays) || 30;
+      const cutoffMs = Date.now() - (days * 86400 * 1000);
+      queryText += ` AND timestamp < $2`;
+      queryParams.push(cutoffMs);
+    }
+
+    let deletedItems = [];
+
+    if (pool) {
+      try {
+        const fetchRes = await queryWithTimeout(
+          `SELECT message_id as "messageId", telegram_file_id as "telegramFileId", path FROM backed_files ${queryText}`,
+          queryParams
+        );
+        deletedItems = fetchRes.rows || [];
+
+        await queryWithTimeout(`DELETE FROM backed_files ${queryText}`, queryParams);
+      } catch (dbErr) {
+        console.error('[DB Warn] Files purge DB query failed:', dbErr.message);
+        const list = memoryFiles.get(lowerEmail) || [];
+        memoryFiles.set(lowerEmail, []);
+      }
+    } else {
+      const list = memoryFiles.get(lowerEmail) || [];
+      deletedItems = list.map(f => ({ messageId: f.messageId, telegramFileId: f.telegramFileId, path: f.path }));
+      memoryFiles.set(lowerEmail, []);
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully purged ${deletedItems.length} file record(s) from cloud database.`,
+      deletedCount: deletedItems.length,
+      deletedItems
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
+ * 9d. API ROUTE: DELETE USER ACCOUNT AND ALL DATA PERMANENTLY
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/user/delete-account (Aliases: /user/delete-account)
+ * Accepts: { email: string, password?: string }
+ */
+app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, next) => {
+  try {
+    const { email, password } = req.body || {};
+    const lowerEmail = (email || '').toLowerCase();
+
+    if (!lowerEmail || !lowerEmail.includes('@')) {
+      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    }
+
+    if (pool) {
+      try {
+        // Optional password check if password provided
+        if (password) {
+          const userRes = await queryWithTimeout(`SELECT password_hash FROM users WHERE email = $1`, [lowerEmail]);
+          if (userRes.rows.length > 0) {
+            const hash = userRes.rows[0].password_hash;
+            const valid = await bcrypt.compare(password, hash);
+            if (!valid) {
+              return res.status(401).json({ success: false, message: 'Incorrect password. Account deletion cancelled.' });
+            }
+          }
+        }
+
+        // 1. Fetch file message IDs for Telegram cleanup
+        const filesRes = await queryWithTimeout(`SELECT message_id as "messageId", telegram_file_id as "telegramFileId" FROM backed_files WHERE email = $1`, [lowerEmail]);
+        const deletedItems = filesRes.rows || [];
+
+        // 2. Delete all backed files
+        await queryWithTimeout(`DELETE FROM backed_files WHERE email = $1`, [lowerEmail]);
+
+        // 3. Delete user account record
+        await queryWithTimeout(`DELETE FROM users WHERE email = $1`, [lowerEmail]);
+
+        return res.json({
+          success: true,
+          message: 'User account and all associated cloud file data deleted permanently.',
+          deletedCount: deletedItems.length,
+          deletedItems
+        });
+      } catch (dbErr) {
+        console.error('[DB Error] Account deletion failed:', dbErr.message);
+        memoryFiles.delete(lowerEmail);
+        return res.json({ success: true, message: 'Account deleted from memory cache.' });
+      }
+    } else {
+      memoryFiles.delete(lowerEmail);
+      return res.json({ success: true, message: 'Account deleted from memory cache.' });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
  * 10. API ROUTE: FETCH USER'S BACKED UP FILES LIST
  * -------------------------------------------------------------------------------------
  * Endpoint: GET /api/files/list?email=user@example.com (Aliases: /files/list)
