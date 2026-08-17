@@ -79,6 +79,26 @@ fun AppUpdaterDialog(
                 }
             }
 
+            // 1. Try Direct File URI (bypasses FileProvider process lock on package replacement)
+            try {
+                val policy = android.os.StrictMode.VmPolicy.Builder().build()
+                android.os.StrictMode.setVmPolicy(policy)
+
+                val fileUri = Uri.fromFile(apkFile)
+                val directIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(fileUri, "application/vnd.android.package-archive")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                context.startActivity(directIntent)
+                isInstallerLaunched = true
+                downloadStatusText = "🚀 Package Installer launched!\nTap 'Update' on the system prompt to complete installation."
+                Toast.makeText(context, "Tap 'Update' on the Android system installer prompt", Toast.LENGTH_LONG).show()
+                return
+            } catch (e: Exception) {
+                Log.w("AppUpdater", "Direct file URI launch failed, falling back to FileProvider", e)
+            }
+
+            // 2. Fallback to FileProvider URI
             val apkUri: Uri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
@@ -91,7 +111,6 @@ fun AppUpdaterDialog(
                 putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             }
 
-            // Grant read URI permission to all package installer handlers on device
             val resInfoList = context.packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
             for (resolveInfo in resInfoList) {
                 val packageName = resolveInfo.activityInfo.packageName

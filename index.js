@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 12,
-    versionName: "2.1.9",
+    versionCode: 13,
+    versionName: "2.1.10",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 Test Update v2.1.9: Verification release for Seamless Public Storage In-App Auto-Installer and Deterministic Certificate Verification!"
+    releaseNotes: "🚀 New Release v2.1.10: Direct File URI Launcher, FileProvider Process Unload Bypass, and 100% Identical Installation to Manual File Manager Click!"
   });
 });
 
