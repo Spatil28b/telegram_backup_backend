@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 9,
-    versionName: "2.1.6",
+    versionCode: 10,
+    versionName: "2.1.7",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.6: Multi-Chunk Telegram Message Purge Engine, Bulk Selection Cloud Chat Deletion, and Guaranteed Telegram File Erasure!"
+    releaseNotes: "🚀 New Release v2.1.7: Deterministic Project Signing Certificate, Direct FileProvider Intent Flags, and Guaranteed Seamless In-App APK Updates!"
   });
 });
 

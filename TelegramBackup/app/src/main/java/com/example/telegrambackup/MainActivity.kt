@@ -157,8 +157,8 @@ fun MainApp(
             val serverUrl = prefs.serverUrl.ifEmpty { "https://telegram-backup-backend.vercel.app" }
             val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
             val currentVersionName = try {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.6"
-            } catch (_: Exception) { "2.1.6" }
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.7"
+            } catch (_: Exception) { "2.1.7" }
 
             val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
             val isNotDismissed = versionInfo.versionName != prefs.dismissedUpdateVersion
@@ -383,7 +383,7 @@ fun MainApp(
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column {
-                            val drawerVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.6" } catch (_: Exception) { "2.1.6" } }
+                            val drawerVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.7" } catch (_: Exception) { "2.1.7" } }
                             Text("Cloud Sync Engine v$drawerVersion", style = MaterialTheme.typography.labelSmall.copy(color = TelegramBlue))
                         }
                     }

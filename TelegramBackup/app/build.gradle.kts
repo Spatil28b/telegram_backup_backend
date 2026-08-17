@@ -12,12 +12,25 @@ android {
         applicationId = "com.example.telegrambackup"
         minSdk = 24
         targetSdk = 36
-        versionCode = 9
-        versionName = "2.1.6"
+        versionCode = 10
+        versionName = "2.1.7"
+    }
+
+    signingConfigs {
+        create("customDebug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("customDebug")
+        }
         release {
+            signingConfig = signingConfigs.getByName("customDebug")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

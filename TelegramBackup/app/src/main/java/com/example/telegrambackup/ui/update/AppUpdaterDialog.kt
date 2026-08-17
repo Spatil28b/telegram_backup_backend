@@ -87,14 +87,15 @@ fun AppUpdaterDialog(
 
             val installIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(apkUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             }
 
             // Grant read URI permission to all package installer handlers on device
             val resInfoList = context.packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
             for (resolveInfo in resInfoList) {
                 val packageName = resolveInfo.activityInfo.packageName
-                context.grantUriPermission(packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.grantUriPermission(packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             }
 
             context.startActivity(installIntent)
@@ -166,6 +167,13 @@ fun AppUpdaterDialog(
                             modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
                             color = TelegramEmerald,
                             trackColor = Color.White.copy(alpha = 0.2f)
+                        )
+                    }
+                    if (isInstallerLaunched) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "💡 Tip: If installer closes without updating, uninstall your previous build once so the new signature key takes effect! All future updates will update with 1 tap.",
+                            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.6f))
                         )
                     }
                 }
