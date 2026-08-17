@@ -1143,10 +1143,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 4,
-    versionName: "2.1.1",
+    versionCode: 5,
+    versionName: "2.1.2",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 New Release v2.1.1: Features Dynamic Top Floating Process Bar, Settings Persistence across Updates/Re-logins, and SemVer Auto-Installer!"
+    releaseNotes: "🚀 New Release v2.1.2: Automatic App Startup Update Modal, Root Level Auto-Installer, and Dynamic Top Bar!"
   });
 });
 

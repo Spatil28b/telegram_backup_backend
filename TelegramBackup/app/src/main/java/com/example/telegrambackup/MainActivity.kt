@@ -150,6 +150,25 @@ fun MainApp(
     var displayUserName by remember(prefs.displayName) { mutableStateOf(prefs.displayName) }
     val userEmail = session.email.ifEmpty { "user@mybackup.cloud" }
 
+    var appUpdateInfo by remember { mutableStateOf<com.example.telegrambackup.ui.update.AppVersionInfo?>(null) }
+
+    LaunchedEffect(Unit) {
+        scope.launch(Dispatchers.IO) {
+            val serverUrl = prefs.serverUrl.ifEmpty { "https://telegram-backup-backend.vercel.app" }
+            val versionInfo = com.example.telegrambackup.network.ServerApi().getLatestAppVersion(serverUrl)
+            val currentVersionName = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.1.1"
+            } catch (_: Exception) { "2.1.1" }
+
+            val isNewerSemVer = com.example.telegrambackup.utils.SemVerUtils.isServerVersionNewer(versionInfo.versionName, currentVersionName)
+            if (versionInfo.success && isNewerSemVer && versionInfo.downloadUrl.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    appUpdateInfo = versionInfo
+                }
+            }
+        }
+    }
+
     // Quick Upload File Picker Launcher
     // Fix #2: Previously inserted fake DB records with placeholder IDs.
     // Now only triggers BackupWorker which handles actual Telegram uploads.
@@ -757,5 +776,12 @@ fun MainApp(
                 }
             }
         }
+    }
+
+    if (appUpdateInfo != null) {
+        com.example.telegrambackup.ui.update.AppUpdaterDialog(
+            versionInfo = appUpdateInfo!!,
+            onDismiss = { appUpdateInfo = null }
+        )
     }
 }
