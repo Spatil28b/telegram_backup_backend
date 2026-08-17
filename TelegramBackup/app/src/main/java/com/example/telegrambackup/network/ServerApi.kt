@@ -566,19 +566,22 @@ class ServerApi {
     /**
      * Batch deletes up to 100 messages at once using Telegram Bot API deleteMessages endpoint.
      * Automatically falls back to high-concurrency parallel deletion if batch fails.
+     * Returns Pair(allSuccess, deletedCount).
      */
-    suspend fun deleteTelegramMessagesBatch(botToken: String, chatId: String, messageIds: List<Long>): Boolean = withContext(Dispatchers.IO) {
+    suspend fun deleteTelegramMessagesBatch(botToken: String, chatId: String, messageIds: List<Long>): Pair<Boolean, Int> = withContext(Dispatchers.IO) {
         val cleanToken = botToken.trim()
         val cleanChatId = chatId.trim()
         val validIds = messageIds.filter { it > 0 }
-        if (cleanToken.isEmpty() || cleanChatId.isEmpty() || validIds.isEmpty()) return@withContext false
+        if (cleanToken.isEmpty() || cleanChatId.isEmpty() || validIds.isEmpty()) return@withContext Pair(false, 0)
 
         if (validIds.size == 1) {
-            return@withContext deleteTelegramMessage(cleanToken, cleanChatId, validIds[0])
+            val ok = deleteTelegramMessage(cleanToken, cleanChatId, validIds[0])
+            return@withContext Pair(ok, if (ok) 1 else 0)
         }
 
         val chunks = validIds.chunked(100)
         var allSuccess = true
+        var totalDeletedCount = 0
 
         for (chunk in chunks) {
             try {
@@ -600,8 +603,9 @@ class ServerApi {
 
                 if (ok) {
                     Log.d("ServerApi", "deleteTelegramMessagesBatch: Deleted ${chunk.size} messages in one batch")
+                    totalDeletedCount += chunk.size
                 } else {
-                    Log.d("ServerApi", "deleteTelegramMessagesBatch batch attempt not ok ($body), executing concurrent individual fallback")
+                    Log.d("ServerApi", "deleteTelegramMessagesBatch batch not ok ($body), executing concurrent individual fallback for ${chunk.size} messages")
                     coroutineScope {
                         val deferreds = chunk.map { msgId ->
                             async(Dispatchers.IO) {
@@ -609,6 +613,8 @@ class ServerApi {
                             }
                         }
                         val results = deferreds.awaitAll()
+                        val deletedInFallback = results.count { it }
+                        totalDeletedCount += deletedInFallback
                         if (results.any { !it }) allSuccess = false
                     }
                 }
@@ -621,16 +627,18 @@ class ServerApi {
                         }
                     }
                     val results = deferreds.awaitAll()
+                    val deletedInFallback = results.count { it }
+                    totalDeletedCount += deletedInFallback
                     if (results.any { !it }) allSuccess = false
                 }
             }
         }
-        return@withContext allSuccess
+        return@withContext Pair(allSuccess, totalDeletedCount)
     }
 
     /**
      * Sends HTTP deleteMessage request directly to Telegram Bot API with 429 Rate Limit retry support
-     * and idempotent handling for already-deleted messages.
+     * and idempotent handling for already-deleted messages or channel messages.
      */
     suspend fun deleteTelegramMessage(botToken: String, chatId: String, messageId: Long): Boolean = withContext(Dispatchers.IO) {
         val cleanToken = botToken.trim()
@@ -660,10 +668,17 @@ class ServerApi {
             val ok = jsonRes.optBoolean("ok", false)
             val desc = jsonRes.optString("description", "")
 
-            // Treat "message to delete not found", "message can't be deleted", or "MESSAGE_ID_INVALID" as successfully cleared
+            // Treat already deleted or missing messages as successfully cleared
             val isAlreadyGone = desc.contains("message to delete not found", ignoreCase = true) ||
                     desc.contains("message can't be deleted", ignoreCase = true) ||
-                    desc.contains("MESSAGE_ID_INVALID", ignoreCase = true)
+                    desc.contains("MESSAGE_ID_INVALID", ignoreCase = true) ||
+                    desc.contains("message identifier is not specified", ignoreCase = true)
+
+            if (!ok && !isAlreadyGone) {
+                if (desc.contains("not enough rights", ignoreCase = true) || desc.contains("CHAT_ADMIN_REQUIRED", ignoreCase = true)) {
+                    Log.w("ServerApi", "Bot needs Admin Delete rights in Telegram Channel/Chat: $cleanChatId")
+                }
+            }
 
             val isSuccess = ok || isAlreadyGone
             return@withContext isSuccess
@@ -711,7 +726,8 @@ class ServerApi {
         if (cleanToken.isNotEmpty() && cleanChatId.isNotEmpty() && msgIds.isNotEmpty()) {
             val idList = msgIds.toList()
             Log.d("ServerApi", "Purging ${idList.size} Telegram messages for file ${file.fileName}: $idList")
-            deletionOk = deleteTelegramMessagesBatch(cleanToken, cleanChatId, idList)
+            val (ok, _) = deleteTelegramMessagesBatch(cleanToken, cleanChatId, idList)
+            deletionOk = ok
         }
 
         // Clean up Room DB records
@@ -764,7 +780,8 @@ class ServerApi {
 
         var ok = true
         if (msgIds.isNotEmpty()) {
-            ok = deleteTelegramMessagesBatch(cleanToken, cleanChatId, msgIds.toList())
+            val (batchOk, _) = deleteTelegramMessagesBatch(cleanToken, cleanChatId, msgIds.toList())
+            ok = batchOk
         }
 
         try {
@@ -780,7 +797,7 @@ class ServerApi {
     }
 
     /**
-     * Sends a temporary ping message to Telegram chat to discover current highest message_id.
+     * Sends a temporary ping message to Telegram chat/channel to discover current highest message_id.
      */
     suspend fun getHighestTelegramMessageId(botToken: String, chatId: String): Long = withContext(Dispatchers.IO) {
         val cleanToken = botToken.trim()
@@ -797,7 +814,7 @@ class ServerApi {
             val request = Request.Builder().url(url).post(requestBody).build()
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: ""
-            if (response.isSuccessful && body.contains("\"ok\":true")) {
+            if (body.contains("\"ok\":true")) {
                 val jsonRes = JSONObject(body)
                 val resultObj = jsonRes.optJSONObject("result")
                 val highestId = resultObj?.optLong("message_id", 0L) ?: 0L
@@ -813,8 +830,8 @@ class ServerApi {
     }
 
     /**
-     * Deep-scans and purges ALL messages/files in Telegram Bot Chat up to maxMessageId.
-     * Uses 50-message chunks with parallel concurrent fallback & rate-limit throttling to guarantee 100% deletion.
+     * Deep-scans and purges ALL messages/files in Telegram Bot Chat/Channel up to maxMessageId.
+     * Uses 100-message chunks with parallel concurrent fallback & rate-limit throttling to guarantee 100% deletion.
      * Returns Pair(totalDeletedCount, totalScannedCount).
      */
     suspend fun deepPurgeTelegramChatStorage(
@@ -828,26 +845,21 @@ class ServerApi {
         if (cleanToken.isEmpty() || cleanChatId.isEmpty()) return@withContext Pair(0, 0)
 
         val pingId = getHighestTelegramMessageId(cleanToken, cleanChatId)
-        val highestId = when {
-            pingId > 0 -> pingId + 50L
-            knownMaxId > 0 -> knownMaxId + 50L
-            else -> 1000L
-        }
+        val highestId = maxOf(pingId + 20L, knownMaxId + 20L, 2000L)
 
-        Log.d("ServerApi", "deepPurgeTelegramChatStorage starting for chatId $cleanChatId up to highestId $highestId")
+        Log.d("ServerApi", "deepPurgeTelegramChatStorage starting for chatId $cleanChatId up to highestId $highestId (pingId=$pingId, knownMaxId=$knownMaxId)")
         val allIds = (1L..highestId).toList()
-        val subChunks = allIds.chunked(50) // Resilient 50-ID sub-chunks
+        val subChunks = allIds.chunked(100)
         var totalDeleted = 0
 
         subChunks.forEachIndexed { index, subChunk ->
             try {
-                val batchSuccess = deleteTelegramMessagesBatch(cleanToken, cleanChatId, subChunk)
-                if (batchSuccess) {
-                    totalDeleted += subChunk.size
-                }
+                val (_, deletedCount) = deleteTelegramMessagesBatch(cleanToken, cleanChatId, subChunk)
+                totalDeleted += deletedCount
             } catch (_: Exception) {}
             onProgress(index + 1, subChunks.size, totalDeleted)
         }
-        return@withContext Pair(totalDeleted, highestId.toInt())
+
+        return@withContext Pair(totalDeleted, allIds.size)
     }
 }

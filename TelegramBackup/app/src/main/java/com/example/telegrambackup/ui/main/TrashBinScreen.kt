@@ -163,10 +163,16 @@ fun TrashBinScreen() {
                             )
                             scope.launch(Dispatchers.IO) {
                                 try {
+                                    val db = AppDatabase.getDatabase(context)
+                                    val max1 = db.uploadedFileDao().getMaxMessageId() ?: 0L
+                                    val max2 = db.chunkProgressDao().getMaxMessageId() ?: 0L
+                                    val knownMax = maxOf(max1, max2)
+
                                     val serverApi = com.example.telegrambackup.network.ServerApi()
                                     val result = serverApi.deepPurgeTelegramChatStorage(
                                         token,
                                         chat,
+                                        knownMaxId = knownMax,
                                         onProgress = { currentBatch, totalBatches, count ->
                                             val fraction = if (totalBatches > 0) currentBatch.toFloat() / totalBatches.toFloat() else 0f
                                             com.example.telegrambackup.utils.DynamicProcessTracker.updateProgress(

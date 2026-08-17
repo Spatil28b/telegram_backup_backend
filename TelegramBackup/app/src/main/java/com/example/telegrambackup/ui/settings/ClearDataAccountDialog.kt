@@ -437,7 +437,7 @@ fun ClearDataAccountDialog(
                                         withContext(Dispatchers.Main) { statusMessage = "Purging ${allMsgIds.size} file messages from Telegram Cloud..." }
                                         val chunks = allMsgIds.chunked(20)
                                         for (chunk in chunks) {
-                                            val batchSuccess = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
+                                            val (batchSuccess, _) = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
                                             if (!batchSuccess) {
                                                 coroutineScope {
                                                     chunk.map { msgId: Long ->
@@ -511,7 +511,7 @@ fun ClearDataAccountDialog(
                                     withContext(Dispatchers.Main) { statusMessage = "Purging ${allMsgIds.size} files from Telegram Cloud..." }
                                     val chunks = allMsgIds.chunked(100)
                                     for (chunk in chunks) {
-                                        val batchSuccess = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
+                                        val (batchSuccess, _) = ServerApi().deleteTelegramMessagesBatch(botToken, chatId, chunk)
                                         if (!batchSuccess) {
                                             coroutineScope {
                                                 chunk.map { msgId: Long ->

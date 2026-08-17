@@ -1136,10 +1136,10 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
   return res.json({
     success: true,
-    versionCode: 18,
-    versionName: "2.1.15",
+    versionCode: 19,
+    versionName: "2.1.16",
     downloadUrl: downloadUrl,
-    releaseNotes: "🚀 Release v2.1.15: Direct Android System PackageInstaller Integration, Explicit Package Targeting (Fixes Third-Party App Hijacking), and Immediate Launch Auto-Updater!"
+    releaseNotes: "🚀 Release v2.1.16: Resilient Telegram Channel Unlisted File Deletion, Dynamic Max-ID Discovery from Room DB, Accurate Concurrent Purge Counting & Instant PackageInstaller Launcher!"
   });
 });
 
@@ -1151,8 +1151,8 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
   const releasesDir = path.join(__dirname, 'Releases');
   const candidates = [
     path.join(releasesDir, 'TelegramBackup-latest.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.15.apk'),
-    path.join(releasesDir, 'TelegramBackup-v2.1.14.apk')
+    path.join(releasesDir, 'TelegramBackup-v2.1.16.apk'),
+    path.join(releasesDir, 'TelegramBackup-v2.1.15.apk')
   ];
 
   let targetApk = null;
