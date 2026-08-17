@@ -43,6 +43,14 @@ fun AppInfoDialog(
     var updateInfoAvailable by remember { mutableStateOf<AppVersionInfo?>(null) }
     var upToDateText by remember { mutableStateOf("") }
 
+    val currentAppInfo = remember {
+        try {
+            val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
+            val code = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) pkg.longVersionCode.toInt() else @Suppress("DEPRECATION") pkg.versionCode
+            Pair(pkg.versionName ?: "2.1.0", code)
+        } catch (_: Exception) { Pair("2.1.0", 3) }
+    }
+
     if (updateInfoAvailable != null) {
         AppUpdaterDialog(
             versionInfo = updateInfoAvailable!!,
@@ -89,7 +97,7 @@ fun AppInfoDialog(
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Installed Version:", style = MaterialTheme.typography.labelMedium.copy(color = Color.White.copy(alpha = 0.7f)))
-                            Text("v2.1.0 (Build 3)", style = MaterialTheme.typography.labelMedium.copy(color = Color.White, fontWeight = FontWeight.Bold))
+                            Text("v${currentAppInfo.first} (Build ${currentAppInfo.second})", style = MaterialTheme.typography.labelMedium.copy(color = Color.White, fontWeight = FontWeight.Bold))
                         }
                         HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -127,11 +135,11 @@ fun AppInfoDialog(
                         val versionInfo = ServerApi().getLatestAppVersion(prefs.serverUrl)
                         withContext(Dispatchers.Main) {
                             isCheckingUpdate = false
-                            if (versionInfo.success && versionInfo.versionCode > 3 && versionInfo.downloadUrl.isNotEmpty()) {
+                            if (versionInfo.success && versionInfo.versionCode > currentAppInfo.second && versionInfo.downloadUrl.isNotEmpty()) {
                                 updateInfoAvailable = versionInfo
                                 upToDateText = ""
                             } else {
-                                upToDateText = "✅ Your app is fully up to date! (v2.1.0)"
+                                upToDateText = "✅ Your app is fully up to date! (v${currentAppInfo.first})"
                             }
                         }
                     }
