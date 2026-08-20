@@ -114,6 +114,11 @@ async function initDb() {
         timestamp BIGINT NOT NULL,
         message_id BIGINT DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS user_settings (
+        email VARCHAR(255) PRIMARY KEY,
+        settings_json TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
       ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_drive_upload BOOLEAN DEFAULT FALSE;
@@ -807,11 +812,20 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
     if (pool) {
       try {
         await queryWithTimeout(
-          `INSERT INTO users (email, settings_json)
-           VALUES ($1, $2)
-           ON CONFLICT (email) DO UPDATE SET settings_json = $2`,
+          `CREATE TABLE IF NOT EXISTS user_settings (
+            email VARCHAR(255) PRIMARY KEY,
+            settings_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )`
+        );
+        await queryWithTimeout(
+          `INSERT INTO user_settings (email, settings_json, updated_at)
+           VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT (email) DO UPDATE SET settings_json = $2, updated_at = CURRENT_TIMESTAMP`,
           [lowerEmail, settingsStr]
         );
+        // Also best-effort update users table if user exists
+        await queryWithTimeout(`UPDATE users SET settings_json = $1 WHERE email = $2`, [settingsStr, lowerEmail]).catch(() => {});
       } catch (dbErr) {
         console.error('[DB Warn] Save settings query failed:', dbErr.message);
         const u = memoryUsers.get(lowerEmail) || {};
@@ -845,9 +859,14 @@ app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings
     let settings = null;
     if (pool) {
       try {
-        const result = await queryWithTimeout(`SELECT settings_json FROM users WHERE email = $1`, [email]);
+        const result = await queryWithTimeout(`SELECT settings_json FROM user_settings WHERE email = $1`, [email]);
         if (result.rows.length > 0 && result.rows[0].settings_json) {
           settings = result.rows[0].settings_json;
+        } else {
+          const userResult = await queryWithTimeout(`SELECT settings_json FROM users WHERE email = $1`, [email]);
+          if (userResult.rows.length > 0 && userResult.rows[0].settings_json) {
+            settings = userResult.rows[0].settings_json;
+          }
         }
       } catch (dbErr) {
         console.error('[DB Warn] Get settings query failed:', dbErr.message);
