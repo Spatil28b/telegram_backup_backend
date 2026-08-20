@@ -1279,20 +1279,27 @@ function getMimeType(fileName) {
   const ext = path.extname(fileName || '').toLowerCase();
   const map = {
     '.mp4': 'video/mp4',
-    '.mkv': 'video/x-matroska',
-    '.webm': 'video/webm',
+    '.m4v': 'video/mp4',
     '.mov': 'video/quicktime',
+    '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska',
     '.avi': 'video/x-msvideo',
+    '.3gp': 'video/3gpp',
+    '.flv': 'video/x-flv',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.png': 'image/png',
     '.webp': 'image/webp',
     '.gif': 'image/gif',
     '.svg': 'image/svg+xml',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
     '.mp3': 'audio/mpeg',
-    '.wav': 'audio/wav',
+    '.m4a': 'audio/mp4',
     '.aac': 'audio/aac',
+    '.wav': 'audio/wav',
     '.ogg': 'audio/ogg',
+    '.opus': 'audio/opus',
     '.flac': 'audio/flac',
     '.pdf': 'application/pdf',
     '.zip': 'application/zip',
@@ -1305,7 +1312,9 @@ function getMimeType(fileName) {
     '.doc': 'application/msword',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.xls': 'application/vnd.ms-excel',
-    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.ppt': 'application/vnd.ms-powerpoint',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
   };
   return map[ext] || 'application/octet-stream';
 }
@@ -1500,11 +1509,16 @@ async function handleShare(req, res) {
     const isStream = req.query?.stream === '1';
     const secretKey = (payload.encryptionKey || payload.encKey || '').trim();
 
-    // Stream / Download Binary Content directly to browser with guaranteed filename & on-the-fly decryption!
+    // Stream / Download Binary Content directly to browser with guaranteed filename, HTTP 206 Range support & on-the-fly decryption!
     if (isDownload || isStream) {
       try {
-        const streamRes = await fetch(directTelegramStreamUrl);
-        if (!streamRes.ok) {
+        const fetchHeaders = {};
+        if (req.headers.range && !secretKey) {
+          fetchHeaders['Range'] = req.headers.range;
+        }
+
+        const streamRes = await fetch(directTelegramStreamUrl, { headers: fetchHeaders });
+        if (!streamRes.ok && streamRes.status !== 206) {
           return res.redirect(302, directTelegramStreamUrl);
         }
 
@@ -1520,6 +1534,17 @@ async function handleShare(req, res) {
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'public, max-age=86400');
 
+        if (streamRes.status === 206) {
+          res.status(206);
+          const cr = streamRes.headers.get('content-range');
+          if (cr) res.setHeader('Content-Range', cr);
+          const cl = streamRes.headers.get('content-length');
+          if (cl) res.setHeader('Content-Length', cl);
+        } else {
+          const cl = streamRes.headers.get('content-length') || fileSize;
+          if (cl && !secretKey) res.setHeader('Content-Length', cl);
+        }
+
         const { Readable, Transform } = require('stream');
         const nodeStream = Readable.fromWeb(streamRes.body);
 
@@ -1534,17 +1559,37 @@ async function handleShare(req, res) {
                 tempBuf = Buffer.concat([tempBuf, chunk]);
                 if (tempBuf.length >= 8) {
                   const magic = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]);
+                  const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+                  const iv = crypto.createHash('md5').update(secretKey, 'utf8').digest();
+
                   if (tempBuf.subarray(0, 8).equals(magic)) {
-                    // Initialize AES-256-CBC Decipher
-                    const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
-                    const iv = crypto.createHash('md5').update(secretKey, 'utf8').digest();
+                    // Modern Magic Header Encrypted Payload
                     decipherInstance = crypto.createDecipheriv('aes-256-cbc', key, iv);
+                    decipherInstance.setAutoPadding(true);
                     decipherInstance.on('error', () => {});
-                    const decChunk = decipherInstance.update(tempBuf.subarray(8));
-                    if (decChunk && decChunk.length > 0) this.push(decChunk);
+                    try {
+                      const decChunk = decipherInstance.update(tempBuf.subarray(8));
+                      if (decChunk && decChunk.length > 0) this.push(decChunk);
+                    } catch (_) {
+                      this.push(tempBuf.subarray(8));
+                    }
                   } else {
-                    // Plain unencrypted file
-                    this.push(tempBuf);
+                    // Check if legacy AES ciphertext without magic header
+                    try {
+                      const testDecipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+                      const testDec = testDecipher.update(tempBuf);
+                      if (testDec && testDec.length > 0) {
+                        decipherInstance = crypto.createDecipheriv('aes-256-cbc', key, iv);
+                        decipherInstance.setAutoPadding(true);
+                        decipherInstance.on('error', () => {});
+                        const decChunk = decipherInstance.update(tempBuf);
+                        if (decChunk && decChunk.length > 0) this.push(decChunk);
+                      } else {
+                        this.push(tempBuf);
+                      }
+                    } catch (_) {
+                      this.push(tempBuf);
+                    }
                   }
                   headerProcessed = true;
                   tempBuf = null;
@@ -1556,7 +1601,9 @@ async function handleShare(req, res) {
                 try {
                   const dec = decipherInstance.update(chunk);
                   if (dec && dec.length > 0) this.push(dec);
-                } catch (_) {}
+                } catch (_) {
+                  this.push(chunk);
+                }
               } else {
                 this.push(chunk);
               }
