@@ -1328,7 +1328,7 @@ const pinAttemptsMap = new Map();
  * -------------------------------------------------------------------------------------
  * Endpoint: GET /share, GET /api/share, GET /share/:token, GET /api/share/:token
  */
-app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (req, res) => {
+async function handleShare(req, res) {
   // Apply standard HTTP Security Headers
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -1336,7 +1336,7 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
   try {
-    let token = req.params.token || req.query.data || req.query.token;
+    let token = req.params?.token || req.query?.data || req.query?.token;
     if (!token) {
       return res.status(400).send('<h1>Invalid or missing share link parameter.</h1>');
     }
@@ -1417,7 +1417,7 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
     }
 
     // Check PIN requirement with Timing-Safe comparison
-    const userEnteredPin = (req.query.pin || req.query.password || '').trim();
+    const userEnteredPin = (req.query?.pin || req.query?.password || '').trim();
     if (pin && pin.trim().length > 0) {
       const expectedPin = pin.trim();
       const isPinMatch = userEnteredPin.length === expectedPin.length &&
@@ -1496,7 +1496,7 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
     }
 
     const mimeType = getMimeType(fileName);
-    const isDownload = req.query.download === '1';
+    const isDownload = req.query?.download === '1';
 
     // Direct Binary Download with guaranteed filename and extension!
     if (isDownload) {
@@ -1584,7 +1584,17 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
     console.error('Share link portal error:', err);
     return res.status(500).send(`<h1>Error resolving shared file: ${err.message}</h1>`);
   }
+}
+
+app.use((req, res, next) => {
+  const fullUrl = (req.originalUrl || req.url || '').toLowerCase();
+  if (req.method === 'GET' && (fullUrl.includes('/share') || req.query?.data)) {
+    return handleShare(req, res);
+  }
+  next();
 });
+
+app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], handleShare);
 
 /**
  * -------------------------------------------------------------------------------------
