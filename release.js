@@ -126,7 +126,14 @@ async function main() {
 
   // 5. Upload APK Assets with curl (bulletproof binary streaming)
   console.log('5️⃣  Uploading Release Binaries...');
-  function uploadAsset(assetName) {
+  async function uploadAsset(assetName) {
+    if (existingRelease && Array.isArray(existingRelease.assets)) {
+      const match = existingRelease.assets.find(a => a.name === assetName);
+      if (match) {
+        console.log(`   Removing previous asset ${assetName} (ID: ${match.id})...`);
+        await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/assets/${match.id}`, 'DELETE');
+      }
+    }
     const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
     console.log(`   Uploading ${assetName} (${apkSizeMB} MB)...`);
     const safeApkPath = APK_SRC.replace(/\\/g, '/');
@@ -134,10 +141,8 @@ async function main() {
     try {
       const res = execSync(curlCmd, { encoding: 'utf8' });
       const json = JSON.parse(res);
-      if (json.state === 'uploaded') {
+      if (json.state === 'uploaded' || json.id) {
         console.log(`   ✓ ${assetName} uploaded successfully!`);
-      } else if (json.message && json.message.includes('Validation Failed')) {
-        console.log(`   ✓ ${assetName} already exists on release.`);
       } else {
         console.log(`   ✓ ${assetName} uploaded.`);
       }
@@ -146,8 +151,8 @@ async function main() {
     }
   }
 
-  uploadAsset(`TelegramBackup-${tag}.apk`);
-  uploadAsset(`TelegramBackup-latest.apk`);
+  await uploadAsset(`TelegramBackup-${tag}.apk`);
+  await uploadAsset(`TelegramBackup-latest.apk`);
   console.log('');
 
   // 6. Deploy backend to GitHub & Vercel
