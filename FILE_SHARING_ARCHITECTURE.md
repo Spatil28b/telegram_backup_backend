@@ -117,7 +117,7 @@ This document outlines the **exact root causes**, **the engineering flaws that c
 ### Phase 1: Safe Encryption with 8-Byte Magic Header
 In `FileEncryptor.kt`:
 * Every encrypted file is prepended with an 8-byte magic header:
-  $$\text{MAGIC\_HEADER} = \texttt{0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00} \quad (\text{"ENC256\textbackslash x01\textbackslash x00"})$$
+  `MAGIC_HEADER = [0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]` → ASCII: `"ENC256"` + `\x01\x00`
 * **Strict Verification**:
   ```kotlin
   fun isEncryptedFile(file: File): Boolean {

@@ -1589,9 +1589,73 @@ async function handleShare(req, res) {
     const isVideo = mimeType.startsWith('video/');
     const isAudio = mimeType.startsWith('audio/');
     const isImage = mimeType.startsWith('image/');
+    const isPdf = mimeType === 'application/pdf';
     const pinParam = userEnteredPin ? `&pin=${encodeURIComponent(userEnteredPin)}` : '';
     const downloadLink = `/api/share?data=${encodeURIComponent(token)}${pinParam}&download=1`;
     const streamLink = `/api/share?data=${encodeURIComponent(token)}${pinParam}&stream=1`;
+
+    // Browser-playable formats (all others show a friendly fallback)
+    const browserVideoFormats = ['.mp4', '.webm', '.mov', '.ogg'];
+    const browserAudioFormats = ['.mp3', '.wav', '.aac', '.ogg', '.webm', '.flac'];
+    const fileExt = (fileName || '').toLowerCase().split('.').pop() || '';
+    const canPreviewVideo = isVideo && browserVideoFormats.includes('.' + fileExt);
+    const canPreviewAudio = isAudio && browserAudioFormats.includes('.' + fileExt);
+    const canPreviewImage = isImage;
+
+    // File type icon mapping
+    const fileTypeIcon = isPdf ? '📕' :
+      (fileExt === 'apk') ? '📱' :
+      (fileExt === 'zip' || fileExt === 'rar' || fileExt === '7z' || fileExt === 'tar') ? '🗜️' :
+      (fileExt === 'doc' || fileExt === 'docx') ? '📝' :
+      (fileExt === 'xls' || fileExt === 'xlsx') ? '📊' :
+      (fileExt === 'txt' || fileExt === 'json') ? '📄' :
+      isVideo ? '🎬' :
+      isAudio ? '🎵' :
+      isImage ? '🖼️' : '📦';
+
+    // Human readable file size
+    const fileSizeBytes = parseInt(fileSize) || 0;
+    const humanSize = fileSizeBytes > 0 ? (
+      fileSizeBytes >= 1073741824 ? (fileSizeBytes / 1073741824).toFixed(2) + ' GB' :
+      fileSizeBytes >= 1048576 ? (fileSizeBytes / 1048576).toFixed(1) + ' MB' :
+      fileSizeBytes >= 1024 ? (fileSizeBytes / 1024).toFixed(1) + ' KB' :
+      fileSizeBytes + ' B'
+    ) : '';
+
+    // Build preview HTML
+    let previewHtml;
+    if (canPreviewVideo) {
+      previewHtml = `<video id="mediaPlayer" controls autoplay playsinline src="${streamLink}"
+        onerror="document.getElementById('mediaPlayer').style.display='none'; document.getElementById('fallbackIcon').style.display='flex';">
+      </video>
+      <div id="fallbackIcon" style="display:none; padding:40px; flex-direction:column; align-items:center; gap:12px;">
+        <span style="font-size:64px;">${fileTypeIcon}</span>
+        <span style="color:#94a3b8; font-size:14px;">Preview not available — download to play</span>
+      </div>`;
+    } else if (canPreviewAudio) {
+      previewHtml = `<div style="padding:30px; display:flex; flex-direction:column; align-items:center; gap:16px; width:100%; box-sizing:border-box;">
+        <span style="font-size:64px;">🎵</span>
+        <audio id="mediaPlayer" controls src="${streamLink}" style="width:100%;"
+          onerror="document.getElementById('mediaPlayer').style.display='none'; document.getElementById('audioFallback').style.display='block';">
+        </audio>
+        <span id="audioFallback" style="display:none; color:#94a3b8; font-size:14px;">Preview not available — download to play</span>
+      </div>`;
+    } else if (canPreviewImage) {
+      previewHtml = `<img id="mediaPlayer" src="${streamLink}" alt="Preview"
+        onerror="document.getElementById('mediaPlayer').style.display='none'; document.getElementById('fallbackIcon').style.display='flex';" />
+      <div id="fallbackIcon" style="display:none; padding:40px; flex-direction:column; align-items:center; gap:12px;">
+        <span style="font-size:64px;">🖼️</span>
+        <span style="color:#94a3b8; font-size:14px;">Preview not available — download to view</span>
+      </div>`;
+    } else {
+      // Non-previewable file: show rich file type card
+      previewHtml = `<div style="padding:36px 20px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+        <span style="font-size:72px;">${fileTypeIcon}</span>
+        <span style="color:#e2e8f0; font-size:15px; font-weight:600; margin-top:4px;">.${escapeHtml(fileExt.toUpperCase())} File</span>
+        <span style="color:#64748b; font-size:13px;">${escapeHtml(mimeType)}</span>
+        ${humanSize ? `<span style="color:#94a3b8; font-size:13px; margin-top:4px;">📦 ${humanSize}</span>` : ''}
+      </div>`;
+    }
 
     return res.send(`
       <!DOCTYPE html>
@@ -1601,42 +1665,40 @@ async function handleShare(req, res) {
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>${escapeHtml(fileName || 'Cloud File')} - Telegram Backup</title>
         <style>
-          body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; box-sizing: border-box; }
+          * { box-sizing: border-box; }
+          body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; }
           .card { background: #1e293b; border: 1px solid #334155; border-radius: 24px; padding: 28px; max-width: 580px; width: 100%; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
-          .preview-box { width: 100%; max-height: 380px; border-radius: 16px; overflow: hidden; background: #0f172a; margin: 20px 0; display: flex; align-items: center; justify-content: center; }
-          video, img { width: 100%; max-height: 380px; object-fit: contain; }
-          audio { width: 100%; padding: 16px; }
-          h2 { margin: 8px 0; font-size: 19px; word-break: break-word; color: #f8fafc; }
-          .meta { color: #94a3b8; font-size: 13px; margin-bottom: 20px; }
-          .btn-download { display: inline-flex; align-items: center; justify-content: center; width: 100%; background: #0284c7; color: #fff; text-decoration: none; border-radius: 14px; padding: 16px; font-size: 16px; font-weight: bold; transition: 0.2s; box-sizing: border-box; }
-          .btn-download:hover { background: #0369a1; }
-          .btn-direct { display: inline-block; margin-top: 14px; color: #38bdf8; font-size: 13px; text-decoration: none; opacity: 0.85; }
-          .btn-direct:hover { text-decoration: underline; opacity: 1; }
+          .preview-box { width: 100%; border-radius: 16px; overflow: hidden; background: #0f172a; margin: 20px 0; display: flex; align-items: center; justify-content: center; min-height: 120px; }
+          video, img { width: 100%; max-height: 400px; object-fit: contain; }
+          audio { width: 100%; }
+          h2 { margin: 8px 0; font-size: 18px; word-break: break-word; color: #f8fafc; line-height: 1.4; }
+          .meta { color: #94a3b8; font-size: 13px; margin-bottom: 16px; }
+          .file-ext { display: inline-block; background: rgba(56,189,248,0.1); color: #38bdf8; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+          .btn-download { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: linear-gradient(135deg, #0284c7, #0ea5e9); color: #fff; text-decoration: none; border-radius: 14px; padding: 16px; font-size: 16px; font-weight: bold; transition: all 0.2s; border: none; cursor: pointer; }
+          .btn-download:hover { background: linear-gradient(135deg, #0369a1, #0284c7); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(2,132,199,0.4); }
+          .btn-download:active { transform: translateY(0); }
           .badge { display: inline-block; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 8px; margin-bottom: 12px; }
+          .footer { margin-top: 16px; color: #475569; font-size: 11px; }
+          .footer a { color: #64748b; text-decoration: none; }
+          .footer a:hover { color: #94a3b8; text-decoration: underline; }
         </style>
       </head>
       <body>
         <div class="card">
           <div class="badge">☁️ Telegram Backup Cloud Share</div>
-          <h2>${escapeHtml(fileName || 'Shared File')}</h2>
-          <div class="meta">${mimeType}</div>
+          <h2>${escapeHtml(fileName || 'Shared File')}<span class="file-ext">.${escapeHtml(fileExt)}</span></h2>
+          <div class="meta">${humanSize ? humanSize + ' • ' : ''}${escapeHtml(mimeType)}</div>
 
           <div class="preview-box">
-            ${isVideo ? `<video controls autoplay playsinline src="${streamLink}"></video>` :
-              isAudio ? `<audio controls src="${streamLink}"></audio>` :
-              isImage ? `<img src="${streamLink}" alt="Preview" />` :
-              `<div style="padding: 40px; font-size: 64px;">📄</div>`
-            }
+            ${previewHtml}
           </div>
 
           <a href="${downloadLink}" class="btn-download">
-            ⬇️ Download File (${escapeHtml(fileName)})
+            ⬇️ Download${humanSize ? ' (' + humanSize + ')' : ''}
           </a>
 
-          <div>
-            <a href="${directTelegramStreamUrl}" target="_blank" class="btn-direct">
-              ⚡ Open Direct Stream
-            </a>
+          <div class="footer">
+            Shared securely via <a href="#">Telegram Backup Cloud</a>
           </div>
         </div>
       </body>
