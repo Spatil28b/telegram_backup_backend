@@ -1252,6 +1252,249 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
   });
 });
 
+function getMimeType(fileName) {
+  const ext = path.extname(fileName || '').toLowerCase();
+  const map = {
+    '.mp4': 'video/mp4',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    '.mov': 'video/quicktime',
+    '.avi': 'video/x-msvideo',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.aac': 'audio/aac',
+    '.ogg': 'audio/ogg',
+    '.flac': 'audio/flac',
+    '.pdf': 'application/pdf',
+    '.zip': 'application/zip',
+    '.rar': 'application/x-rar-compressed',
+    '.7z': 'application/x-7z-compressed',
+    '.tar': 'application/x-tar',
+    '.apk': 'application/vnd.android.package-archive',
+    '.txt': 'text/plain',
+    '.json': 'application/json',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
+ * -------------------------------------------------------------------------------------
+ * UNIVERSAL WEB SHARE & STREAMING PORTAL
+ * -------------------------------------------------------------------------------------
+ * Endpoint: GET /share, GET /api/share, GET /share/:token, GET /api/share/:token
+ */
+app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (req, res) => {
+  try {
+    let token = req.params.token || req.query.data || req.query.token;
+    if (!token) {
+      return res.status(400).send('<h1>Invalid or missing share link parameter.</h1>');
+    }
+
+    let payload;
+    try {
+      let normalizedToken = String(token).replace(/-/g, '+').replace(/_/g, '/');
+      while (normalizedToken.length % 4) {
+        normalizedToken += '=';
+      }
+      const decoded = Buffer.from(normalizedToken, 'base64').toString('utf8');
+      payload = JSON.parse(decoded);
+    } catch (e) {
+      return res.status(400).send('<h1>Invalid or corrupted share link token.</h1>');
+    }
+
+    const { fileId, fileName, botToken, expiresAt, pin, fileSize } = payload;
+
+    // Check expiration
+    if (expiresAt && expiresAt > 0 && Date.now() > expiresAt) {
+      return res.status(410).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Link Expired - Telegram Backup Cloud</title>
+          <style>
+            body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+            .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 36px; max-width: 440px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+            h2 { margin: 16px 0 8px; color: #f87171; }
+            p { color: #94a3b8; font-size: 15px; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div style="font-size: 54px;">⏳</div>
+            <h2>Share Link Expired</h2>
+            <p>This protected cloud link has reached its expiration time limit and is no longer available.</p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    // Check PIN requirement
+    const userEnteredPin = (req.query.pin || req.query.password || '').trim();
+    if (pin && pin.trim().length > 0 && userEnteredPin !== pin.trim()) {
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Protected File - Enter PIN</title>
+          <style>
+            body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; }
+            .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 32px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+            h2 { margin: 12px 0 6px; font-size: 20px; }
+            .file-name { color: #38bdf8; font-size: 14px; word-break: break-all; margin-bottom: 20px; }
+            input { width: 100%; box-sizing: border-box; background: #0f172a; border: 1px solid #475569; border-radius: 12px; padding: 14px; color: #fff; font-size: 18px; text-align: center; letter-spacing: 4px; margin-bottom: 16px; outline: none; }
+            input:focus { border-color: #38bdf8; }
+            button { width: 100%; background: #0284c7; color: #fff; border: none; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+            button:hover { background: #0369a1; }
+            .error { color: #ef4444; font-size: 13px; margin-bottom: 12px; display: ${userEnteredPin ? 'block' : 'none'}; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div style="font-size: 48px;">🔒</div>
+            <h2>Protected Cloud File</h2>
+            <div class="file-name">📦 ${escapeHtml(fileName || 'Protected File')}</div>
+            <p style="color: #94a3b8; font-size: 14px; margin-bottom: 20px;">Enter the access PIN to unlock and download this file.</p>
+            <form method="GET" action="/share">
+              <input type="hidden" name="data" value="${escapeHtml(token)}" />
+              <input type="password" name="pin" placeholder="Enter PIN" autofocus required />
+              <div class="error">Incorrect PIN. Please try again.</div>
+              <button type="submit">Unlock & Open File</button>
+            </form>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    // Resolve Telegram Direct File URL
+    let directTelegramStreamUrl = payload.directUrl;
+
+    if (!directTelegramStreamUrl) {
+      const bot = botToken || process.env.TELEGRAM_BOT_TOKEN;
+      if (!bot || !fileId) {
+        return res.status(400).send('<h1>Invalid file identifier.</h1>');
+      }
+
+      const tgGetFileUrl = `https://api.telegram.org/bot${bot}/getFile?file_id=${fileId}`;
+      const getFileRes = await fetch(tgGetFileUrl);
+      const getFileData = await getFileRes.json();
+
+      if (!getFileData.ok || !getFileData.result || !getFileData.result.file_path) {
+        return res.status(404).send('<h1>File not found or expired on Telegram servers.</h1>');
+      }
+
+      const filePath = getFileData.result.file_path;
+      directTelegramStreamUrl = `https://api.telegram.org/file/bot${bot}/${filePath}`;
+    }
+
+    const mimeType = getMimeType(fileName);
+    const isDownload = req.query.download === '1';
+
+    // Direct Binary Download with proper filename and extension!
+    if (isDownload) {
+      const https = require('https');
+      const httpModule = directTelegramStreamUrl.startsWith('https:') ? https : require('http');
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName || 'file')}"`);
+      if (fileSize) res.setHeader('Content-Length', fileSize);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+
+      return httpModule.get(directTelegramStreamUrl, (tgStream) => {
+        tgStream.pipe(res);
+      }).on('error', (err) => {
+        console.error('Download pipe error, redirecting:', err);
+        return res.redirect(302, directTelegramStreamUrl);
+      });
+    }
+
+    // Stream / Preview Web Player Page
+    const isVideo = mimeType.startsWith('video/');
+    const isAudio = mimeType.startsWith('audio/');
+    const isImage = mimeType.startsWith('image/');
+    const pinParam = userEnteredPin ? `&pin=${encodeURIComponent(userEnteredPin)}` : '';
+    const downloadLink = `/share?data=${encodeURIComponent(token)}${pinParam}&download=1`;
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>${escapeHtml(fileName || 'Cloud File')} - Telegram Backup</title>
+        <style>
+          body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; box-sizing: border-box; }
+          .card { background: #1e293b; border: 1px solid #334155; border-radius: 24px; padding: 28px; max-width: 580px; width: 100%; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+          .preview-box { width: 100%; max-height: 380px; border-radius: 16px; overflow: hidden; background: #0f172a; margin: 20px 0; display: flex; align-items: center; justify-content: center; }
+          video, img { width: 100%; max-height: 380px; object-fit: contain; }
+          audio { width: 100%; padding: 16px; }
+          h2 { margin: 8px 0; font-size: 19px; word-break: break-word; color: #f8fafc; }
+          .meta { color: #94a3b8; font-size: 13px; margin-bottom: 20px; }
+          .btn-download { display: inline-flex; align-items: center; justify-content: center; width: 100%; background: #0284c7; color: #fff; text-decoration: none; border-radius: 14px; padding: 16px; font-size: 16px; font-weight: bold; transition: 0.2s; box-sizing: border-box; }
+          .btn-download:hover { background: #0369a1; }
+          .btn-direct { display: inline-block; margin-top: 14px; color: #38bdf8; font-size: 13px; text-decoration: none; opacity: 0.85; }
+          .btn-direct:hover { text-decoration: underline; opacity: 1; }
+          .badge { display: inline-block; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 8px; margin-bottom: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="badge">☁️ Telegram Backup Cloud Share</div>
+          <h2>${escapeHtml(fileName || 'Shared File')}</h2>
+          <div class="meta">${mimeType}</div>
+
+          <div class="preview-box">
+            ${isVideo ? `<video controls autoplay playsinline src="${directTelegramStreamUrl}"></video>` :
+              isAudio ? `<audio controls src="${directTelegramStreamUrl}"></audio>` :
+              isImage ? `<img src="${directTelegramStreamUrl}" alt="Preview" />` :
+              `<div style="padding: 40px; font-size: 64px;">📄</div>`
+            }
+          </div>
+
+          <a href="${downloadLink}" class="btn-download">
+            ⬇️ Download File (${escapeHtml(fileName)})
+          </a>
+
+          <div>
+            <a href="${directTelegramStreamUrl}" download="${escapeHtml(fileName)}" target="_blank" class="btn-direct">
+              ⚡ Direct Fast Mirror
+            </a>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+
+  } catch (err) {
+    console.error('Share link portal error:', err);
+    return res.status(500).send(`<h1>Error resolving shared file: ${err.message}</h1>`);
+  }
+});
+
 /**
  * -------------------------------------------------------------------------------------
  * ROOT HEALTH CHECK ENDPOINT
