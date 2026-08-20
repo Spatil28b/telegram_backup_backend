@@ -1498,13 +1498,29 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
     const mimeType = getMimeType(fileName);
     const isDownload = req.query.download === '1';
 
-    // Direct Binary Download with proper filename and extension!
+    // Direct Binary Download with guaranteed filename and extension!
     if (isDownload) {
-      res.setHeader('Content-Type', mimeType);
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName || 'file')}"`);
-      if (fileSize) res.setHeader('Content-Length', fileSize);
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      return res.redirect(302, directTelegramStreamUrl);
+      try {
+        const streamRes = await fetch(directTelegramStreamUrl);
+        if (!streamRes.ok) {
+          return res.redirect(302, directTelegramStreamUrl);
+        }
+
+        const safeAscii = (fileName || 'downloaded_file').replace(/[^\w.-]/g, '_');
+        const encodedUtf8 = encodeURIComponent(fileName || 'downloaded_file');
+
+        res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
+        const tgLen = streamRes.headers.get('content-length') || fileSize;
+        if (tgLen) res.setHeader('Content-Length', tgLen);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+
+        const { Readable } = require('stream');
+        const nodeStream = Readable.fromWeb(streamRes.body);
+        return nodeStream.pipe(res);
+      } catch (e) {
+        return res.redirect(302, directTelegramStreamUrl);
+      }
     }
 
     // Stream / Preview Web Player Page
@@ -1550,13 +1566,13 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
             }
           </div>
 
-          <a href="${directTelegramStreamUrl}" download="${escapeHtml(fileName)}" class="btn-download" target="_blank">
+          <a href="${downloadLink}" class="btn-download">
             ⬇️ Download File (${escapeHtml(fileName)})
           </a>
 
           <div>
-            <a href="${downloadLink}" class="btn-direct">
-              ⚡ Download via Cloud Proxy
+            <a href="${directTelegramStreamUrl}" target="_blank" class="btn-direct">
+              ⚡ Open Direct Stream
             </a>
           </div>
         </div>
