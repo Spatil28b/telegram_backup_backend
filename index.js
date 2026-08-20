@@ -1082,6 +1082,15 @@ app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, 
         memoryFiles.delete(lowerEmail);
         return res.json({ success: true, message: 'Account deleted from memory cache.' });
       }
+    } else {
+      memoryFiles.delete(lowerEmail);
+      return res.json({ success: true, message: 'Account deleted from memory cache.' });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 const memoryUserSettings = new Map();
 
 /**
