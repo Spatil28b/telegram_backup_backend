@@ -1082,10 +1082,81 @@ app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, 
         memoryFiles.delete(lowerEmail);
         return res.json({ success: true, message: 'Account deleted from memory cache.' });
       }
-    } else {
-      memoryFiles.delete(lowerEmail);
-      return res.json({ success: true, message: 'Account deleted from memory cache.' });
+const memoryUserSettings = new Map();
+
+/**
+ * -------------------------------------------------------------------------------------
+ * API ROUTE: SAVE CLOUD USER PROFILE & SETTINGS MANIFEST
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/user/settings, POST /user/settings
+ */
+app.post(['/api/user/settings', '/user/settings'], async (req, res, next) => {
+  try {
+    const { email, manifest } = req.body;
+    if (!email || !manifest) {
+      return res.status(400).json({ success: false, message: 'Email and manifest are required.' });
     }
+    const lowerEmail = email.trim().toLowerCase();
+    const manifestStr = typeof manifest === 'string' ? manifest : JSON.stringify(manifest);
+
+    memoryUserSettings.set(lowerEmail, manifestStr);
+
+    if (pool) {
+      try {
+        await queryWithTimeout(`
+          CREATE TABLE IF NOT EXISTS user_settings (
+            email VARCHAR(255) PRIMARY KEY,
+            manifest TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        await queryWithTimeout(`
+          INSERT INTO user_settings (email, manifest, updated_at)
+          VALUES ($1, $2, CURRENT_TIMESTAMP)
+          ON CONFLICT (email) DO UPDATE SET manifest = EXCLUDED.manifest, updated_at = CURRENT_TIMESTAMP
+        `, [lowerEmail, manifestStr]);
+      } catch (dbErr) {
+        console.warn('[DB Warning] user_settings save failed, cached in memory:', dbErr.message);
+      }
+    }
+
+    return res.json({ success: true, message: 'Settings manifest saved to cloud successfully.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
+ * API ROUTE: GET CLOUD USER PROFILE & SETTINGS MANIFEST
+ * -------------------------------------------------------------------------------------
+ * Endpoint: GET /api/user/settings, GET /user/settings
+ */
+app.get(['/api/user/settings', '/user/settings'], async (req, res, next) => {
+  try {
+    const email = req.query.email || req.query.userEmail;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email query parameter is required.' });
+    }
+    const lowerEmail = email.trim().toLowerCase();
+
+    if (pool) {
+      try {
+        const result = await queryWithTimeout(`SELECT manifest FROM user_settings WHERE email = $1`, [lowerEmail]);
+        if (result.rows.length > 0) {
+          return res.json({ success: true, manifest: result.rows[0].manifest });
+        }
+      } catch (dbErr) {
+        console.warn('[DB Warning] user_settings query error:', dbErr.message);
+      }
+    }
+
+    const mem = memoryUserSettings.get(lowerEmail);
+    if (mem) {
+      return res.json({ success: true, manifest: mem });
+    }
+
+    return res.status(404).json({ success: false, message: 'No cloud settings manifest found for this account.' });
   } catch (err) {
     next(err);
   }
