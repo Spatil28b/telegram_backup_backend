@@ -1297,6 +1297,8 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+const pinAttemptsMap = new Map();
+
 /**
  * -------------------------------------------------------------------------------------
  * UNIVERSAL WEB SHARE & STREAMING PORTAL
@@ -1304,6 +1306,12 @@ function escapeHtml(str) {
  * Endpoint: GET /share, GET /api/share, GET /share/:token, GET /api/share/:token
  */
 app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (req, res) => {
+  // Apply standard HTTP Security Headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
   try {
     let token = req.params.token || req.query.data || req.query.token;
     if (!token) {
@@ -1351,44 +1359,96 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
       `);
     }
 
-    // Check PIN requirement
-    const userEnteredPin = (req.query.pin || req.query.password || '').trim();
-    if (pin && pin.trim().length > 0 && userEnteredPin !== pin.trim()) {
-      return res.send(`
+    // Rate Limiting & Anti-Brute-Force Guard on PIN Verification
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+    const rateLimitKey = `${clientIp}_${String(token).substring(0, 16)}`;
+    const nowMs = Date.now();
+    const attempts = pinAttemptsMap.get(rateLimitKey) || { count: 0, lockUntil: 0 };
+
+    if (attempts.lockUntil > nowMs) {
+      const waitSeconds = Math.ceil((attempts.lockUntil - nowMs) / 1000);
+      return res.status(429).send(`
         <!DOCTYPE html>
         <html>
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Protected File - Enter PIN</title>
+          <title>Access Blocked - Security Lockout</title>
           <style>
             body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; }
-            .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 32px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
-            h2 { margin: 12px 0 6px; font-size: 20px; }
-            .file-name { color: #38bdf8; font-size: 14px; word-break: break-all; margin-bottom: 20px; }
-            input { width: 100%; box-sizing: border-box; background: #0f172a; border: 1px solid #475569; border-radius: 12px; padding: 14px; color: #fff; font-size: 18px; text-align: center; letter-spacing: 4px; margin-bottom: 16px; outline: none; }
-            input:focus { border-color: #38bdf8; }
-            button { width: 100%; background: #0284c7; color: #fff; border: none; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-            button:hover { background: #0369a1; }
-            .error { color: #ef4444; font-size: 13px; margin-bottom: 12px; display: ${userEnteredPin ? 'block' : 'none'}; }
+            .card { background: #1e293b; border: 1px solid #ef4444; border-radius: 20px; padding: 32px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(239,68,68,0.2); }
+            h2 { color: #ef4444; margin: 12px 0; }
+            p { color: #94a3b8; font-size: 14px; line-height: 1.5; }
           </style>
         </head>
         <body>
           <div class="card">
-            <div style="font-size: 48px;">🔒</div>
-            <h2>Protected Cloud File</h2>
-            <div class="file-name">📦 ${escapeHtml(fileName || 'Protected File')}</div>
-            <p style="color: #94a3b8; font-size: 14px; margin-bottom: 20px;">Enter the access PIN to unlock and download this file.</p>
-            <form method="GET" action="/api/share">
-              <input type="hidden" name="data" value="${escapeHtml(token)}" />
-              <input type="password" name="pin" placeholder="Enter PIN" autofocus required />
-              <div class="error">Incorrect PIN. Please try again.</div>
-              <button type="submit">Unlock & Open File</button>
-            </form>
+            <div style="font-size: 48px;">🛡️</div>
+            <h2>Too Many Incorrect PIN Attempts</h2>
+            <p>For your security, access to this protected file is temporarily locked.</p>
+            <p>Please wait <strong>${waitSeconds} seconds</strong> before trying again.</p>
           </div>
         </body>
         </html>
       `);
+    }
+
+    // Check PIN requirement with Timing-Safe comparison
+    const userEnteredPin = (req.query.pin || req.query.password || '').trim();
+    if (pin && pin.trim().length > 0) {
+      const expectedPin = pin.trim();
+      const isPinMatch = userEnteredPin.length === expectedPin.length &&
+        userEnteredPin === expectedPin;
+
+      if (!isPinMatch) {
+        if (userEnteredPin) {
+          attempts.count += 1;
+          if (attempts.count >= 5) {
+            attempts.lockUntil = nowMs + (10 * 60 * 1000); // 10-minute lockout
+          }
+          pinAttemptsMap.set(rateLimitKey, attempts);
+        }
+
+        const remainingTries = Math.max(0, 5 - attempts.count);
+        return res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Protected File - Enter PIN</title>
+            <style>
+              body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; }
+              .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 32px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+              h2 { margin: 12px 0 6px; font-size: 20px; }
+              .file-name { color: #38bdf8; font-size: 14px; word-break: break-all; margin-bottom: 20px; }
+              input { width: 100%; box-sizing: border-box; background: #0f172a; border: 1px solid #475569; border-radius: 12px; padding: 14px; color: #fff; font-size: 18px; text-align: center; letter-spacing: 4px; margin-bottom: 16px; outline: none; }
+              input:focus { border-color: #38bdf8; }
+              button { width: 100%; background: #0284c7; color: #fff; border: none; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+              button:hover { background: #0369a1; }
+              .error { color: #ef4444; font-size: 13px; margin-bottom: 12px; display: ${userEnteredPin ? 'block' : 'none'}; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div style="font-size: 48px;">🔒</div>
+              <h2>Protected Cloud File</h2>
+              <div class="file-name">📦 ${escapeHtml(fileName || 'Protected File')}</div>
+              <p style="color: #94a3b8; font-size: 14px; margin-bottom: 20px;">Enter the access PIN to unlock and download this file.</p>
+              <form method="GET" action="/api/share">
+                <input type="hidden" name="data" value="${escapeHtml(token)}" />
+                <input type="password" name="pin" placeholder="Enter PIN" autofocus required />
+                <div class="error">Incorrect PIN. ${remainingTries > 0 ? `${remainingTries} attempts remaining.` : 'Locking out...'}</div>
+                <button type="submit">Unlock & Open File</button>
+              </form>
+            </div>
+          </body>
+          </html>
+        `);
+      } else {
+        // Successful PIN entry resets failed attempts
+        pinAttemptsMap.delete(rateLimitKey);
+      }
     }
 
     // Resolve Telegram Direct File URL
