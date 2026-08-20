@@ -1379,7 +1379,7 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
             <h2>Protected Cloud File</h2>
             <div class="file-name">📦 ${escapeHtml(fileName || 'Protected File')}</div>
             <p style="color: #94a3b8; font-size: 14px; margin-bottom: 20px;">Enter the access PIN to unlock and download this file.</p>
-            <form method="GET" action="/share">
+            <form method="GET" action="/api/share">
               <input type="hidden" name="data" value="${escapeHtml(token)}" />
               <input type="password" name="pin" placeholder="Enter PIN" autofocus required />
               <div class="error">Incorrect PIN. Please try again.</div>
@@ -1417,19 +1417,11 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
 
     // Direct Binary Download with proper filename and extension!
     if (isDownload) {
-      const https = require('https');
-      const httpModule = directTelegramStreamUrl.startsWith('https:') ? https : require('http');
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName || 'file')}"`);
       if (fileSize) res.setHeader('Content-Length', fileSize);
       res.setHeader('Cache-Control', 'public, max-age=86400');
-
-      return httpModule.get(directTelegramStreamUrl, (tgStream) => {
-        tgStream.pipe(res);
-      }).on('error', (err) => {
-        console.error('Download pipe error, redirecting:', err);
-        return res.redirect(302, directTelegramStreamUrl);
-      });
+      return res.redirect(302, directTelegramStreamUrl);
     }
 
     // Stream / Preview Web Player Page
@@ -1437,7 +1429,7 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
     const isAudio = mimeType.startsWith('audio/');
     const isImage = mimeType.startsWith('image/');
     const pinParam = userEnteredPin ? `&pin=${encodeURIComponent(userEnteredPin)}` : '';
-    const downloadLink = `/share?data=${encodeURIComponent(token)}${pinParam}&download=1`;
+    const downloadLink = `/api/share?data=${encodeURIComponent(token)}${pinParam}&download=1`;
 
     return res.send(`
       <!DOCTYPE html>
@@ -1475,13 +1467,13 @@ app.get(['/share', '/api/share', '/share/:token', '/api/share/:token'], async (r
             }
           </div>
 
-          <a href="${downloadLink}" class="btn-download">
+          <a href="${directTelegramStreamUrl}" download="${escapeHtml(fileName)}" class="btn-download" target="_blank">
             ⬇️ Download File (${escapeHtml(fileName)})
           </a>
 
           <div>
-            <a href="${directTelegramStreamUrl}" download="${escapeHtml(fileName)}" target="_blank" class="btn-direct">
-              ⚡ Direct Fast Mirror
+            <a href="${downloadLink}" class="btn-direct">
+              ⚡ Download via Cloud Proxy
             </a>
           </div>
         </div>
