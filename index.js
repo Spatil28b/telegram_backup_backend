@@ -1497,9 +1497,11 @@ async function handleShare(req, res) {
 
     const mimeType = getMimeType(fileName);
     const isDownload = req.query?.download === '1';
+    const isStream = req.query?.stream === '1';
+    const secretKey = (payload.encryptionKey || payload.encKey || '').trim();
 
-    // Direct Binary Download with guaranteed filename and extension!
-    if (isDownload) {
+    // Stream / Download Binary Content directly to browser with guaranteed filename & on-the-fly decryption!
+    if (isDownload || isStream) {
       try {
         const streamRes = await fetch(directTelegramStreamUrl);
         if (!streamRes.ok) {
@@ -1510,14 +1512,74 @@ async function handleShare(req, res) {
         const encodedUtf8 = encodeURIComponent(fileName || 'downloaded_file');
 
         res.setHeader('Content-Type', mimeType || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
-        const tgLen = streamRes.headers.get('content-length') || fileSize;
-        if (tgLen) res.setHeader('Content-Length', tgLen);
+        if (isDownload) {
+          res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
+        } else {
+          res.setHeader('Content-Disposition', `inline; filename="${safeAscii}"`);
+        }
+        res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'public, max-age=86400');
 
-        const { Readable } = require('stream');
+        const { Readable, Transform } = require('stream');
         const nodeStream = Readable.fromWeb(streamRes.body);
-        return nodeStream.pipe(res);
+
+        if (secretKey) {
+          let headerProcessed = false;
+          let tempBuf = Buffer.alloc(0);
+          let decipherInstance = null;
+
+          const decryptTransform = new Transform({
+            transform(chunk, encoding, callback) {
+              if (!headerProcessed) {
+                tempBuf = Buffer.concat([tempBuf, chunk]);
+                if (tempBuf.length >= 8) {
+                  const magic = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]);
+                  if (tempBuf.subarray(0, 8).equals(magic)) {
+                    // Initialize AES-256-CBC Decipher
+                    const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+                    const iv = crypto.createHash('md5').update(secretKey, 'utf8').digest();
+                    decipherInstance = crypto.createDecipheriv('aes-256-cbc', key, iv);
+                    decipherInstance.on('error', () => {});
+                    const decChunk = decipherInstance.update(tempBuf.subarray(8));
+                    if (decChunk && decChunk.length > 0) this.push(decChunk);
+                  } else {
+                    // Plain unencrypted file
+                    this.push(tempBuf);
+                  }
+                  headerProcessed = true;
+                  tempBuf = null;
+                }
+                return callback();
+              }
+
+              if (decipherInstance) {
+                try {
+                  const dec = decipherInstance.update(chunk);
+                  if (dec && dec.length > 0) this.push(dec);
+                } catch (_) {}
+              } else {
+                this.push(chunk);
+              }
+              callback();
+            },
+            flush(callback) {
+              if (!headerProcessed && tempBuf && tempBuf.length > 0) {
+                this.push(tempBuf);
+              }
+              if (decipherInstance) {
+                try {
+                  const finalChunk = decipherInstance.final();
+                  if (finalChunk && finalChunk.length > 0) this.push(finalChunk);
+                } catch (_) {}
+              }
+              callback();
+            }
+          });
+
+          return nodeStream.pipe(decryptTransform).pipe(res);
+        } else {
+          return nodeStream.pipe(res);
+        }
       } catch (e) {
         return res.redirect(302, directTelegramStreamUrl);
       }
@@ -1529,6 +1591,7 @@ async function handleShare(req, res) {
     const isImage = mimeType.startsWith('image/');
     const pinParam = userEnteredPin ? `&pin=${encodeURIComponent(userEnteredPin)}` : '';
     const downloadLink = `/api/share?data=${encodeURIComponent(token)}${pinParam}&download=1`;
+    const streamLink = `/api/share?data=${encodeURIComponent(token)}${pinParam}&stream=1`;
 
     return res.send(`
       <!DOCTYPE html>
@@ -1559,9 +1622,9 @@ async function handleShare(req, res) {
           <div class="meta">${mimeType}</div>
 
           <div class="preview-box">
-            ${isVideo ? `<video controls autoplay playsinline src="${directTelegramStreamUrl}"></video>` :
-              isAudio ? `<audio controls src="${directTelegramStreamUrl}"></audio>` :
-              isImage ? `<img src="${directTelegramStreamUrl}" alt="Preview" />` :
+            ${isVideo ? `<video controls autoplay playsinline src="${streamLink}"></video>` :
+              isAudio ? `<audio controls src="${streamLink}"></audio>` :
+              isImage ? `<img src="${streamLink}" alt="Preview" />` :
               `<div style="padding: 40px; font-size: 64px;">📄</div>`
             }
           </div>
