@@ -120,10 +120,13 @@ async function initDb() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path);
+      CREATE INDEX IF NOT EXISTS idx_backed_files_email_ts ON backed_files(email, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_backed_files_email_drive ON backed_files(email, is_drive_upload);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
       ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_drive_upload BOOLEAN DEFAULT FALSE;
+      DELETE FROM otps WHERE expires_at < (EXTRACT(EPOCH FROM NOW()) * 1000);
     `);
-    console.log('[Neon Postgres] Database schema and tables initialized successfully!');
+    console.log('[Neon Postgres] Database schema, indexes and tables initialized successfully!');
 
     // Migration: Automatically hash any legacy plain-text passwords in PostgreSQL database using bcrypt (10 rounds)
     try {
