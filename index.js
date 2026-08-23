@@ -1199,21 +1199,35 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
           });
         }
       } catch (_) {}
+      
+      const fs = require('fs');
+      const path = require('path');
+      try {
+        const localVer = JSON.parse(fs.readFileSync(path.join(__dirname, 'app-version.json'), 'utf8'));
+        return res.json({
+          success: true,
+          versionCode: localVer.versionCode || 82,
+          versionName: localVer.versionName || "2.1.79",
+          downloadUrl: downloadUrl,
+          releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
+        });
+      } catch (_) {}
+
       return res.json({
         success: true,
-        versionCode: 24,
-        versionName: "2.1.21",
+        versionCode: 82,
+        versionName: "2.1.79",
         downloadUrl: downloadUrl,
-        releaseNotes: "🧹 Release v2.1.21: Intelligent top-down unlisted file scanner loop with dynamic 200-miss stopping threshold & pre-signed high-speed Azure CDN downloads."
+        releaseNotes: "✨ What's New in Release v2.1.79:\n- 📝 Dynamic 'What's New' & Live Changelog Engine\n- 📜 Full Version History Explorer\n- ⚡ Live GitHub & Cloud Release Sync"
       });
     });
   }).on('error', () => {
     return res.json({
       success: true,
-      versionCode: 24,
-      versionName: "2.1.21",
+      versionCode: 82,
+      versionName: "2.1.79",
       downloadUrl: downloadUrl,
-      releaseNotes: "🧹 Release v2.1.21: Intelligent top-down unlisted file scanner loop with dynamic 200-miss stopping threshold & pre-signed high-speed Azure CDN downloads."
+      releaseNotes: "✨ What's New in Release v2.1.79:\n- 📝 Dynamic 'What's New' & Live Changelog Engine\n- 📜 Full Version History Explorer\n- ⚡ Live GitHub & Cloud Release Sync"
     });
   });
 });

@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 24,
-  "versionName": "2.1.21",
+  "versionCode": 82,
+  "versionName": "2.1.79",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "🧹 Release v2.1.21: Intelligent top-down unlisted file scanner loop with dynamic 200-miss stopping threshold & pre-signed high-speed Azure CDN downloads."
+  "releaseNotes": "✨ What's New in Release v2.1.79:\n- 📝 Dynamic \"What's New\" & Live Changelog Engine (updates automatically on every release)\n- 📜 Full Version History Explorer (browse all release features & updates in-app)\n- ⚡ Live GitHub & Cloud Release Sync with real-time changelog parsing\n- 🛡️ Long-term stability & zero-degradation performance enhancements"
 }
