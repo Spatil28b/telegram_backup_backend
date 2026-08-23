@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 83,
-  "versionName": "2.1.80",
+  "versionCode": 84,
+  "versionName": "2.1.81",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.80:\n- 🎯 Category Multi-Select fix: tapping unbacked items in Category View properly toggles selection\n- 📦 Recent Files 1-Tap ZIP Downloader integrated into Home Dashboard multi-select bar\n- ⚡ 60 FPS smooth scrolling in Monthly Archive with zero GC date allocations\n- 🔄 Live Backup state synchronization between status bar and in-app controls"
+  "releaseNotes": "✨ What's New in Release v2.1.81:\n- 📥 Import Bot Fleet: import bots easily from JSON backup or pasted token lists\n- 📤 Export Bot Fleet: 1-tap export with Copy to Clipboard, Share via Apps, and Save to Downloads\n- 💾 Full Database Persistence: all bots are immediately saved to Room DB and synced to cloud\n- 🛡️ Uninstall/Reinstall Zero-Data-Loss fix: profile, master keys, bot fleet & cloud files perfectly restored on login"
 }
