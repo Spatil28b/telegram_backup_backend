@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 82,
-  "versionName": "2.1.79",
+  "versionCode": 83,
+  "versionName": "2.1.80",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.79:\n- 📝 Dynamic \"What's New\" & Live Changelog Engine (updates automatically on every release)\n- 📜 Full Version History Explorer (browse all release features & updates in-app)\n- ⚡ Live GitHub & Cloud Release Sync with real-time changelog parsing\n- 🛡️ Long-term stability & zero-degradation performance enhancements"
+  "releaseNotes": "✨ What's New in Release v2.1.80:\n- 🎯 Category Multi-Select fix: tapping unbacked items in Category View properly toggles selection\n- 📦 Recent Files 1-Tap ZIP Downloader integrated into Home Dashboard multi-select bar\n- ⚡ 60 FPS smooth scrolling in Monthly Archive with zero GC date allocations\n- 🔄 Live Backup state synchronization between status bar and in-app controls"
 }

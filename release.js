@@ -86,6 +86,7 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.80': `✨ What's New in Release v2.1.80:\n- 🎯 Category Multi-Select fix: tapping unbacked items in Category View properly toggles selection\n- 📦 Recent Files 1-Tap ZIP Downloader integrated into Home Dashboard multi-select bar\n- ⚡ 60 FPS smooth scrolling in Monthly Archive with zero GC date allocations\n- 🔄 Live Backup state synchronization between status bar and in-app controls`,
     '2.1.79': `✨ What's New in Release v2.1.79:\n- 📝 Dynamic "What's New" & Live Changelog Engine (updates automatically on every release)\n- 📜 Full Version History Explorer (browse all release features & updates in-app)\n- ⚡ Live GitHub & Cloud Release Sync with real-time changelog parsing\n- 🛡️ Long-term stability & zero-degradation performance enhancements`,
     '2.1.78': `✨ What's New in Release v2.1.78:\n- ⚡ Room DB Composite Indexing: sub-millisecond queries on 50,000+ files\n- 🧮 Bitwise integer overflow protection for long-running bot fleet rotation\n- 🧹 Automated routine background garbage collection for expired trash & orphan chunks\n- 📱 Android 14/15 foreground service compatibility & battery protection`,
     '2.1.77': `✨ What's New in Release v2.1.77:\n- 🎛️ 1-Tap Quick Controller notification tile in Android status bar\n- 🔔 4 Separated notification channels (Controller, Uploads, Downloads, Alerts)\n- 📥 Dedicated download progress stream with auto-open intents`,
