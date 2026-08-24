@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 85,
-  "versionName": "2.1.82",
+  "versionCode": 86,
+  "versionName": "2.1.83",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.82:\n- 🛡️ Zero-Dependency Deep Re-Indexer: restore drive catalogs directly from Telegram channel history\n- 🔍 Rename-Proof Content Fingerprinting: duplicate-proof backup even if files or folders are moved\n- ⚡ Delta Cloud Sync & Batch API: sub-second cloud sync with 95% reduced data usage\n- 🧹 \"Free Up Phone Space\" 1-Tap Assistant: safely reclaim gigabytes while preserving cloud copies\n- 🎛️ Smart Multi-Facet Filter Bar & 4x/3x/2x/1x dynamic grid layout switch\n- ⚡ Animated Shimmer Skeletons for 60 FPS zero-flicker photo & video browsing\n- ✨ Floating Glass Bulk Action Bar with 1-tap download, share, and trash actions\n- 🔐 Hardware-Backed Android Keystore Master Vault for AES-256 key protection"
+  "releaseNotes": "✨ What's New in Release v2.1.83:\n- ⚡ 0ms Zero-Lag Drive Rendering: instantaneous Room DB Flow data loading without network blocking\n- 🔒 Fixed Private Safe Vault: corrected path routing & seamless biometric prompt unlock\n- 🚀 Silky 60 FPS Scrolling: stable entity keys eliminating grid & list item flicker\n- 🔀 Unified Universal Media Preview: audio, video, photo & PDF streaming across all views\n- 🗑️ Permanent Cloud Trash Sync: soft-deletes synced with cloud backend API\n- ✨ Auto-Hiding FAB: Floating Action Button hides during multi-selection to prevent overlaps"
 }
