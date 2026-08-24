@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 84,
-  "versionName": "2.1.81",
+  "versionCode": 85,
+  "versionName": "2.1.82",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.81:\n- 📥 Import Bot Fleet: import bots easily from JSON backup or pasted token lists\n- 📤 Export Bot Fleet: 1-tap export with Copy to Clipboard, Share via Apps, and Save to Downloads\n- 💾 Full Database Persistence: all bots are immediately saved to Room DB and synced to cloud\n- 🛡️ Uninstall/Reinstall Zero-Data-Loss fix: profile, master keys, bot fleet & cloud files perfectly restored on login"
+  "releaseNotes": "✨ What's New in Release v2.1.82:\n- 🛡️ Zero-Dependency Deep Re-Indexer: restore drive catalogs directly from Telegram channel history\n- 🔍 Rename-Proof Content Fingerprinting: duplicate-proof backup even if files or folders are moved\n- ⚡ Delta Cloud Sync & Batch API: sub-second cloud sync with 95% reduced data usage\n- 🧹 \"Free Up Phone Space\" 1-Tap Assistant: safely reclaim gigabytes while preserving cloud copies\n- 🎛️ Smart Multi-Facet Filter Bar & 4x/3x/2x/1x dynamic grid layout switch\n- ⚡ Animated Shimmer Skeletons for 60 FPS zero-flicker photo & video browsing\n- ✨ Floating Glass Bulk Action Bar with 1-tap download, share, and trash actions\n- 🔐 Hardware-Backed Android Keystore Master Vault for AES-256 key protection"
 }
