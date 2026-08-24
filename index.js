@@ -950,6 +950,110 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
 
 /**
  * -------------------------------------------------------------------------------------
+ * 9a. API ROUTE: BATCH FILE RECORDS INDEXING (High Performance)
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/files/index-batch (Aliases: /files/index-batch, /api/index-files-batch)
+ * Accepts: { email: string, files: [ { fileName, telegramFileId, size, path, timestamp, messageId, isDriveUpload }, ... ] }
+ */
+app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batch'], async (req, res, next) => {
+  try {
+    const { email, files } = req.body || {};
+    const lowerEmail = (email || '').toLowerCase().trim();
+
+    if (!lowerEmail || !lowerEmail.includes('@')) {
+      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    }
+
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ success: false, message: 'Files array cannot be empty.' });
+    }
+
+    const validFiles = files.filter(f => f && (f.fileName || f.path) && f.telegramFileId);
+    if (validFiles.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid file entries provided.' });
+    }
+
+    if (pool) {
+      try {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          for (const f of validFiles) {
+            const fName = (f.fileName || f.name || '').trim();
+            const tgId = (f.telegramFileId || f.fileId || '').trim();
+            const fSize = parseInt(f.size || '0', 10) || 0;
+            const fPath = (f.path || '').trim();
+            const fTime = parseInt(f.timestamp || '0', 10) || Date.now();
+            const msgId = parseInt(f.messageId || '0', 10) || 0;
+            const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || fPath.startsWith('Internal Storage') || tgId === 'DIR_MARKER');
+
+            await client.query(
+              `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               ON CONFLICT (email, path) DO UPDATE SET
+                 file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8`,
+              [lowerEmail, fName, tgId, fSize, fPath, fTime, msgId, isDrive]
+            );
+          }
+          await client.query('COMMIT');
+        } catch (txErr) {
+          await client.query('ROLLBACK');
+          throw txErr;
+        } finally {
+          client.release();
+        }
+      } catch (dbErr) {
+        console.error('[DB Warn] Batch files DB save failed, saving to memory cache:', dbErr.message);
+        const list = memoryFiles.get(lowerEmail) || [];
+        for (const f of validFiles) {
+          const fPath = (f.path || '').trim();
+          const idx = list.findIndex(item => item.path === fPath && item.email === lowerEmail);
+          const entry = {
+            id: idx >= 0 ? list[idx].id : list.length + 1,
+            email: lowerEmail,
+            fileName: f.fileName || f.name || '',
+            telegramFileId: f.telegramFileId || f.fileId || '',
+            size: parseInt(f.size || '0', 10) || 0,
+            path: fPath,
+            timestamp: parseInt(f.timestamp || '0', 10) || Date.now(),
+            messageId: parseInt(f.messageId || '0', 10) || 0,
+            isDriveUpload: Boolean(f.isDriveUpload || f.is_drive_upload)
+          };
+          if (idx >= 0) list[idx] = entry;
+          else list.push(entry);
+        }
+        memoryFiles.set(lowerEmail, list);
+      }
+    } else {
+      const list = memoryFiles.get(lowerEmail) || [];
+      for (const f of validFiles) {
+        const fPath = (f.path || '').trim();
+        const idx = list.findIndex(item => item.path === fPath && item.email === lowerEmail);
+        const entry = {
+          id: idx >= 0 ? list[idx].id : list.length + 1,
+          email: lowerEmail,
+          fileName: f.fileName || f.name || '',
+          telegramFileId: f.telegramFileId || f.fileId || '',
+          size: parseInt(f.size || '0', 10) || 0,
+          path: fPath,
+          timestamp: parseInt(f.timestamp || '0', 10) || Date.now(),
+          messageId: parseInt(f.messageId || '0', 10) || 0,
+          isDriveUpload: Boolean(f.isDriveUpload || f.is_drive_upload)
+        };
+        if (idx >= 0) list[idx] = entry;
+        else list.push(entry);
+      }
+      memoryFiles.set(lowerEmail, list);
+    }
+
+    return res.json({ success: true, count: validFiles.length, message: `Successfully synced ${validFiles.length} file records.` });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
  * 9b. API ROUTE: DELETE FILE RECORD
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/files/delete (Aliases: /files/delete)
@@ -1119,30 +1223,46 @@ app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, 
 
 /**
  * -------------------------------------------------------------------------------------
- * 10. API ROUTE: FETCH USER'S BACKED UP FILES LIST
+ * 10. API ROUTE: FETCH USER'S BACKED UP FILES LIST (With Delta Sync Support)
  * -------------------------------------------------------------------------------------
- * Endpoint: GET /api/files/list?email=user@example.com (Aliases: /files/list)
+ * Endpoint: GET /api/files/list?email=user@example.com&since=1710000000 (Aliases: /files/list)
  */
 app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
   try {
     const email = (req.query.email || '').toLowerCase();
+    const since = parseInt(req.query.since || '0', 10) || 0;
+    const limit = Math.min(parseInt(req.query.limit || '10000', 10) || 10000, 20000);
 
     if (pool) {
       try {
-        const result = await queryWithTimeout(
-          `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId", is_drive_upload as "isDriveUpload"
-           FROM backed_files WHERE email = $1 ORDER BY timestamp DESC`,
-          [email]
-        );
-        return res.json({ success: true, files: result.rows });
+        let queryStr = `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId", is_drive_upload as "isDriveUpload"
+           FROM backed_files WHERE email = $1`;
+        const params = [email];
+
+        if (since > 0) {
+          queryStr += ` AND timestamp > $2 ORDER BY timestamp DESC LIMIT $3`;
+          params.push(since, limit);
+        } else {
+          queryStr += ` ORDER BY timestamp DESC LIMIT $2`;
+          params.push(limit);
+        }
+
+        const result = await queryWithTimeout(queryStr, params);
+        return res.json({ success: true, files: result.rows, isDelta: since > 0 });
       } catch (dbErr) {
         console.error('[DB Warn] Files list DB query failed:', dbErr.message);
-        const list = memoryFiles.get(email) || [];
-        return res.json({ success: true, files: list });
+        let list = memoryFiles.get(email) || [];
+        if (since > 0) {
+          list = list.filter(f => f.timestamp > since);
+        }
+        return res.json({ success: true, files: list.slice(0, limit), isDelta: since > 0 });
       }
     } else {
-      const list = memoryFiles.get(email) || [];
-      return res.json({ success: true, files: list });
+      let list = memoryFiles.get(email) || [];
+      if (since > 0) {
+        list = list.filter(f => f.timestamp > since);
+      }
+      return res.json({ success: true, files: list.slice(0, limit), isDelta: since > 0 });
     }
   } catch (err) {
     next(err);
