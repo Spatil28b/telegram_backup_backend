@@ -86,6 +86,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.86': `✨ What's New in Release v2.1.86:
+- 🤖 Full 10+ Bot Fleet Parallel Concurrency: dynamic worker allocation with atomic round-robin distribution utilizes all 10 active bots concurrently instead of capping at 6
+- 📄 Seamless In-App PDF Preview: resolved PdfRenderer ARGB_8888 rendering and isolated cache file descriptors (fixes "Unable to preview document")
+- 📥 1-Tap PDF & Document Download: direct instant decrypted export to Downloads/TelegramBackup with automatic Android MediaScanner indexing
+- 🔓 Flawless External App Compatibility: FileProvider Intent with explicit package URI permissions and auto-decryption ensures Google Drive/Acrobat never show "Can't open PDF file"
+- 🛡️ Duplicate Dialog Elimination: removed duplicate media viewer instances in Backup Explorer, preventing memory and file-descriptor contention
+- ⚡ Smart Network Scaling: Network Analysis Advisor expanded to auto-tune up to 16 parallel threads with multi-bot BOOST mode`,
     '2.1.85': `✨ What's New in Release v2.1.85:
 - 📄 Universal PDF & Document Viewer: seamless in-app preview with page zooming & crisp rendering (fixes "Unable to preview document")
 - 🔓 Multi-Key Self-Healing Decryption: candidate key testing ensures zero data loss even if keys were changed or refreshed

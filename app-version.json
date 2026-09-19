@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 88,
-  "versionName": "2.1.85",
+  "versionCode": 89,
+  "versionName": "2.1.86",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.85:\n- 📄 Universal PDF & Document Viewer: seamless in-app preview with page zooming & crisp rendering (fixes \"Unable to preview document\")\n- 🔓 Multi-Key Self-Healing Decryption: candidate key testing ensures zero data loss even if keys were changed or refreshed\n- 📥 Direct 1-Tap File Download: downloads actual decrypted documents/PDFs directly to Downloads/TelegramBackup without ZIP wrapping\n- 🧩 100% Decrypted Folder & Multi-Select Downloads: batch restore & folder ZIPs contain verified readable plain files across all bots\n- 🛡️ Verified Binary Magic Headers (%PDF, PNG, JPG): guarantees external viewers always open valid decrypted documents cleanly"
+  "releaseNotes": "✨ What's New in Release v2.1.86:\n- 🤖 Full 10+ Bot Fleet Parallel Concurrency: dynamic worker allocation with atomic round-robin distribution utilizes all 10 active bots concurrently instead of capping at 6\n- 📄 Seamless In-App PDF Preview: resolved PdfRenderer ARGB_8888 rendering and isolated cache file descriptors (fixes \"Unable to preview document\")\n- 📥 1-Tap PDF & Document Download: direct instant decrypted export to Downloads/TelegramBackup with automatic Android MediaScanner indexing\n- 🔓 Flawless External App Compatibility: FileProvider Intent with explicit package URI permissions and auto-decryption ensures Google Drive/Acrobat never show \"Can't open PDF file\"\n- 🛡️ Duplicate Dialog Elimination: removed duplicate media viewer instances in Backup Explorer, preventing memory and file-descriptor contention\n- ⚡ Smart Network Scaling: Network Analysis Advisor expanded to auto-tune up to 16 parallel threads with multi-bot BOOST mode"
 }
