@@ -1270,7 +1270,7 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
 });
 
 const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || 'REDACTED_GITHUB_PERSONAL_ACCESS_TOKEN_01';
-const GITHUB_REPO_PATH = 'spatil28a/telegram_backup_backend';
+const GITHUB_REPO_PATH = 'sid-codes28/telegram_backup_backend';
 
 /**
  * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)

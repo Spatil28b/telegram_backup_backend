@@ -8,7 +8,7 @@ try {
 const { execSync } = require('child_process');
 
 const TOKEN = 'REDACTED_GITHUB_PERSONAL_ACCESS_TOKEN_01';
-const OWNER = 'spatil28a';
+const OWNER = 'sid-codes28';
 const REPO = 'telegram_backup_backend';
 
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -166,7 +166,7 @@ async function main() {
     const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
     console.log(`   Uploading ${assetName} (${apkSizeMB} MB)...`);
     const safeApkPath = APK_SRC.replace(/\\/g, '/');
-    const curlCmd = `curl.exe -s -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${safeApkPath}" "${uploadUrl}"`;
+    const curlCmd = `curl.exe -s -L -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${safeApkPath}" "${uploadUrl}"`;
     try {
       const res = execSync(curlCmd, { encoding: 'utf8' });
       const json = JSON.parse(res);
