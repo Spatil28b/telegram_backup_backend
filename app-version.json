@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 87,
-  "versionName": "2.1.84",
+  "versionCode": 88,
+  "versionName": "2.1.85",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.84:\n- 🤖 Full 16-Bot Fleet Parallel Acceleration: unlocked all 10+ bots simultaneously without 6-bot bottleneck\n- 📦 Multi-Chunk Assembly Engine: multi-part files (large PDFs, high-res photos, videos) automatically merged & restored\n- 🛡️ Zero Data Loss Guarantee: permanent multi-chunk index preservation in Room DB and self-healing Telegram recovery\n- 📄 Complete PDF & Image Previews: full document rendering & lossless AES-256 decryption on download & cloud viewing\n- ⚡ High-Speed Cloud Restore: multi-stream parallel restoration directly to Downloads/TelegramRestored folder\n- 🔒 Resumable Decrypted ZIP Archiving: automatic in-place decryption for monthly ZIP backups"
+  "releaseNotes": "✨ What's New in Release v2.1.85:\n- 📄 Universal PDF & Document Viewer: seamless in-app preview with page zooming & crisp rendering (fixes \"Unable to preview document\")\n- 🔓 Multi-Key Self-Healing Decryption: candidate key testing ensures zero data loss even if keys were changed or refreshed\n- 📥 Direct 1-Tap File Download: downloads actual decrypted documents/PDFs directly to Downloads/TelegramBackup without ZIP wrapping\n- 🧩 100% Decrypted Folder & Multi-Select Downloads: batch restore & folder ZIPs contain verified readable plain files across all bots\n- 🛡️ Verified Binary Magic Headers (%PDF, PNG, JPG): guarantees external viewers always open valid decrypted documents cleanly"
 }
