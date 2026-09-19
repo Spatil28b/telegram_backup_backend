@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 86,
-  "versionName": "2.1.83",
+  "versionCode": 87,
+  "versionName": "2.1.84",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.83:\n- ⚡ 0ms Zero-Lag Drive Rendering: instantaneous Room DB Flow data loading without network blocking\n- 🔒 Fixed Private Safe Vault: corrected path routing & seamless biometric prompt unlock\n- 🚀 Silky 60 FPS Scrolling: stable entity keys eliminating grid & list item flicker\n- 🔀 Unified Universal Media Preview: audio, video, photo & PDF streaming across all views\n- 🗑️ Permanent Cloud Trash Sync: soft-deletes synced with cloud backend API\n- ✨ Auto-Hiding FAB: Floating Action Button hides during multi-selection to prevent overlaps"
+  "releaseNotes": "✨ What's New in Release v2.1.84:\n- 🤖 Full 16-Bot Fleet Parallel Acceleration: unlocked all 10+ bots simultaneously without 6-bot bottleneck\n- 📦 Multi-Chunk Assembly Engine: multi-part files (large PDFs, high-res photos, videos) automatically merged & restored\n- 🛡️ Zero Data Loss Guarantee: permanent multi-chunk index preservation in Room DB and self-healing Telegram recovery\n- 📄 Complete PDF & Image Previews: full document rendering & lossless AES-256 decryption on download & cloud viewing\n- ⚡ High-Speed Cloud Restore: multi-stream parallel restoration directly to Downloads/TelegramRestored folder\n- 🔒 Resumable Decrypted ZIP Archiving: automatic in-place decryption for monthly ZIP backups"
 }
