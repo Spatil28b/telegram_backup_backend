@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.95': `✨ What's New in Release v2.1.95:
+- ⚡ Ubiquitous 3-Dots File Actions: 3-dots overflow action button added to all file cards across the entire app (Cloud Explorer Grid & List, Drive Explorer, Home Recent Files, Trash Bin, Monthly Archive, Local Files)
+- 📱 Unified Material 3 Action Sheet: modal bottom sheet providing 1-tap Preview/Open, Cloud Share Link (PIN & QR), System Send to App, Download to Device, Rename File, Technical Properties & Metadata, Copy Path, and Move to Trash / Delete
+- 📤 Native Android App Sharing: send files directly to WhatsApp, Telegram, Gmail, Bluetooth with automatic FileProvider URI granting and on-demand cloud retrieval
+- ✏️ In-App File Renaming: rename files and folders instantly with synchronized updates across local Room DB, chunk upload tracker, and PostgreSQL cloud index
+- ℹ️ Deep Technical Properties & Info: inspect exact file size in bytes, complete storage path, Telegram File ID, Message ID, chunk breakdown, and AES-256-GCM encryption status with 1-tap copy buttons`,
     '2.1.94': `✨ What's New in Release v2.1.94:
 - ⚡ Real-Time Reactive Trash Flow: Trash Bin now collects an observable Room DB Flow so deletions, restorations, and auto-clean operations reflect instantaneously across the entire app with zero lag
 - 🛡️ Guaranteed Permanent Purge Engine: added forceLocalDelete to ensure local database records, preview caches, and chunk entries are cleanly wiped even if Telegram channel bot permissions are restricted
