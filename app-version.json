@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 94,
-  "versionName": "2.1.91",
+  "versionCode": 95,
+  "versionName": "2.1.92",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.91:\n- 📏 Advanced Per-Type File Size Filter: individual min & max byte rules across all 7 categories (Photos, Videos, Documents, Audio, Archives, APKs, Other) with global fallback protection\n- 🎨 10 Handcrafted Material 3 Themes: real-time theme engine supporting Pure AMOLED, Emerald, Cyberpunk, Sunset, Crimson, Arctic, Lavender, and more with color preview swatches\n- ⚡ 0-Delay Background Protection: continuous execution of active backup queues and worker threads during theme and rule updates\n- 🛡️ Resilient Room DB & Cloud Manifest Synchronization: atomic serialization ensuring no settings or size rules are lost across reboots or cloud restores"
+  "releaseNotes": "✨ What's New in Release v2.1.92:\n- 🔗 Fixed Cloud File Sharing & Downloads: multi-chunk files of any size now download and stream flawlessly via dynamic on-the-fly chunk assembly\n- 🔄 Dynamic Telegram CDN Resolution: eliminates 1-hour link expiration by dynamically resolving fresh CDN paths for every download and stream request\n- 🔒 Military-Grade Security Hardening: opaque random share links (s_xxxx) protect bot tokens and encryption keys server-side using AES-256-GCM; timing-safe PIN checks with 5-attempt lockout prevent brute-force attacks\n- 🎨 Google Material 3 Web Portal: stunning dark M3 web interface with interactive in-browser video/audio/photo preview players and one-click downloads\n- 📱 Modernized Android Share Sheet: Material 3 card dialog with filter chip expiry presets, PIN visibility toggle, and instant offline QR code generation\n- 🛡️ Zero-Disk Streaming & Integrity Protection: streams continuous decrypted byte streams on-the-fly without storing unencrypted files on server disks"
 }

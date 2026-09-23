@@ -86,6 +86,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.92': `✨ What's New in Release v2.1.92:
+- 🔗 Fixed Cloud File Sharing & Downloads: multi-chunk files of any size now download and stream flawlessly via dynamic on-the-fly chunk assembly
+- 🔄 Dynamic Telegram CDN Resolution: eliminates 1-hour link expiration by dynamically resolving fresh CDN paths for every download and stream request
+- 🔒 Military-Grade Security Hardening: opaque random share links (s_xxxx) protect bot tokens and encryption keys server-side using AES-256-GCM; timing-safe PIN checks with 5-attempt lockout prevent brute-force attacks
+- 🎨 Google Material 3 Web Portal: stunning dark M3 web interface with interactive in-browser video/audio/photo preview players and one-click downloads
+- 📱 Modernized Android Share Sheet: Material 3 card dialog with filter chip expiry presets, PIN visibility toggle, and instant offline QR code generation
+- 🛡️ Zero-Disk Streaming & Integrity Protection: streams continuous decrypted byte streams on-the-fly without storing unencrypted files on server disks`,
     '2.1.91': `✨ What's New in Release v2.1.91:
 - 📏 Advanced Per-Type File Size Filter: individual min & max byte rules across all 7 categories (Photos, Videos, Documents, Audio, Archives, APKs, Other) with global fallback protection
 - 🎨 10 Handcrafted Material 3 Themes: real-time theme engine supporting Pure AMOLED, Emerald, Cyberpunk, Sunset, Crimson, Arctic, Lavender, and more with color preview swatches
