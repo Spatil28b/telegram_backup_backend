@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.00': `✨ What's New in Release v2.2.00:
+- 🔒 Safe Folder Vault & Starred Separation: Completely separated Safe Folder encrypted vault files from Starred favorites with biometric/PIN authentication, one-tap instant lock, and auto-lock on exit
+- 🧭 Fully Customizable M3 Bottom Navigation: Added dedicated Settings subpage with live interactive preview to customize visible tabs, label visibility (Always, Selected, Never), density heights (Comfortable 80dp, Compact 64dp, Ultra-Compact 54dp), pill indicators, and haptic feedback
+- ➕ Minimal Material 3 Circular FAB: Replaced bulky multi-pill speed dial buttons with a sleek circular + FAB that opens a clean Material 3 modal bottom sheet for creating folders and uploading content
+- 📱 85%+ Content Viewport & Zero Screen Clutter: Eliminated duplicate TopAppBars on drilldown, added collapsible 42dp storage stats pill saving ~140dp, and condensed headers into compact 48dp single rows
+- 🖼️ Clean Google Files Grid Previews: Removed floating 3-dots badges covering photo/video thumbnails, providing quick actions via long-press and unobtrusive metadata footer actions`,
     '2.1.99': `✨ What's New in Release v2.1.99:
 - 🎨 14 Luxury Material 3 Themes: Added 4 brand-new palettes (Nordic Glacier, Sakura Blossom, Matrix Terminal, Mocha Espresso) and completely refined Emerald, Cyberpunk, Sunset, Crimson, Arctic, and Lavender with rich surface elevation containers
 - 📁 Instant Zero-Lag Browse Loading: Fixed Browse unresponsiveness by un-nesting root layout composables and streaming Room DB flows with 0ms first-frame response

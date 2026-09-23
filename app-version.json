@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 102,
-  "versionName": "2.1.99",
+  "versionCode": 103,
+  "versionName": "2.2.00",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.99:\n- 🎨 14 Luxury Material 3 Themes: Added 4 brand-new palettes (Nordic Glacier, Sakura Blossom, Matrix Terminal, Mocha Espresso) and completely refined Emerald, Cyberpunk, Sunset, Crimson, Arctic, and Lavender with rich surface elevation containers\n- 📁 Instant Zero-Lag Browse Loading: Fixed Browse unresponsiveness by un-nesting root layout composables and streaming Room DB flows with 0ms first-frame response\n- 🛡️ Zero-Crash Resilience Engine: Reinforced media viewers and file lists with strict boundary protection against OutOfBoundsException and async mutations\n- 🔘 Seamless Navigation & Controls: Cleaned up duplicate back handlers for silky smooth navigation across all screens"
+  "releaseNotes": "✨ What's New in Release v2.2.00:\n- 🔒 Safe Folder Vault & Starred Separation: Completely separated Safe Folder encrypted vault files from Starred favorites with biometric/PIN authentication, one-tap instant lock, and auto-lock on exit\n- 🧭 Fully Customizable M3 Bottom Navigation: Added dedicated Settings subpage with live interactive preview to customize visible tabs, label visibility (Always, Selected, Never), density heights (Comfortable 80dp, Compact 64dp, Ultra-Compact 54dp), pill indicators, and haptic feedback\n- ➕ Minimal Material 3 Circular FAB: Replaced bulky multi-pill speed dial buttons with a sleek circular + FAB that opens a clean Material 3 modal bottom sheet for creating folders and uploading content\n- 📱 85%+ Content Viewport & Zero Screen Clutter: Eliminated duplicate TopAppBars on drilldown, added collapsible 42dp storage stats pill saving ~140dp, and condensed headers into compact 48dp single rows\n- 🖼️ Clean Google Files Grid Previews: Removed floating 3-dots badges covering photo/video thumbnails, providing quick actions via long-press and unobtrusive metadata footer actions"
 }
