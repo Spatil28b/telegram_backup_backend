@@ -1806,10 +1806,59 @@ async function handleShareCreate(req, res) {
  * Handles single-part and multi-part chunked files, dynamically resolves fresh
  * Telegram CDN URLs, and performs streaming AES-256 decryption with zero disk footprint.
  */
-async function streamAndDecryptFile(res, shareData, isDownload = true) {
+async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
   const { fileName, mimeType, encryptionKey, chunks, totalChunks, botToken, fileId } = shareData;
   const safeAscii = (fileName || 'downloaded_file').replace(/[^\w.-]/g, '_');
   const encodedUtf8 = encodeURIComponent(fileName || 'downloaded_file');
+  const secretKey = (encryptionKey || '').trim();
+  const totalSize = parseInt(shareData.fileSize) || 0;
+
+  // Determine chunk list
+  let chunkList = Array.isArray(chunks) && chunks.length > 0 ? chunks : [];
+  if (chunkList.length === 0) {
+    chunkList = [{ chunkIndex: 1, telegramFileId: fileId, botTokenUsed: botToken }];
+  }
+  chunkList.sort((a, b) => (a.chunkIndex || 1) - (b.chunkIndex || 1));
+
+  // HTTP Range Request Handling (Essential for HTML5 video/audio playback and pause-resume download)
+  const rangeHeader = req && req.headers ? req.headers.range : null;
+  if (rangeHeader && totalSize > 0 && !secretKey && chunkList.length === 1) {
+    const activeBot = (chunkList[0].botTokenUsed || botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+    const activeFileId = chunkList[0].telegramFileId || chunkList[0].fileId;
+    const freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+
+    if (freshUrl) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+      const chunkSize = (end - start) + 1;
+
+      try {
+        const tgRes = await fetch(freshUrl, {
+          headers: { 'Range': `bytes=${start}-${end}` }
+        });
+
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Length', chunkSize);
+        res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+        if (isDownload) {
+          res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
+        } else {
+          res.setHeader('Content-Disposition', `inline; filename="${safeAscii}"`);
+        }
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+
+        const { Readable } = require('stream');
+        Readable.fromWeb(tgRes.body).pipe(res);
+        return;
+      } catch (rangeErr) {
+        console.warn('[Range Request Fallback]', rangeErr.message);
+      }
+    }
+  }
 
   // RFC-5987 Compliant Content-Disposition and MIME headers
   res.setHeader('Content-Type', mimeType || 'application/octet-stream');
@@ -1821,17 +1870,14 @@ async function streamAndDecryptFile(res, shareData, isDownload = true) {
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Connection', 'keep-alive');
 
-  // Determine chunk list
-  let chunkList = Array.isArray(chunks) && chunks.length > 0 ? chunks : [];
-  if (chunkList.length === 0) {
-    chunkList = [{ chunkIndex: 1, telegramFileId: fileId, botTokenUsed: botToken }];
+  if (totalSize > 0 && !secretKey) {
+    res.setHeader('Content-Length', totalSize);
   }
-  chunkList.sort((a, b) => (a.chunkIndex || 1) - (b.chunkIndex || 1));
 
   const { PassThrough, Readable, Transform } = require('stream');
   const outPass = new PassThrough();
-  const secretKey = (encryptionKey || '').trim();
 
   // On-The-Fly Zero-Disk Decryption Transform
   if (secretKey) {
@@ -1910,19 +1956,37 @@ async function streamAndDecryptFile(res, shareData, isDownload = true) {
     try { outPass.destroy(); } catch (_) {}
   });
 
+  // Fast Parallel CDN URL Pre-Resolution in Batches (Eliminates multi-second sequential roundtrips)
+  const resolvedUrls = new Map();
+  const batchSize = 6;
+  for (let i = 0; i < chunkList.length; i += batchSize) {
+    if (isAborted) break;
+    const batch = chunkList.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (c) => {
+      const activeBot = (c.botTokenUsed || botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+      const activeFileId = c.telegramFileId || c.fileId;
+      let freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+      if (!freshUrl && c.directUrl) freshUrl = c.directUrl;
+      if (!freshUrl && shareData.directUrl) freshUrl = shareData.directUrl;
+      if (freshUrl) resolvedUrls.set(c.chunkIndex || 1, freshUrl);
+    }));
+  }
+
   // Stream each sequential chunk into the pipeline
   try {
     for (const chunk of chunkList) {
       if (isAborted) break;
 
-      const activeBot = (chunk.botTokenUsed || botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-      const activeFileId = chunk.telegramFileId || chunk.fileId;
-      let freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
-      if (!freshUrl && chunk.directUrl) freshUrl = chunk.directUrl;
-      if (!freshUrl && shareData.directUrl) freshUrl = shareData.directUrl;
+      const idx = chunk.chunkIndex || 1;
+      let freshUrl = resolvedUrls.get(idx);
+      if (!freshUrl) {
+        const activeBot = (chunk.botTokenUsed || botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+        const activeFileId = chunk.telegramFileId || chunk.fileId;
+        freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+      }
 
       if (!freshUrl) {
-        console.error(`[Stream Error] Unable to resolve fresh CDN URL for chunk ${chunk.chunkIndex}`);
+        console.error(`[Stream Error] Unable to resolve fresh CDN URL for chunk ${idx}`);
         continue;
       }
 
@@ -1930,7 +1994,7 @@ async function streamAndDecryptFile(res, shareData, isDownload = true) {
 
       const chunkRes = await fetch(freshUrl);
       if (!chunkRes.ok || !chunkRes.body) {
-        console.error(`[Stream Error] Telegram CDN returned HTTP ${chunkRes.status} for chunk ${chunk.chunkIndex}`);
+        console.error(`[Stream Error] Telegram CDN returned HTTP ${chunkRes.status} for chunk ${idx}`);
         continue;
       }
 
@@ -1945,7 +2009,7 @@ async function streamAndDecryptFile(res, shareData, isDownload = true) {
         });
         nodeChunkStream.on('error', (err) => {
           activeNodeStream = null;
-          console.warn(`[Chunk Stream Error] Part ${chunk.chunkIndex}:`, err.message);
+          console.warn(`[Chunk Stream Error] Part ${idx}:`, err.message);
           resolve(); // Continue to next chunk gracefully
         });
       });
@@ -2176,7 +2240,7 @@ async function handleShare(req, res) {
     const isStream = req.query?.stream === '1';
 
     if (isDownload || isStream) {
-      return await streamAndDecryptFile(res, shareData, isDownload);
+      return await streamAndDecryptFile(req, res, shareData, isDownload);
     }
 
     // 5. Render Full Google Material 3 Web Share Portal
@@ -2548,13 +2612,18 @@ async function handleShare(req, res) {
         </div>
 
         <script>
-          function onDownloadClicked() {
+          async function onDownloadClicked() {
             const btn = document.getElementById('downloadBtn');
             const txt = document.getElementById('dlText');
-            txt.innerText = 'Starting Secure Download...';
+            txt.innerText = '⚡ Connecting Stream...';
+            setTimeout(() => {
+              if (txt.innerText.includes('Connecting')) {
+                txt.innerText = '⬇️ Downloading File...';
+              }
+            }, 2000);
             setTimeout(() => {
               txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
-            }, 5000);
+            }, 8000);
           }
 
           function copyLink() {
@@ -2577,12 +2646,69 @@ async function handleShare(req, res) {
   }
 }
 
+/**
+ * GET /api/share/chunk/:id/:chunkIndex — Delivers a single 4MB chunk directly.
+ * Bypasses Vercel execution timeouts for large multi-part files.
+ */
+async function handleShareChunk(req, res) {
+  try {
+    const identifier = req.params?.id || req.query?.id;
+    const chunkIdx = parseInt(req.params?.chunkIndex || req.query?.chunkIndex) || 1;
+    if (!identifier) {
+      return res.status(400).json({ success: false, message: 'Missing file identifier' });
+    }
+
+    const shareData = await resolveShareData(identifier);
+    if (!shareData) {
+      return res.status(404).json({ success: false, message: 'Shared file not found or expired' });
+    }
+
+    // Check PIN protection if set
+    if (shareData.pinHash) {
+      const pinParam = req.query?.pin || req.headers['x-share-pin'] || '';
+      const pinHash = crypto.createHash('sha256').update(String(pinParam).trim()).digest('hex');
+      if (pinHash !== shareData.pinHash) {
+        return res.status(401).json({ success: false, message: 'Security PIN required to access chunk' });
+      }
+    }
+
+    let chunkList = Array.isArray(shareData.chunks) && shareData.chunks.length > 0 ? shareData.chunks : [];
+    if (chunkList.length === 0) {
+      chunkList = [{ chunkIndex: 1, telegramFileId: shareData.fileId, botTokenUsed: shareData.botToken }];
+    }
+    const targetChunk = chunkList.find(c => (c.chunkIndex || 1) === chunkIdx) || chunkList[0];
+
+    const activeBot = (targetChunk.botTokenUsed || shareData.botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+    const activeFileId = targetChunk.telegramFileId || targetChunk.fileId;
+    const freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+
+    if (!freshUrl) {
+      return res.status(502).json({ success: false, message: `Could not resolve Telegram CDN URL for chunk ${chunkIdx}` });
+    }
+
+    const tgRes = await fetch(freshUrl);
+    if (!tgRes.ok || !tgRes.body) {
+      return res.status(tgRes.status).json({ success: false, message: `Telegram CDN error: HTTP ${tgRes.status}` });
+    }
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const { Readable } = require('stream');
+    Readable.fromWeb(tgRes.body).pipe(res);
+  } catch (err) {
+    console.error('[Share Chunk Error]', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 // Register Sharing Engine API Routes
 app.post(['/api/share/create', '/share/create'], handleShareCreate);
 app.get(['/api/share/download/:id', '/share/download/:id'], (req, res) => {
   req.query.download = '1';
   return handleShare(req, res);
 });
+app.get(['/api/share/chunk/:id/:chunkIndex', '/share/chunk/:id/:chunkIndex'], handleShareChunk);
 app.get(['/share', '/api/share', '/share/:token', '/api/share/:token', '/share/:id', '/api/share/:id'], handleShare);
 
 app.use((req, res, next) => {
