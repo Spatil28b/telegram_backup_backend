@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.97': `✨ What's New in Release v2.1.97:
+- 🧹 Complete Google Files Clean Screen: real StatFs device storage breakdown, segmented storage progress meter, 1-tap junk cleaner, backed up media deletion, duplicate cleaner, and trash quick access
+- 📁 Google Files Browse Hub: Search in Files pill bar, Recent horizontal carousel, 2-column pastel category cards, Starred & Safe folder Collections, and real-time Storage devices
+- ⭐ Starred Files Collection: star important cloud files from 3-dots action menu and access them instantly from Collections
+- 🔒 Safe Folder Vault: Biometric/PIN-protected private vault for personal and confidential files
+- 🎨 Google Files Material 3 Polish: clean spacing, refined typography, and intuitive back-navigation hierarchy`,
     '2.1.96': `✨ What's New in Release v2.1.96:
 - 🎨 All-New SpotiFLAC Bold Settings UI: completely reimagined Settings screen inspired by SpotiFLAC with clean high-contrast typography, uppercase section accents, and unified card styling
 - 📦 Unified Settings Groups: settings are organized inside elevated 20dp rounded surface cards with subtle hairline dividers, squircle icon boxes, and value status badges

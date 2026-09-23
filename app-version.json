@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 99,
-  "versionName": "2.1.96",
+  "versionCode": 100,
+  "versionName": "2.1.97",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.96:\n- 🎨 All-New SpotiFLAC Bold Settings UI: completely reimagined Settings screen inspired by SpotiFLAC with clean high-contrast typography, uppercase section accents, and unified card styling\n- 📦 Unified Settings Groups: settings are organized inside elevated 20dp rounded surface cards with subtle hairline dividers, squircle icon boxes, and value status badges\n- 🔍 Instant Pill Search: pill/capsule search bar enables real-time search across cloud sync, bot pool, security, rules, and preferences\n- 🌟 Redesigned Hero Profile & Subpages: elevated hero account card with active storage badges and circular back-button subpage headers across all settings categories"
+  "releaseNotes": "✨ What's New in Release v2.1.97:\n- 🧹 Complete Google Files Clean Screen: real StatFs device storage breakdown, segmented storage progress meter, 1-tap junk cleaner, backed up media deletion, duplicate cleaner, and trash quick access\n- 📁 Google Files Browse Hub: Search in Files pill bar, Recent horizontal carousel, 2-column pastel category cards, Starred & Safe folder Collections, and real-time Storage devices\n- ⭐ Starred Files Collection: star important cloud files from 3-dots action menu and access them instantly from Collections\n- 🔒 Safe Folder Vault: Biometric/PIN-protected private vault for personal and confidential files\n- 🎨 Google Files Material 3 Polish: clean spacing, refined typography, and intuitive back-navigation hierarchy"
 }
