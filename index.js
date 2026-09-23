@@ -1286,6 +1286,58 @@ const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || 'REDACTED_GITHUB_PERSON
 const GITHUB_REPO_PATH = 'sid-codes28/telegram_backup_backend';
 
 /**
+ * Safely loads the local app-version.json file with cross-platform and Vercel serverless fallback.
+ */
+function getLocalAppVersion() {
+  try {
+    return require('./app-version.json');
+  } catch (e1) {
+    try {
+      return require('../app-version.json');
+    } catch (e2) {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        return JSON.parse(fs.readFileSync(path.join(process.cwd(), 'app-version.json'), 'utf8'));
+      } catch (_) {
+        return {
+          versionCode: 104,
+          versionName: '2.2.1',
+          releaseNotes: '✨ What\'s New in Release v2.2.1:\n- 🧭 Modern M3 Navigation by Default\n- ⚡ Instant Zero-Lag Tab Switching\n- 🕒 Chronological Activity Feed (Newest First)\n- 🎨 Google M3 Minimal Popups\n- 🔔 Modern Status Notifications'
+        };
+      }
+    }
+  }
+}
+
+/**
+ * Computes monotonic, continuous Android versionCode from semantic version string.
+ * Supports legacy 2.1.xx series as well as the new single-digit system (2.2.0 = 103, 2.2.1 = 104, 2.2.9 = 112, 2.3.0 = 113).
+ */
+function calculateVersionCode(name) {
+  const localVer = getLocalAppVersion();
+  const cleanName = (name || '').replace(/^v/, '').trim();
+  if (localVer && localVer.versionName === cleanName && localVer.versionCode) {
+    return localVer.versionCode;
+  }
+  const parts = cleanName.split('.').map(p => parseInt(p, 10));
+  if (parts.length >= 3 && !parts.some(isNaN)) {
+    const [major, minor, patch] = parts;
+    if (major === 2 && minor === 1) {
+      return patch + 3;
+    } else if (major === 2 && minor >= 2) {
+      return 103 + (minor - 2) * 10 + patch;
+    } else if (major > 2) {
+      return 103 + 80 + (major - 3) * 100 + minor * 10 + patch;
+    }
+  }
+  if (localVer && localVer.versionCode) {
+    return localVer.versionCode;
+  }
+  return 104;
+}
+
+/**
  * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)
  * Dynamically queries GitHub Releases in real-time for instantaneous update availability.
  */
@@ -1318,11 +1370,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
         if (json && json.tag_name) {
           const tag = json.tag_name;
           const name = tag.replace(/^v/, '');
-          let code = 24;
-          const parts = name.split('.').map(p => parseInt(p, 10));
-          if (parts.length >= 3 && !isNaN(parts[2])) {
-            code = parts[2] + 3;
-          }
+          const code = calculateVersionCode(name);
           return res.json({
             success: true,
             versionCode: code,
@@ -1333,34 +1381,23 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
         }
       } catch (_) {}
       
-      const fs = require('fs');
-      const path = require('path');
-      try {
-        const localVer = JSON.parse(fs.readFileSync(path.join(__dirname, 'app-version.json'), 'utf8'));
-        return res.json({
-          success: true,
-          versionCode: localVer.versionCode || 82,
-          versionName: localVer.versionName || "2.1.79",
-          downloadUrl: downloadUrl,
-          releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
-        });
-      } catch (_) {}
-
+      const localVer = getLocalAppVersion();
       return res.json({
         success: true,
-        versionCode: 82,
-        versionName: "2.1.79",
+        versionCode: localVer.versionCode || 104,
+        versionName: localVer.versionName || "2.2.1",
         downloadUrl: downloadUrl,
-        releaseNotes: "✨ What's New in Release v2.1.79:\n- 📝 Dynamic 'What's New' & Live Changelog Engine\n- 📜 Full Version History Explorer\n- ⚡ Live GitHub & Cloud Release Sync"
+        releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
       });
     });
   }).on('error', () => {
+    const localVer = getLocalAppVersion();
     return res.json({
       success: true,
-      versionCode: 82,
-      versionName: "2.1.79",
+      versionCode: localVer.versionCode || 104,
+      versionName: localVer.versionName || "2.2.1",
       downloadUrl: downloadUrl,
-      releaseNotes: "✨ What's New in Release v2.1.79:\n- 📝 Dynamic 'What's New' & Live Changelog Engine\n- 📜 Full Version History Explorer\n- ⚡ Live GitHub & Cloud Release Sync"
+      releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
     });
   });
 });
