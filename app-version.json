@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 96,
-  "versionName": "2.1.93",
+  "versionCode": 97,
+  "versionName": "2.1.94",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.93:\n- 🔗 1-Tap Media Viewer Cloud Sharing: share secure cloud links directly from the full-screen photo, video, audio, and PDF player without leaving preview mode\n- 🛡️ Military-Grade Opaque Link Shielding: full AES-256-GCM server encryption protects bot tokens and master encryption keys from client exposure\n- 🔄 Infinite CDN URL Freshness: dynamic on-demand Telegram CDN path resolution guarantees links never fail or expire prematurely\n- 🧩 Full Multi-Chunk Sequential Streaming: files of any size split into 4MB parts download and stream seamlessly on the fly with zero disk footprint\n- 🎨 Google Material 3 Experience: responsive web portal with in-browser video/audio players and modernized Android share dialog with offline QR code generation\n- 🔒 Anti-Brute-Force Security: timing-safe access PIN verification with automatic 10-minute lockout on 5 failed attempts"
+  "releaseNotes": "✨ What's New in Release v2.1.94:\n- ⚡ Real-Time Reactive Trash Flow: Trash Bin now collects an observable Room DB Flow so deletions, restorations, and auto-clean operations reflect instantaneously across the entire app with zero lag\n- 🛡️ Guaranteed Permanent Purge Engine: added forceLocalDelete to ensure local database records, preview caches, and chunk entries are cleanly wiped even if Telegram channel bot permissions are restricted\n- 🚨 Material 3 Safety Dialogs: confirmation modals before Empty Trash, multi-select batch purge, and single-item permanent deletion prevent accidental data loss\n- ⚙️ Instant In-App Auto-Clean Selector: adjust retention policy (Never, 7d, 14d, 30d, 60d, 90d) directly from Trash Bin with automatic missing timestamp healing\n- 🔍 Live Search & 'Select All' Batching: search trash items instantly by name or folder, with 1-tap select/deselect all for smooth batch restoration and deletion\n- 🧩 Full Cloud & Chunk Synchronization: auto-clean and restoration seamlessly synchronize with PostgreSQL cloud backup and chunk progress tracking"
 }

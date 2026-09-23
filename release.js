@@ -86,6 +86,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.94': `✨ What's New in Release v2.1.94:
+- ⚡ Real-Time Reactive Trash Flow: Trash Bin now collects an observable Room DB Flow so deletions, restorations, and auto-clean operations reflect instantaneously across the entire app with zero lag
+- 🛡️ Guaranteed Permanent Purge Engine: added forceLocalDelete to ensure local database records, preview caches, and chunk entries are cleanly wiped even if Telegram channel bot permissions are restricted
+- 🚨 Material 3 Safety Dialogs: confirmation modals before Empty Trash, multi-select batch purge, and single-item permanent deletion prevent accidental data loss
+- ⚙️ Instant In-App Auto-Clean Selector: adjust retention policy (Never, 7d, 14d, 30d, 60d, 90d) directly from Trash Bin with automatic missing timestamp healing
+- 🔍 Live Search & 'Select All' Batching: search trash items instantly by name or folder, with 1-tap select/deselect all for smooth batch restoration and deletion
+- 🧩 Full Cloud & Chunk Synchronization: auto-clean and restoration seamlessly synchronize with PostgreSQL cloud backup and chunk progress tracking`,
     '2.1.93': `✨ What's New in Release v2.1.93:
 - 🔗 1-Tap Media Viewer Cloud Sharing: share secure cloud links directly from the full-screen photo, video, audio, and PDF player without leaving preview mode
 - 🛡️ Military-Grade Opaque Link Shielding: full AES-256-GCM server encryption protects bot tokens and master encryption keys from client exposure
