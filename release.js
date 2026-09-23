@@ -86,6 +86,8 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.6': `✨ What's New in Release v2.2.6:
+- 🧭 Komi Store Floating Capsule Background: Restored signature elevated pill capsule background with surfaceContainer gradient, soft drop shadow, rounded pill borders, and active pill indicators`,
     '2.2.5': `✨ What's New in Release v2.2.5:
 - 📅 1970 January Timestamp Self-Healing: Corrupted and zero-epoch timestamps automatically repaired and mapped to July 2026 across Room DB, sync engine, and cloud backend
 - 📂 100% Internal Storage Replica in Monthly Archive: Restructured archive into hierarchical folders (DCIM, Download, Pictures, Documents, etc.) with zero flat root file dumping and 1-tap breadcrumb navigation

@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 108,
-  "versionName": "2.2.5",
+  "versionCode": 109,
+  "versionName": "2.2.6",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.2.5:\n- 📅 1970 January Timestamp Self-Healing: Corrupted and zero-epoch timestamps automatically repaired and mapped to July 2026 across Room DB, sync engine, and cloud backend\n- 📂 100% Internal Storage Replica in Monthly Archive: Restructured archive into hierarchical folders (DCIM, Download, Pictures, Documents, etc.) with zero flat root file dumping and 1-tap breadcrumb navigation\n- 🧭 Komi Store Floating Nav Bar: Pure zero-background transparent floating navigation bar with high-contrast active pills and edge-to-edge content scrolling\n- ⚡ Cloud File Streaming in Monthly Archive: Direct preview, audio playback, and cloud streaming support straight from monthly archive folder cards"
+  "releaseNotes": "✨ What's New in Release v2.2.6:\n- 🧭 Komi Store Floating Capsule Background: Restored signature elevated pill capsule background with surfaceContainer gradient, soft drop shadow, rounded pill borders, and active pill indicators"
 }
