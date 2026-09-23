@@ -1301,9 +1301,16 @@ function getLocalAppVersion() {
         return JSON.parse(fs.readFileSync(path.join(process.cwd(), 'app-version.json'), 'utf8'));
       } catch (_) {
         return {
-          versionCode: 104,
-          versionName: '2.2.1',
-          releaseNotes: '✨ What\'s New in Release v2.2.1:\n- 🧭 Modern M3 Navigation by Default\n- ⚡ Instant Zero-Lag Tab Switching\n- 🕒 Chronological Activity Feed (Newest First)\n- 🎨 Google M3 Minimal Popups\n- 🔔 Modern Status Notifications'
+          versionCode: 105,
+          versionName: '2.2.2',
+          releaseNotes: `✨ What's New in Release v2.2.2:
+- 🩵 Komi Store Floating Capsule Nav Bar: Compact floating liquid pill bar inspired by Komi Store (~62dp) with spring bouncy touch animations (1.08x scale), continuous rounded corners, and soft elevation
+- ⚡ Zero-Lag Direction-Aware Tab Transitions: Eliminated main-thread disk I/O, regex recompilations, and 4-pass calculation loops. Added buttery horizontal slide transitions that follow navigation direction
+- 📜 Smart Scroll Auto-Hide: Bottom navigation bar intelligently slides down out of view when scrolling down to maximize content space, and smoothly glides back up on scroll up or tab tap
+- 🔔 Minimalist Symbolic Notifications: Removed verbose sentence text in favor of clean glyph icons and metrics (☁️, ⚡, ⬆️, ⬇️, ✓, 💾, ⏱️) with quick action buttons ([⏸️ Pause], [📊 Progress], [📁 Drive], [📂 Open], [📤 Share])
+- 🧹 Modernized Trash Bin & Local Storage UX: Removed descriptive text clutter and bulky red containers; streamlined with compact status pills, inline search, and efficient space utilization
+- 📖 Separated Setup Guide & User Manual: Split into dedicated tabs for 🚀 Setup Guide (4-step credentials setup) and 📖 Features & Manual (Cloud Drive streaming, Safe Folder encryption, Direct Share Links, Multi-Bot Fleet)
+- 📋 Komi Store Style Changelog: Horizontal version selector chips (v2.2.2, v2.2.1, v2.2.00) and categorized change tags (DESIGN, PERFORMANCE, EXPERIENCE, NOTIFICATIONS, CLEAN UI, GUIDES)`
         };
       }
     }
@@ -1334,7 +1341,7 @@ function calculateVersionCode(name) {
   if (localVer && localVer.versionCode) {
     return localVer.versionCode;
   }
-  return 104;
+  return 105;
 }
 
 /**
@@ -1384,8 +1391,8 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
       const localVer = getLocalAppVersion();
       return res.json({
         success: true,
-        versionCode: localVer.versionCode || 104,
-        versionName: localVer.versionName || "2.2.1",
+        versionCode: localVer.versionCode || 105,
+        versionName: localVer.versionName || "2.2.2",
         downloadUrl: downloadUrl,
         releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
       });
@@ -1394,8 +1401,8 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
     const localVer = getLocalAppVersion();
     return res.json({
       success: true,
-      versionCode: localVer.versionCode || 104,
-      versionName: localVer.versionName || "2.2.1",
+      versionCode: localVer.versionCode || 105,
+      versionName: localVer.versionName || "2.2.2",
       downloadUrl: downloadUrl,
       releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
     });
