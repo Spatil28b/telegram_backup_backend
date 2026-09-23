@@ -86,6 +86,10 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.7': `✨ What's New in Release v2.2.7:
+- 🔗 Large File Sharing (No 3.99 MB Limit): Resolved chunk resolution so large files of any size (50MB, 500MB+) stream and download completely
+- 📅 September Archive Healing: Repaired corrupted and legacy July 2026 placeholder timestamps, restoring them cleanly to September 2026
+- 📂 Moved & Cloud File Opening: Resolved local file relocations and cloud-only files, assembling full multi-part downloads for flawless playback`,
     '2.2.6': `✨ What's New in Release v2.2.6:
 - 🧭 Komi Store Floating Capsule Background: Restored signature elevated pill capsule background with surfaceContainer gradient, soft drop shadow, rounded pill borders, and active pill indicators`,
     '2.2.5': `✨ What's New in Release v2.2.5:

@@ -156,11 +156,11 @@ async function initDb() {
       console.warn('[Neon Postgres Migration Warning]', migErr.message);
     }
 
-    // Migration: Automatically repair corrupt/0/1970 timestamps (< Jan 1, 2000) to July 15, 2026 12:00:00 UTC (1784030400000)
+    // Migration: Automatically repair corrupt/0/1970 or legacy July 15, 2026 placeholder timestamps to current timestamp
     try {
-      const tsUpdateRes = await queryWithTimeout(`UPDATE backed_files SET timestamp = 1784030400000 WHERE timestamp < 946684800000`);
+      const tsUpdateRes = await queryWithTimeout(`UPDATE backed_files SET timestamp = EXTRACT(EPOCH FROM NOW()) * 1000 WHERE timestamp = 1784030400000 OR timestamp < 946684800000`);
       if (tsUpdateRes && tsUpdateRes.rowCount > 0) {
-        console.log(`[Neon Postgres Migration SUCCESS] Sanitized ${tsUpdateRes.rowCount} legacy/corrupt timestamp(s) to July 2026!`);
+        console.log(`[Neon Postgres Migration SUCCESS] Reconciled ${tsUpdateRes.rowCount} legacy/July 2026 timestamp(s) to current era!`);
       }
     } catch (tsErr) {
       console.warn('[Neon Postgres Timestamp Sanitize Warning]', tsErr.message);
@@ -934,7 +934,7 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
     }
 
     const rawTime = parseInt(timestamp || '0', 10);
-    const safeTimestamp = (!rawTime || rawTime < 946684800000) ? 1784030400000 : rawTime;
+    const safeTimestamp = (!rawTime || rawTime < 946684800000 || rawTime === 1784030400000) ? Date.now() : rawTime;
 
     if (pool) {
       try {
@@ -1010,7 +1010,7 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
             const fSize = parseInt(f.size || '0', 10) || 0;
             const fPath = (f.path || '').trim();
             const rawTime = parseInt(f.timestamp || '0', 10);
-            const fTime = (!rawTime || rawTime < 946684800000) ? 1784030400000 : rawTime;
+            const fTime = (!rawTime || rawTime < 946684800000 || rawTime === 1784030400000) ? Date.now() : rawTime;
             const msgId = parseInt(f.messageId || '0', 10) || 0;
             const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || fPath.startsWith('Internal Storage') || tgId === 'DIR_MARKER');
 
@@ -1277,8 +1277,8 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
         const result = await queryWithTimeout(queryStr, params);
         const sanitizedFiles = result.rows.map(row => {
           const ts = parseInt(row.timestamp, 10);
-          if (isNaN(ts) || ts < 946684800000) {
-            row.timestamp = 1784030400000;
+          if (isNaN(ts) || ts < 946684800000 || ts === 1784030400000) {
+            row.timestamp = Date.now();
           }
           return row;
         });
@@ -1290,7 +1290,7 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
           list = list.filter(f => f.timestamp > since);
         }
         const sanitizedMem = list.slice(0, limit).map(f => {
-          if (!f.timestamp || f.timestamp < 946684800000) f.timestamp = 1784030400000;
+          if (!f.timestamp || f.timestamp < 946684800000 || f.timestamp === 1784030400000) f.timestamp = Date.now();
           return f;
         });
         return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });
@@ -1301,7 +1301,7 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
         list = list.filter(f => f.timestamp > since);
       }
       const sanitizedMem = list.slice(0, limit).map(f => {
-        if (!f.timestamp || f.timestamp < 946684800000) f.timestamp = 1784030400000;
+        if (!f.timestamp || f.timestamp < 946684800000 || f.timestamp === 1784030400000) f.timestamp = Date.now();
         return f;
       });
       return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });
