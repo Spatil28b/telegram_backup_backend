@@ -155,6 +155,16 @@ async function initDb() {
     } catch (migErr) {
       console.warn('[Neon Postgres Migration Warning]', migErr.message);
     }
+
+    // Migration: Automatically repair corrupt/0/1970 timestamps (< Jan 1, 2000) to July 15, 2026 12:00:00 UTC (1784030400000)
+    try {
+      const tsUpdateRes = await queryWithTimeout(`UPDATE backed_files SET timestamp = 1784030400000 WHERE timestamp < 946684800000`);
+      if (tsUpdateRes && tsUpdateRes.rowCount > 0) {
+        console.log(`[Neon Postgres Migration SUCCESS] Sanitized ${tsUpdateRes.rowCount} legacy/corrupt timestamp(s) to July 2026!`);
+      }
+    } catch (tsErr) {
+      console.warn('[Neon Postgres Timestamp Sanitize Warning]', tsErr.message);
+    }
   } catch (err) {
     console.error('[Neon Postgres Error] Failed to initialize database tables:', err.message);
   }
@@ -923,6 +933,9 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       return res.status(400).json({ success: false, message: 'fileName and telegramFileId are required.' });
     }
 
+    const rawTime = parseInt(timestamp || '0', 10);
+    const safeTimestamp = (!rawTime || rawTime < 946684800000) ? 1784030400000 : rawTime;
+
     if (pool) {
       try {
         // Fix #4: Use UPSERT with ON CONFLICT (email, path) to prevent duplicate file records
@@ -931,16 +944,16 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (email, path) DO UPDATE SET
              file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8`,
-          [lowerEmail, fileName, telegramFileId, size || 0, path || '', timestamp || Date.now(), msgId, isDrive]
+          [lowerEmail, fileName, telegramFileId, size || 0, path || '', safeTimestamp, msgId, isDrive]
         );
       } catch (dbErr) {
         console.error('[DB Warn] Files backup DB save failed:', dbErr.message);
         const list = memoryFiles.get(lowerEmail) || [];
         const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
         if (idx >= 0) {
-          list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive };
+          list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive };
         } else {
-          list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive });
+          list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive });
         }
         memoryFiles.set(lowerEmail, list);
       }
@@ -948,9 +961,9 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       const list = memoryFiles.get(lowerEmail) || [];
       const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
       if (idx >= 0) {
-        list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive };
+        list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive };
       } else {
-        list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp, messageId: msgId, isDriveUpload: isDrive });
+        list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive });
       }
       memoryFiles.set(lowerEmail, list);
     }
@@ -996,7 +1009,8 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
             const tgId = (f.telegramFileId || f.fileId || '').trim();
             const fSize = parseInt(f.size || '0', 10) || 0;
             const fPath = (f.path || '').trim();
-            const fTime = parseInt(f.timestamp || '0', 10) || Date.now();
+            const rawTime = parseInt(f.timestamp || '0', 10);
+            const fTime = (!rawTime || rawTime < 946684800000) ? 1784030400000 : rawTime;
             const msgId = parseInt(f.messageId || '0', 10) || 0;
             const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || fPath.startsWith('Internal Storage') || tgId === 'DIR_MARKER');
 
@@ -1261,21 +1275,36 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
         }
 
         const result = await queryWithTimeout(queryStr, params);
-        return res.json({ success: true, files: result.rows, isDelta: since > 0 });
+        const sanitizedFiles = result.rows.map(row => {
+          const ts = parseInt(row.timestamp, 10);
+          if (isNaN(ts) || ts < 946684800000) {
+            row.timestamp = 1784030400000;
+          }
+          return row;
+        });
+        return res.json({ success: true, files: sanitizedFiles, isDelta: since > 0 });
       } catch (dbErr) {
         console.error('[DB Warn] Files list DB query failed:', dbErr.message);
         let list = memoryFiles.get(email) || [];
         if (since > 0) {
           list = list.filter(f => f.timestamp > since);
         }
-        return res.json({ success: true, files: list.slice(0, limit), isDelta: since > 0 });
+        const sanitizedMem = list.slice(0, limit).map(f => {
+          if (!f.timestamp || f.timestamp < 946684800000) f.timestamp = 1784030400000;
+          return f;
+        });
+        return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });
       }
     } else {
       let list = memoryFiles.get(email) || [];
       if (since > 0) {
         list = list.filter(f => f.timestamp > since);
       }
-      return res.json({ success: true, files: list.slice(0, limit), isDelta: since > 0 });
+      const sanitizedMem = list.slice(0, limit).map(f => {
+        if (!f.timestamp || f.timestamp < 946684800000) f.timestamp = 1784030400000;
+        return f;
+      });
+      return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });
     }
   } catch (err) {
     next(err);
