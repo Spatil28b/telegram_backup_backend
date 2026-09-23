@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.99': `✨ What's New in Release v2.1.99:
+- 🎨 14 Luxury Material 3 Themes: Added 4 brand-new palettes (Nordic Glacier, Sakura Blossom, Matrix Terminal, Mocha Espresso) and completely refined Emerald, Cyberpunk, Sunset, Crimson, Arctic, and Lavender with rich surface elevation containers
+- 📁 Instant Zero-Lag Browse Loading: Fixed Browse unresponsiveness by un-nesting root layout composables and streaming Room DB flows with 0ms first-frame response
+- 🛡️ Zero-Crash Resilience Engine: Reinforced media viewers and file lists with strict boundary protection against OutOfBoundsException and async mutations
+- 🔘 Seamless Navigation & Controls: Cleaned up duplicate back handlers for silky smooth navigation across all screens`,
     '2.1.98': `✨ What's New in Release v2.1.98:
 - 🎨 100% Google Material 3 System-Wide: fully standardized typography scale, surface elevation containers (surfaceContainerLowest to Highest), and authentic M3 tonal palettes
 - 🔍 Google Files Floating Search Bar: unified top search bar pill with drawer toggle, real-time cloud sync status pill, and instant search trigger

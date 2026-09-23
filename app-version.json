@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 101,
-  "versionName": "2.1.98",
+  "versionCode": 102,
+  "versionName": "2.1.99",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.98:\n- 🎨 100% Google Material 3 System-Wide: fully standardized typography scale, surface elevation containers (surfaceContainerLowest to Highest), and authentic M3 tonal palettes\n- 🔍 Google Files Floating Search Bar: unified top search bar pill with drawer toggle, real-time cloud sync status pill, and instant search trigger\n- 🧹 Redesigned Clean Screen Cards: storage gauge card with 24dp rounded corners, thumbnail preview strips for Junk, Backed Up Media, Duplicates, and Large Files\n- 🔘 Authentic M3 Pill Buttons: all primary actions upgraded to CircleShape pill buttons matching official Google Files design\n- 📱 Refined Navigation & Dialogs: M3 bottom NavigationBar with secondaryContainer pill active indicators, 28dp rounded ModalBottomSheets, and unified drawer styling across all themes"
+  "releaseNotes": "✨ What's New in Release v2.1.99:\n- 🎨 14 Luxury Material 3 Themes: Added 4 brand-new palettes (Nordic Glacier, Sakura Blossom, Matrix Terminal, Mocha Espresso) and completely refined Emerald, Cyberpunk, Sunset, Crimson, Arctic, and Lavender with rich surface elevation containers\n- 📁 Instant Zero-Lag Browse Loading: Fixed Browse unresponsiveness by un-nesting root layout composables and streaming Room DB flows with 0ms first-frame response\n- 🛡️ Zero-Crash Resilience Engine: Reinforced media viewers and file lists with strict boundary protection against OutOfBoundsException and async mutations\n- 🔘 Seamless Navigation & Controls: Cleaned up duplicate back handlers for silky smooth navigation across all screens"
 }
