@@ -86,6 +86,15 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.3': `✨ What's New in Release v2.2.3:
+- 🚀 Seamless In-App Auto-Update Engine: Integrated compile-time BuildConfig versioning and unified update comparisons. Guarantees immediate in-app update prompts and 1-tap installation
+- 🩵 Komi Store Floating Capsule Nav Bar: Compact floating liquid pill bar inspired by Komi Store (~62dp) with spring bouncy touch animations (1.08x scale), continuous rounded corners, and soft elevation
+- ⚡ Zero-Lag Direction-Aware Tab Transitions: Eliminated main-thread disk I/O, regex recompilations, and 4-pass calculation loops. Added buttery horizontal slide transitions that follow navigation direction
+- 📜 Smart Scroll Auto-Hide: Bottom navigation bar intelligently slides down out of view when scrolling down to maximize content space, and smoothly glides back up on scroll up or tab tap
+- 🔔 Minimalist Symbolic Notifications: Removed verbose sentence text in favor of clean glyph icons and metrics (☁️, ⚡, ⬆️, ⬇️, ✓, 💾, ⏱️) with quick action buttons ([⏸️ Pause], [📊 Progress], [📁 Drive], [📂 Open], [📤 Share])
+- 🧹 Modernized Trash Bin & Local Storage UX: Removed descriptive text clutter and bulky red containers; streamlined with compact status pills, inline search, and efficient space utilization
+- 📖 Separated Setup Guide & User Manual: Split into dedicated tabs for 🚀 Setup Guide (4-step credentials setup) and 📖 Features & Manual (Cloud Drive streaming, Safe Folder encryption, Direct Share Links, Multi-Bot Fleet)
+- 📋 Komi Store Style Changelog: Horizontal version selector chips (v2.2.3, v2.2.2, v2.2.1, v2.2.00) and categorized change tags (UPDATER, DESIGN, PERFORMANCE, EXPERIENCE, NOTIFICATIONS, CLEAN UI, GUIDES)`,
     '2.2.2': `✨ What's New in Release v2.2.2:
 - 🩵 Komi Store Floating Capsule Nav Bar: Compact floating liquid pill bar inspired by Komi Store (~62dp) with spring bouncy touch animations (1.08x scale), continuous rounded corners, and soft elevation
 - ⚡ Zero-Lag Direction-Aware Tab Transitions: Eliminated main-thread disk I/O, regex recompilations, and 4-pass calculation loops. Added buttery horizontal slide transitions that follow navigation direction
