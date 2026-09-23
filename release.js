@@ -86,6 +86,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.90': `✨ What's New in Release v2.1.90:
+- 📏 Individual File Size Conditions: customize exact min/max file size thresholds independently for all 7 file types (Photos, Videos, Documents, Audio, Archives, APKs, and Other)
+- ⚙️ Global Fallback Logic: categories without custom overrides automatically adhere to the global size limit, guaranteeing backward compatibility
+- 🎨 10 Premium Handcrafted Themes: instant real-time theme switching with Pure AMOLED, Emerald Forest, Cyberpunk Neon, Sunset Amber, Crimson Rose, Arctic Frost, Royal Lavender, and more
+- 🟢 Live Color Preview Dots: view theme surface, primary, and secondary palette swatches directly in Settings before selecting
+- ☁️ Full Dual-Layer Persistence: category size rules are preserved across app restarts, SQLite Room DB, and Cloud Profile sync
+- ⚡ Zero-Interruption Background Protection: running tasks and active backup jobs continue seamlessly without disruption`,
     '2.1.89': `✨ What's New in Release v2.1.89:
 - 🛡️ Permanent Profile & Avatar Persistence: private internal storage engine ensures profile pictures never disappear or lose permission grants across reboots, kills, or system updates
 - ☁️ Anti-Reset Cloud Manifest Guard: timestamped dual-sync prevents stale cloud manifests or default placeholders from reverting custom display names
