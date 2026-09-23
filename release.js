@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.89': `✨ What's New in Release v2.1.89:
+- 🛡️ Permanent Profile & Avatar Persistence: private internal storage engine ensures profile pictures never disappear or lose permission grants across reboots, kills, or system updates
+- ☁️ Anti-Reset Cloud Manifest Guard: timestamped dual-sync prevents stale cloud manifests or default placeholders from reverting custom display names
+- 👤 Upgraded Interactive Profile Hub: direct photo picker, custom display name editor, and instant cloud sync built straight into the Profile screen
+- 🎛️ Instant Dual-Way Settings Sync: dedicated "Save Profile Changes" and "Remove Photo" actions with real-time UI propagation
+- 📱 Modernized Telegram Navigation Header: drawer displays active user avatar, customized name, and email with tap-to-profile navigation`,
     '2.1.88': `✨ What's New in Release v2.1.88:
 - 🧹 Complete Deep-Clean & Zero-Regression Code Optimization: safely purged 1,693 lines of dead classes, obsolete prototypes, and unreferenced files under triple cross-check verification
 - ⚡ Zero-Loss Process Protection: background backup jobs, workers, and active sync tasks run with uninterrupted execution and resilient lifecycle boundaries

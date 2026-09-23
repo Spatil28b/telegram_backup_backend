@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 91,
-  "versionName": "2.1.88",
+  "versionCode": 92,
+  "versionName": "2.1.89",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.88:\n- 🧹 Complete Deep-Clean & Zero-Regression Code Optimization: safely purged 1,693 lines of dead classes, obsolete prototypes, and unreferenced files under triple cross-check verification\n- ⚡ Zero-Loss Process Protection: background backup jobs, workers, and active sync tasks run with uninterrupted execution and resilient lifecycle boundaries\n- 📳 Modernized Android 12+ (API 31+) Haptics: unified VibratorManager system effects with backward-compatible fallbacks, eliminating runtime deprecation\n- 📦 Streamlined High-Performance ZIP Archiving: optimized ZipBackupDownloader with full multi-bot parallel chunk assembly and instant in-place AES-256 decryption\n- 🛡️ Duplicate Receiver Conflict Elimination: removed redundant StopBackupReceiver from manifest; all notification quick actions now cleanly unified in BackupControlReceiver"
+  "releaseNotes": "✨ What's New in Release v2.1.89:\n- 🛡️ Permanent Profile & Avatar Persistence: private internal storage engine ensures profile pictures never disappear or lose permission grants across reboots, kills, or system updates\n- ☁️ Anti-Reset Cloud Manifest Guard: timestamped dual-sync prevents stale cloud manifests or default placeholders from reverting custom display names\n- 👤 Upgraded Interactive Profile Hub: direct photo picker, custom display name editor, and instant cloud sync built straight into the Profile screen\n- 🎛️ Instant Dual-Way Settings Sync: dedicated \"Save Profile Changes\" and \"Remove Photo\" actions with real-time UI propagation\n- 📱 Modernized Telegram Navigation Header: drawer displays active user avatar, customized name, and email with tap-to-profile navigation"
 }
