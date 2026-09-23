@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.91': `✨ What's New in Release v2.1.91:
+- 📏 Advanced Per-Type File Size Filter: individual min & max byte rules across all 7 categories (Photos, Videos, Documents, Audio, Archives, APKs, Other) with global fallback protection
+- 🎨 10 Handcrafted Material 3 Themes: real-time theme engine supporting Pure AMOLED, Emerald, Cyberpunk, Sunset, Crimson, Arctic, Lavender, and more with color preview swatches
+- ⚡ 0-Delay Background Protection: continuous execution of active backup queues and worker threads during theme and rule updates
+- 🛡️ Resilient Room DB & Cloud Manifest Synchronization: atomic serialization ensuring no settings or size rules are lost across reboots or cloud restores`,
     '2.1.90': `✨ What's New in Release v2.1.90:
 - 📏 Individual File Size Conditions: customize exact min/max file size thresholds independently for all 7 file types (Photos, Videos, Documents, Audio, Archives, APKs, and Other)
 - ⚙️ Global Fallback Logic: categories without custom overrides automatically adhere to the global size limit, guaranteeing backward compatibility
