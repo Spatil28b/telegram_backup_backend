@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.98': `✨ What's New in Release v2.1.98:
+- 🎨 100% Google Material 3 System-Wide: fully standardized typography scale, surface elevation containers (surfaceContainerLowest to Highest), and authentic M3 tonal palettes
+- 🔍 Google Files Floating Search Bar: unified top search bar pill with drawer toggle, real-time cloud sync status pill, and instant search trigger
+- 🧹 Redesigned Clean Screen Cards: storage gauge card with 24dp rounded corners, thumbnail preview strips for Junk, Backed Up Media, Duplicates, and Large Files
+- 🔘 Authentic M3 Pill Buttons: all primary actions upgraded to CircleShape pill buttons matching official Google Files design
+- 📱 Refined Navigation & Dialogs: M3 bottom NavigationBar with secondaryContainer pill active indicators, 28dp rounded ModalBottomSheets, and unified drawer styling across all themes`,
     '2.1.97': `✨ What's New in Release v2.1.97:
 - 🧹 Complete Google Files Clean Screen: real StatFs device storage breakdown, segmented storage progress meter, 1-tap junk cleaner, backed up media deletion, duplicate cleaner, and trash quick access
 - 📁 Google Files Browse Hub: Search in Files pill bar, Recent horizontal carousel, 2-column pastel category cards, Starred & Safe folder Collections, and real-time Storage devices

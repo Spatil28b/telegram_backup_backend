@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 100,
-  "versionName": "2.1.97",
+  "versionCode": 101,
+  "versionName": "2.1.98",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.97:\n- 🧹 Complete Google Files Clean Screen: real StatFs device storage breakdown, segmented storage progress meter, 1-tap junk cleaner, backed up media deletion, duplicate cleaner, and trash quick access\n- 📁 Google Files Browse Hub: Search in Files pill bar, Recent horizontal carousel, 2-column pastel category cards, Starred & Safe folder Collections, and real-time Storage devices\n- ⭐ Starred Files Collection: star important cloud files from 3-dots action menu and access them instantly from Collections\n- 🔒 Safe Folder Vault: Biometric/PIN-protected private vault for personal and confidential files\n- 🎨 Google Files Material 3 Polish: clean spacing, refined typography, and intuitive back-navigation hierarchy"
+  "releaseNotes": "✨ What's New in Release v2.1.98:\n- 🎨 100% Google Material 3 System-Wide: fully standardized typography scale, surface elevation containers (surfaceContainerLowest to Highest), and authentic M3 tonal palettes\n- 🔍 Google Files Floating Search Bar: unified top search bar pill with drawer toggle, real-time cloud sync status pill, and instant search trigger\n- 🧹 Redesigned Clean Screen Cards: storage gauge card with 24dp rounded corners, thumbnail preview strips for Junk, Backed Up Media, Duplicates, and Large Files\n- 🔘 Authentic M3 Pill Buttons: all primary actions upgraded to CircleShape pill buttons matching official Google Files design\n- 📱 Refined Navigation & Dialogs: M3 bottom NavigationBar with secondaryContainer pill active indicators, 28dp rounded ModalBottomSheets, and unified drawer styling across all themes"
 }
