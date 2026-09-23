@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 95,
-  "versionName": "2.1.92",
+  "versionCode": 96,
+  "versionName": "2.1.93",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.92:\n- 🔗 Fixed Cloud File Sharing & Downloads: multi-chunk files of any size now download and stream flawlessly via dynamic on-the-fly chunk assembly\n- 🔄 Dynamic Telegram CDN Resolution: eliminates 1-hour link expiration by dynamically resolving fresh CDN paths for every download and stream request\n- 🔒 Military-Grade Security Hardening: opaque random share links (s_xxxx) protect bot tokens and encryption keys server-side using AES-256-GCM; timing-safe PIN checks with 5-attempt lockout prevent brute-force attacks\n- 🎨 Google Material 3 Web Portal: stunning dark M3 web interface with interactive in-browser video/audio/photo preview players and one-click downloads\n- 📱 Modernized Android Share Sheet: Material 3 card dialog with filter chip expiry presets, PIN visibility toggle, and instant offline QR code generation\n- 🛡️ Zero-Disk Streaming & Integrity Protection: streams continuous decrypted byte streams on-the-fly without storing unencrypted files on server disks"
+  "releaseNotes": "✨ What's New in Release v2.1.93:\n- 🔗 1-Tap Media Viewer Cloud Sharing: share secure cloud links directly from the full-screen photo, video, audio, and PDF player without leaving preview mode\n- 🛡️ Military-Grade Opaque Link Shielding: full AES-256-GCM server encryption protects bot tokens and master encryption keys from client exposure\n- 🔄 Infinite CDN URL Freshness: dynamic on-demand Telegram CDN path resolution guarantees links never fail or expire prematurely\n- 🧩 Full Multi-Chunk Sequential Streaming: files of any size split into 4MB parts download and stream seamlessly on the fly with zero disk footprint\n- 🎨 Google Material 3 Experience: responsive web portal with in-browser video/audio players and modernized Android share dialog with offline QR code generation\n- 🔒 Anti-Brute-Force Security: timing-safe access PIN verification with automatic 10-minute lockout on 5 failed attempts"
 }

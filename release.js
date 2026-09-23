@@ -86,6 +86,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.93': `✨ What's New in Release v2.1.93:
+- 🔗 1-Tap Media Viewer Cloud Sharing: share secure cloud links directly from the full-screen photo, video, audio, and PDF player without leaving preview mode
+- 🛡️ Military-Grade Opaque Link Shielding: full AES-256-GCM server encryption protects bot tokens and master encryption keys from client exposure
+- 🔄 Infinite CDN URL Freshness: dynamic on-demand Telegram CDN path resolution guarantees links never fail or expire prematurely
+- 🧩 Full Multi-Chunk Sequential Streaming: files of any size split into 4MB parts download and stream seamlessly on the fly with zero disk footprint
+- 🎨 Google Material 3 Experience: responsive web portal with in-browser video/audio players and modernized Android share dialog with offline QR code generation
+- 🔒 Anti-Brute-Force Security: timing-safe access PIN verification with automatic 10-minute lockout on 5 failed attempts`,
     '2.1.92': `✨ What's New in Release v2.1.92:
 - 🔗 Fixed Cloud File Sharing & Downloads: multi-chunk files of any size now download and stream flawlessly via dynamic on-the-fly chunk assembly
 - 🔄 Dynamic Telegram CDN Resolution: eliminates 1-hour link expiration by dynamically resolving fresh CDN paths for every download and stream request
