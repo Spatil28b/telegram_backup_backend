@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 98,
-  "versionName": "2.1.95",
+  "versionCode": 99,
+  "versionName": "2.1.96",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.1.95:\n- ⚡ Ubiquitous 3-Dots File Actions: 3-dots overflow action button added to all file cards across the entire app (Cloud Explorer Grid & List, Drive Explorer, Home Recent Files, Trash Bin, Monthly Archive, Local Files)\n- 📱 Unified Material 3 Action Sheet: modal bottom sheet providing 1-tap Preview/Open, Cloud Share Link (PIN & QR), System Send to App, Download to Device, Rename File, Technical Properties & Metadata, Copy Path, and Move to Trash / Delete\n- 📤 Native Android App Sharing: send files directly to WhatsApp, Telegram, Gmail, Bluetooth with automatic FileProvider URI granting and on-demand cloud retrieval\n- ✏️ In-App File Renaming: rename files and folders instantly with synchronized updates across local Room DB, chunk upload tracker, and PostgreSQL cloud index\n- ℹ️ Deep Technical Properties & Info: inspect exact file size in bytes, complete storage path, Telegram File ID, Message ID, chunk breakdown, and AES-256-GCM encryption status with 1-tap copy buttons"
+  "releaseNotes": "✨ What's New in Release v2.1.96:\n- 🎨 All-New SpotiFLAC Bold Settings UI: completely reimagined Settings screen inspired by SpotiFLAC with clean high-contrast typography, uppercase section accents, and unified card styling\n- 📦 Unified Settings Groups: settings are organized inside elevated 20dp rounded surface cards with subtle hairline dividers, squircle icon boxes, and value status badges\n- 🔍 Instant Pill Search: pill/capsule search bar enables real-time search across cloud sync, bot pool, security, rules, and preferences\n- 🌟 Redesigned Hero Profile & Subpages: elevated hero account card with active storage badges and circular back-button subpage headers across all settings categories"
 }

@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.96': `✨ What's New in Release v2.1.96:
+- 🎨 All-New SpotiFLAC Bold Settings UI: completely reimagined Settings screen inspired by SpotiFLAC with clean high-contrast typography, uppercase section accents, and unified card styling
+- 📦 Unified Settings Groups: settings are organized inside elevated 20dp rounded surface cards with subtle hairline dividers, squircle icon boxes, and value status badges
+- 🔍 Instant Pill Search: pill/capsule search bar enables real-time search across cloud sync, bot pool, security, rules, and preferences
+- 🌟 Redesigned Hero Profile & Subpages: elevated hero account card with active storage badges and circular back-button subpage headers across all settings categories`,
     '2.1.95': `✨ What's New in Release v2.1.95:
 - ⚡ Ubiquitous 3-Dots File Actions: 3-dots overflow action button added to all file cards across the entire app (Cloud Explorer Grid & List, Drive Explorer, Home Recent Files, Trash Bin, Monthly Archive, Local Files)
 - 📱 Unified Material 3 Action Sheet: modal bottom sheet providing 1-tap Preview/Open, Cloud Share Link (PIN & QR), System Send to App, Download to Device, Rename File, Technical Properties & Metadata, Copy Path, and Move to Trash / Delete
