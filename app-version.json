@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 103,
-  "versionName": "2.2.00",
+  "versionCode": 104,
+  "versionName": "2.2.1",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.2.00:\n- 🔒 Safe Folder Vault & Starred Separation: Completely separated Safe Folder encrypted vault files from Starred favorites with biometric/PIN authentication, one-tap instant lock, and auto-lock on exit\n- 🧭 Fully Customizable M3 Bottom Navigation: Added dedicated Settings subpage with live interactive preview to customize visible tabs, label visibility (Always, Selected, Never), density heights (Comfortable 80dp, Compact 64dp, Ultra-Compact 54dp), pill indicators, and haptic feedback\n- ➕ Minimal Material 3 Circular FAB: Replaced bulky multi-pill speed dial buttons with a sleek circular + FAB that opens a clean Material 3 modal bottom sheet for creating folders and uploading content\n- 📱 85%+ Content Viewport & Zero Screen Clutter: Eliminated duplicate TopAppBars on drilldown, added collapsible 42dp storage stats pill saving ~140dp, and condensed headers into compact 48dp single rows\n- 🖼️ Clean Google Files Grid Previews: Removed floating 3-dots badges covering photo/video thumbnails, providing quick actions via long-press and unobtrusive metadata footer actions"
+  "releaseNotes": "✨ What's New in Release v2.2.1:\n- 🧭 Modern M3 Navigation by Default: Enabled sleek Google M3 bottom navigation bar by default with Clean, Browse, Drive, and Settings tabs, with fixed position stability and zero jumping\n- ⚡ Instant Zero-Lag Tab Switching: Eliminated 3-4 second lag and freezes when switching tabs by removing heavy synchronous cloud indexing on tab change\n- 🕒 Chronological Activity Feed (Newest First): Activity logs now sort uploads, deletions, and system events with real numeric timestamps so latest actions appear at the top\n- 🎨 Google M3 Minimal Popups: Redesigned app popups with 28dp rounded corners, clutter-free content, past updates viewer, and eliminated awkward button text wrapping\n- 🔔 Modern Status Notifications: Refreshed notification styling with Telegram Blue branding, expandable BigTextStyle, subtext status badges, and clean single-line action buttons"
 }

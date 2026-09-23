@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.1': `✨ What's New in Release v2.2.1:
+- 🧭 Modern M3 Navigation by Default: Enabled sleek Google M3 bottom navigation bar by default with Clean, Browse, Drive, and Settings tabs, with fixed position stability and zero jumping
+- ⚡ Instant Zero-Lag Tab Switching: Eliminated 3-4 second lag and freezes when switching tabs by removing heavy synchronous cloud indexing on tab change
+- 🕒 Chronological Activity Feed (Newest First): Activity logs now sort uploads, deletions, and system events with real numeric timestamps so latest actions appear at the top
+- 🎨 Google M3 Minimal Popups: Redesigned app popups with 28dp rounded corners, clutter-free content, past updates viewer, and eliminated awkward button text wrapping
+- 🔔 Modern Status Notifications: Refreshed notification styling with Telegram Blue branding, expandable BigTextStyle, subtext status badges, and clean single-line action buttons`,
     '2.2.00': `✨ What's New in Release v2.2.00:
 - 🔒 Safe Folder Vault & Starred Separation: Completely separated Safe Folder encrypted vault files from Starred favorites with biometric/PIN authentication, one-tap instant lock, and auto-lock on exit
 - 🧭 Fully Customizable M3 Bottom Navigation: Added dedicated Settings subpage with live interactive preview to customize visible tabs, label visibility (Always, Selected, Never), density heights (Comfortable 80dp, Compact 64dp, Ultra-Compact 54dp), pill indicators, and haptic feedback
