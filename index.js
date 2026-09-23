@@ -17,6 +17,7 @@ const nodemailer = require('nodemailer');
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool } = require('@neondatabase/serverless');
 
 // Initialize Express Application Instance
