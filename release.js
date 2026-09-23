@@ -86,6 +86,16 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.1.87': `✨ What's New in Release v2.1.87:
+- 🚀 Parallel Multi-Bot Chunk Restoration: ZipBackupDownloader parallelized across full bot fleet with auto-healing multi-candidate decryption
+- 🌐 Custom Telegram Bot API Server Support: connect to self-hosted local Bot API servers to upload up to 2,000 MB (2 GB) single-request files with 0 rate limits
+- 🔐 12-Word Recovery Phrase & Offline QR Code: BIP-39 mnemonic phrase and high-contrast offline QR generator for unbreakable key backup and device migration
+- 🔍 Rename-Proof Content-Hash Deduplication: instant fingerprint match prevents duplicate uploads even when files are renamed or moved
+- 🧹 Auto-Pruning LRU Cache Manager: automated background pruning for PDF previews, thumbnails, and temp media with zero user data loss
+- 🔍 Pinch-to-Zoom & Pan PDF Viewer: smooth 1x-4x zoom, double-tap reset, and page position indicator in native viewer
+- 🛡️ Lifecycle-Aware Biometrics: configurable background auto-lock timeout (Immediately to 15m) and Safe Folder protection
+- 🎵 Modern Native Audio & Video Player: pulsing album artwork, mm:ss seek bar, and 10s skip controls
+- 🏷️ Smart Category Filter Bar: 1-tap horizontal category chips (All, Photos, Videos, Docs, Audio, Archives) in Backup Explorer`,
     '2.1.86': `✨ What's New in Release v2.1.86:
 - 🤖 Full 10+ Bot Fleet Parallel Concurrency: dynamic worker allocation with atomic round-robin distribution utilizes all 10 active bots concurrently instead of capping at 6
 - 📄 Seamless In-App PDF Preview: resolved PdfRenderer ARGB_8888 rendering and isolated cache file descriptors (fixes "Unable to preview document")
