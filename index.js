@@ -1515,8 +1515,8 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
 
       return res.json({
         success: true,
-        versionCode: localCode || 114,
-        versionName: localVer.versionName || "2.3.0",
+        versionCode: localCode || 115,
+        versionName: localVer.versionName || "2.3.1",
         downloadUrl: downloadUrl,
         releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
       });
@@ -1965,6 +1965,49 @@ async function resolveShareData(identifier) {
           chunks: Array.isArray(sensitive.chunks) ? sensitive.chunks : [],
           candidateBots: Array.isArray(sensitive.candidateBots) ? sensitive.candidateBots : []
         };
+
+        // Auto-heal existing share links that only had partial chunks saved
+        const expectedChunksCount = resolved.fileSize > CHUNK_SIZE ? Math.ceil(resolved.fileSize / CHUNK_SIZE) : 1;
+        if (pool && expectedChunksCount > 1 && resolved.chunks.length < expectedChunksCount) {
+          try {
+            const repairRes = await queryWithTimeout(
+              `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
+               FROM backed_files
+               WHERE (file_name = $1 OR path LIKE '%' || $1)
+                 AND size = $2
+                 AND total_chunks >= $3
+                 AND chunks_json IS NOT NULL
+                 AND chunks_json != '[]'
+               ORDER BY total_chunks DESC LIMIT 1`,
+              [resolved.fileName, resolved.fileSize, expectedChunksCount]
+            );
+            if (repairRes && repairRes.rows && repairRes.rows.length > 0) {
+              const rRow = repairRes.rows[0];
+              const pChunks = JSON.parse(rRow.chunks_json);
+              if (Array.isArray(pChunks) && pChunks.length >= expectedChunksCount) {
+                resolved.chunks = pChunks.map((c, i) => ({
+                  chunkIndex: c.chunkIndex || (i + 1),
+                  telegramFileId: c.telegramFileId || c.fileId,
+                  botTokenUsed: (c.botTokenUsed || c.botToken || rRow.bot_token_used || resolved.botToken || '').trim()
+                }));
+                resolved.totalChunks = resolved.chunks.length;
+
+                // Update shared_files DB record with repaired payload
+                sensitive.chunks = resolved.chunks;
+                sensitive.totalChunks = resolved.totalChunks;
+                const newPayloadEnc = encryptServerPayload(sensitive);
+                await queryWithTimeout(
+                  `UPDATE shared_files SET payload_enc = $1 WHERE share_id = $2`,
+                  [newPayloadEnc, cleanId]
+                );
+                console.log(`[Resolve Share Auto-Heal] Repaired existing share ${cleanId} for ${resolved.fileName}: ${resolved.totalChunks} chunks`);
+              }
+            }
+          } catch (rErr) {
+            console.warn('[Resolve Share Auto-Heal Error]', rErr.message);
+          }
+        }
+
         memoryShareCache.set(cleanId, {
           fileName: resolved.fileName,
           fileSize: resolved.fileSize,
@@ -2039,13 +2082,44 @@ async function handleShareCreate(req, res) {
     const expiresAtVal = parseInt(expiresAt) || 0;
     const nowMs = Date.now();
 
-    const normalizedChunks = Array.isArray(chunks) && chunks.length > 0
+    let normalizedChunks = Array.isArray(chunks) && chunks.length > 0
       ? chunks.map((c, i) => ({
           chunkIndex: c.chunkIndex || (i + 1),
           telegramFileId: c.telegramFileId || c.fileId,
           botTokenUsed: (c.botTokenUsed || c.botToken || botToken || '').trim()
         }))
       : [{ chunkIndex: 1, telegramFileId: fileId, botTokenUsed: (botToken || '').trim() }];
+
+    const expectedChunksCount = parsedSize > CHUNK_SIZE ? Math.ceil(parsedSize / CHUNK_SIZE) : 1;
+    if (pool && expectedChunksCount > 1 && normalizedChunks.length < expectedChunksCount) {
+      try {
+        const repairRes = await queryWithTimeout(
+          `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
+           FROM backed_files
+           WHERE (file_name = $1 OR path LIKE '%' || $1)
+             AND size = $2
+             AND total_chunks >= $3
+             AND chunks_json IS NOT NULL
+             AND chunks_json != '[]'
+           ORDER BY total_chunks DESC LIMIT 1`,
+          [safeFileName, parsedSize, expectedChunksCount]
+        );
+        if (repairRes && repairRes.rows && repairRes.rows.length > 0) {
+          const row = repairRes.rows[0];
+          const parsedChunks = JSON.parse(row.chunks_json);
+          if (Array.isArray(parsedChunks) && parsedChunks.length >= expectedChunksCount) {
+            normalizedChunks = parsedChunks.map((c, i) => ({
+              chunkIndex: c.chunkIndex || (i + 1),
+              telegramFileId: c.telegramFileId || c.fileId,
+              botTokenUsed: (c.botTokenUsed || c.botToken || row.bot_token_used || botToken || '').trim()
+            }));
+            console.log(`[Share Create Auto-Heal] Successfully restored all ${normalizedChunks.length} chunks for ${safeFileName} from backed_files`);
+          }
+        }
+      } catch (healErr) {
+        console.warn('[Share Create Auto-Heal Error]', healErr.message);
+      }
+    }
 
     const candidateBotsList = Array.isArray(candidateBots)
       ? candidateBots.filter(b => typeof b === 'string' && b.trim()).map(b => b.trim())
@@ -2946,8 +3020,30 @@ async function handleShare(req, res) {
             const progPercent = document.getElementById('progPercent');
             const progDetails = document.getElementById('progDetails');
 
+            const expectedChunks = targetFileSize > 0 ? Math.ceil(targetFileSize / (4 * 1024 * 1024)) : 1;
+
+            // Integrity guard: if file is multi-chunk but chunk count is incomplete
+            if (expectedChunks > 1 && totalChunkCount < expectedChunks) {
+              progContainer.style.display = 'block';
+              progBar.style.width = '100%';
+              progBar.style.backgroundColor = '#FFB4AB';
+              progPercent.innerText = '!';
+              progStatus.innerText = '⚠️ Incomplete cloud backup: only ' + totalChunkCount + ' of ' + expectedChunks + ' parts are available on Telegram.';
+              progDetails.innerText = 'To prevent corrupted file downloads, please re-sync or re-upload the complete file from your device.';
+              txt.innerText = '⚠️ Cloud Chunks Incomplete';
+              btn.disabled = false;
+              btn.style.opacity = '1';
+              return;
+            }
+
             // Single chunk or small files <= 4MB: direct download link is instantaneous
             if (!isChunkedFile || totalChunkCount <= 1) {
+              if (targetFileSize > 4.5 * 1024 * 1024) {
+                progContainer.style.display = 'block';
+                progStatus.innerText = '⚠️ Multi-part metadata missing for large file. Direct stream disabled to prevent truncation.';
+                txt.innerText = 'Incomplete File';
+                return;
+              }
               window.location.href = directStreamUrl;
               txt.innerText = '⚡ Connecting Stream...';
               setTimeout(() => { txt.innerText = '⬇️ Downloading File...'; }, 1500);

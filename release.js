@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.1': `✨ What's New in Release v2.3.1:
+- 🔗 Link Sharing Multi-Chunk Fix: Server dynamically auto-heals chunk metadata from cloud database, prohibiting premature 1-chunk stream cut-off at 4.19 MB
+- 🛡️ Strict Chunk Completeness Guard: TelegramMediaResolver strictly validates all sequential parts (1..N) exist before assembling, eliminating false-success incomplete file saves
+- 🛑 Corrupted Download & Re-backup Prevention: Verifies post-decryption size against declared metadata (90% threshold) and immediately purges truncated downloads to prevent BackupWorker index poisoning
+- ✏️ Preserve Metadata on Rename & Actions: Retains chunksJson, channelId, totalChunks, and botToken across cloud index and local Room database when renaming files`,
     '2.3.0': `✨ What's New in Release v2.3.0:
 - 🔧 Critical Download Fix: Resolved persistent 4.19 MB download failure — files no longer stop mid-download with 'Download failed'
 - ⏱️ Extended Download Timeout: Switched from 30-second to 15-minute read timeout for reliable downloads on slow/mobile connections
@@ -350,7 +355,7 @@ async function main() {
   console.log('6️⃣  Deploying backend updates to GitHub repository...');
   try {
     execSync('git add .', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Multi-Chunk Download Fix, Telegram Chunk Recovery & In-App Updater Resilience"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Multi-Chunk Link Sharing & On-Device Download Invariant Fix"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {
