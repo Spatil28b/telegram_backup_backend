@@ -1438,10 +1438,14 @@ function calculateVersionCode(name) {
     const [major, minor, patch] = parts;
     if (major === 2 && minor === 1) {
       return patch + 3;
-    } else if (major === 2 && minor >= 2) {
-      return 103 + (minor - 2) * 10 + patch;
+    } else if (major === 2 && minor === 2) {
+      return 103 + patch;
+    } else if (major === 2 && minor === 3) {
+      return 114 + patch;
+    } else if (major === 2 && minor > 3) {
+      return 114 + (minor - 3) * 20 + patch;
     } else if (major > 2) {
-      return 103 + 80 + (major - 3) * 100 + minor * 10 + patch;
+      return 200 + (major - 3) * 100 + minor * 10 + patch;
     }
   }
   if (localVer && localVer.versionCode) {
