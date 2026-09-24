@@ -86,6 +86,10 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.9': `✨ What's New in Release v2.2.9:
+- 🔗 Large File Sharing Permanent Fix (>3.99 MB): Bit-exact random-access AES-256-CBC range decryption, Telegram CDN URL caching, and zero-RAM disk streaming solve downloads aborting or corrupting on large multi-part files
+- 🛡️ Chunk Completeness Safeguard: Android media resolver guarantees all sequential chunks are verified and present before initiating local assembly, eliminating truncated file corruption
+- ⚡ Zero-Disk Web Stream Engine: Enhanced web sharing portal with live download speed (MB/s), ETA calculations, and automatic retry on network blips`,
     '2.2.8': `✨ What's New in Release v2.2.8:
 - 🌌 Rebranded to TSpace: Official name upgraded to TSpace Cloud Storage & Vault across the entire system, onboarding dialogs, and notifications
 - 🎨 Dynamic Launcher App Icon Switcher: Choose between signature Emerald Forest Green (Default) and Cyber Electric Blue directly from Settings > Appearance with instant live preview
@@ -334,7 +338,7 @@ async function main() {
   console.log('6️⃣  Deploying backend updates to GitHub repository...');
   try {
     execSync('git add .', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - TSpace Rebrand, Dynamic App Icons, Large File Sharing (>3.99 MB) fix"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Permanent Large File Sharing Fix, Random-Access Decryption & Chunk Completeness Guard"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {
