@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.10': `✨ What's New in Release v2.2.10:
+- 🚀 On-Device Multi-Chunk Download Fix: Fully resolves files stopping at 4.19 MB or failing with 'Download failed' by synchronizing chunksJson to Neon DB and local Room DB, enabling complete assembly of multi-part files
+- 🔍 Encrypted Telegram Channel Chunk Recovery: Bi-directional scanning and real-time AES-256 caption decryption reliably recovers concurrently dispatched chunk parts from Telegram channels
+- 📥 In-App Updater Network & Fallback Fix: Configured 10-minute streaming timeout, eliminated 404 header conflicts on GitHub releases, and added direct GitHub asset resolution with buttery smooth progress tracking
+- 🔄 Cloud Restore & System Share Sync: Complete chunk metadata automatically restored into Room chunk_upload_progress upon cloud sync and device migration`,
     '2.2.9': `✨ What's New in Release v2.2.9:
 - 🔗 Large File Sharing Permanent Fix (>3.99 MB): Bit-exact random-access AES-256-CBC range decryption, Telegram CDN URL caching, and zero-RAM disk streaming solve downloads aborting or corrupting on large multi-part files
 - 🛡️ Chunk Completeness Safeguard: Android media resolver guarantees all sequential chunks are verified and present before initiating local assembly, eliminating truncated file corruption
@@ -338,7 +343,7 @@ async function main() {
   console.log('6️⃣  Deploying backend updates to GitHub repository...');
   try {
     execSync('git add .', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Permanent Large File Sharing Fix, Random-Access Decryption & Chunk Completeness Guard"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Multi-Chunk Download Fix, Telegram Chunk Recovery & In-App Updater Resilience"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {

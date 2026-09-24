@@ -137,6 +137,10 @@ async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_backed_files_email_drive ON backed_files(email, is_drive_upload);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
       ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_drive_upload BOOLEAN DEFAULT FALSE;
+      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS chunks_json TEXT DEFAULT '[]';
+      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS channel_id TEXT DEFAULT '';
+      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS bot_token_used TEXT DEFAULT '';
+      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS total_chunks INT DEFAULT 1;
       DELETE FROM otps WHERE expires_at < (EXTRACT(EPOCH FROM NOW()) * 1000);
     `);
     console.log('[Neon Postgres] Database schema, indexes and tables initialized successfully!');
@@ -920,10 +924,29 @@ app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings
  */
 app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backup'], async (req, res, next) => {
   try {
-    const { email, fileName, telegramFileId, size, path, timestamp, messageId, isDriveUpload, is_drive_upload } = req.body || {};
+    const {
+      email, fileName, telegramFileId, size, path, timestamp, messageId,
+      isDriveUpload, is_drive_upload,
+      chunksJson, chunks_json, chunks,
+      channelId, channel_id,
+      botTokenUsed, bot_token_used,
+      totalChunks, total_chunks
+    } = req.body || {};
     const lowerEmail = (email || '').toLowerCase();
     const msgId = messageId || 0;
     const isDrive = Boolean(isDriveUpload || is_drive_upload || telegramFileId === 'DIR_MARKER');
+
+    let finalChunksJson = '[]';
+    if (typeof chunksJson === 'string' && chunksJson.trim().length > 0) {
+      finalChunksJson = chunksJson.trim();
+    } else if (typeof chunks_json === 'string' && chunks_json.trim().length > 0) {
+      finalChunksJson = chunks_json.trim();
+    } else if (Array.isArray(chunks) && chunks.length > 0) {
+      finalChunksJson = JSON.stringify(chunks);
+    }
+    const finalChannelId = String(channelId || channel_id || '').trim();
+    const finalBotToken = String(botTokenUsed || bot_token_used || '').trim();
+    const finalTotalChunks = parseInt(totalChunks || total_chunks || '1', 10) || 1;
 
     // Fix #4: Input validation — reject requests with missing critical fields
     if (!lowerEmail || !lowerEmail.includes('@')) {
@@ -940,31 +963,41 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       try {
         // Fix #4: Use UPSERT with ON CONFLICT (email, path) to prevent duplicate file records
         await queryWithTimeout(
-          `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload, chunks_json, channel_id, bot_token_used, total_chunks)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT (email, path) DO UPDATE SET
-             file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8`,
-          [lowerEmail, fileName, telegramFileId, size || 0, path || '', safeTimestamp, msgId, isDrive]
+             file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8,
+             chunks_json = CASE WHEN $9 != '[]' AND $9 != '' THEN $9 ELSE backed_files.chunks_json END,
+             channel_id = CASE WHEN $10 != '' THEN $10 ELSE backed_files.channel_id END,
+             bot_token_used = CASE WHEN $11 != '' THEN $11 ELSE backed_files.bot_token_used END,
+             total_chunks = CASE WHEN $12 > 1 THEN $12 ELSE backed_files.total_chunks END`,
+          [lowerEmail, fileName, telegramFileId, size || 0, path || '', safeTimestamp, msgId, isDrive, finalChunksJson, finalChannelId, finalBotToken, finalTotalChunks]
         );
       } catch (dbErr) {
         console.error('[DB Warn] Files backup DB save failed:', dbErr.message);
         const list = memoryFiles.get(lowerEmail) || [];
         const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
-        if (idx >= 0) {
-          list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive };
-        } else {
-          list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive });
-        }
+        const entry = {
+          id: idx >= 0 ? list[idx].id : list.length + 1,
+          email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp,
+          messageId: msgId, isDriveUpload: isDrive, chunksJson: finalChunksJson, channelId: finalChannelId,
+          botTokenUsed: finalBotToken, totalChunks: finalTotalChunks
+        };
+        if (idx >= 0) list[idx] = entry;
+        else list.push(entry);
         memoryFiles.set(lowerEmail, list);
       }
     } else {
       const list = memoryFiles.get(lowerEmail) || [];
       const idx = list.findIndex(f => f.path === path && f.email === lowerEmail);
-      if (idx >= 0) {
-        list[idx] = { id: list[idx].id, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive };
-      } else {
-        list.push({ id: list.length + 1, email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp, messageId: msgId, isDriveUpload: isDrive });
-      }
+      const entry = {
+        id: idx >= 0 ? list[idx].id : list.length + 1,
+        email: lowerEmail, fileName, telegramFileId, size, path, timestamp: safeTimestamp,
+        messageId: msgId, isDriveUpload: isDrive, chunksJson: finalChunksJson, channelId: finalChannelId,
+        botTokenUsed: finalBotToken, totalChunks: finalTotalChunks
+      };
+      if (idx >= 0) list[idx] = entry;
+      else list.push(entry);
       memoryFiles.set(lowerEmail, list);
     }
 
@@ -1013,13 +1046,24 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
             const fTime = (!rawTime || rawTime < 946684800000 || rawTime === 1784030400000) ? Date.now() : rawTime;
             const msgId = parseInt(f.messageId || '0', 10) || 0;
             const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || fPath.startsWith('Internal Storage') || tgId === 'DIR_MARKER');
+            let fChunksJson = '[]';
+            if (typeof f.chunksJson === 'string' && f.chunksJson.trim().length > 0) fChunksJson = f.chunksJson.trim();
+            else if (typeof f.chunks_json === 'string' && f.chunks_json.trim().length > 0) fChunksJson = f.chunks_json.trim();
+            else if (Array.isArray(f.chunks) && f.chunks.length > 0) fChunksJson = JSON.stringify(f.chunks);
+            const fChannel = String(f.channelId || f.channel_id || '').trim();
+            const fBot = String(f.botTokenUsed || f.bot_token_used || '').trim();
+            const fTotal = parseInt(f.totalChunks || f.total_chunks || '1', 10) || 1;
 
             await client.query(
-              `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload, chunks_json, channel_id, bot_token_used, total_chunks)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                ON CONFLICT (email, path) DO UPDATE SET
-                 file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8`,
-              [lowerEmail, fName, tgId, fSize, fPath, fTime, msgId, isDrive]
+                 file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8,
+                 chunks_json = CASE WHEN $9 != '[]' AND $9 != '' THEN $9 ELSE backed_files.chunks_json END,
+                 channel_id = CASE WHEN $10 != '' THEN $10 ELSE backed_files.channel_id END,
+                 bot_token_used = CASE WHEN $11 != '' THEN $11 ELSE backed_files.bot_token_used END,
+                 total_chunks = CASE WHEN $12 > 1 THEN $12 ELSE backed_files.total_chunks END`,
+              [lowerEmail, fName, tgId, fSize, fPath, fTime, msgId, isDrive, fChunksJson, fChannel, fBot, fTotal]
             );
           }
           await client.query('COMMIT');
@@ -1035,6 +1079,10 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
         for (const f of validFiles) {
           const fPath = (f.path || '').trim();
           const idx = list.findIndex(item => item.path === fPath && item.email === lowerEmail);
+          let fChunksJson = '[]';
+          if (typeof f.chunksJson === 'string' && f.chunksJson.trim().length > 0) fChunksJson = f.chunksJson.trim();
+          else if (typeof f.chunks_json === 'string' && f.chunks_json.trim().length > 0) fChunksJson = f.chunks_json.trim();
+          else if (Array.isArray(f.chunks) && f.chunks.length > 0) fChunksJson = JSON.stringify(f.chunks);
           const entry = {
             id: idx >= 0 ? list[idx].id : list.length + 1,
             email: lowerEmail,
@@ -1044,7 +1092,11 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
             path: fPath,
             timestamp: parseInt(f.timestamp || '0', 10) || Date.now(),
             messageId: parseInt(f.messageId || '0', 10) || 0,
-            isDriveUpload: Boolean(f.isDriveUpload || f.is_drive_upload)
+            isDriveUpload: Boolean(f.isDriveUpload || f.is_drive_upload),
+            chunksJson: fChunksJson,
+            channelId: String(f.channelId || f.channel_id || '').trim(),
+            botTokenUsed: String(f.botTokenUsed || f.bot_token_used || '').trim(),
+            totalChunks: parseInt(f.totalChunks || f.total_chunks || '1', 10) || 1
           };
           if (idx >= 0) list[idx] = entry;
           else list.push(entry);
@@ -1056,6 +1108,10 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
       for (const f of validFiles) {
         const fPath = (f.path || '').trim();
         const idx = list.findIndex(item => item.path === fPath && item.email === lowerEmail);
+        let fChunksJson = '[]';
+        if (typeof f.chunksJson === 'string' && f.chunksJson.trim().length > 0) fChunksJson = f.chunksJson.trim();
+        else if (typeof f.chunks_json === 'string' && f.chunks_json.trim().length > 0) fChunksJson = f.chunks_json.trim();
+        else if (Array.isArray(f.chunks) && f.chunks.length > 0) fChunksJson = JSON.stringify(f.chunks);
         const entry = {
           id: idx >= 0 ? list[idx].id : list.length + 1,
           email: lowerEmail,
@@ -1065,7 +1121,11 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
           path: fPath,
           timestamp: parseInt(f.timestamp || '0', 10) || Date.now(),
           messageId: parseInt(f.messageId || '0', 10) || 0,
-          isDriveUpload: Boolean(f.isDriveUpload || f.is_drive_upload)
+          isDriveUpload: Boolean(f.isDriveUpload || f.is_drive_upload),
+          chunksJson: fChunksJson,
+          channelId: String(f.channelId || f.channel_id || '').trim(),
+          botTokenUsed: String(f.botTokenUsed || f.bot_token_used || '').trim(),
+          totalChunks: parseInt(f.totalChunks || f.total_chunks || '1', 10) || 1
         };
         if (idx >= 0) list[idx] = entry;
         else list.push(entry);
@@ -1262,7 +1322,11 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
 
     if (pool) {
       try {
-        let queryStr = `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId", is_drive_upload as "isDriveUpload"
+        let queryStr = `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId", is_drive_upload as "isDriveUpload",
+           COALESCE(chunks_json, '[]') as "chunksJson",
+           COALESCE(channel_id, '') as "channelId",
+           COALESCE(bot_token_used, '') as "botTokenUsed",
+           COALESCE(total_chunks, 1) as "totalChunks"
            FROM backed_files WHERE email = $1`;
         const params = [email];
 
@@ -1280,6 +1344,10 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
           if (isNaN(ts) || ts < 946684800000 || ts === 1784030400000) {
             row.timestamp = Date.now();
           }
+          if (!row.chunksJson || row.chunksJson === 'null') row.chunksJson = '[]';
+          row.channelId = row.channelId || '';
+          row.botTokenUsed = row.botTokenUsed || '';
+          row.totalChunks = parseInt(row.totalChunks, 10) || 1;
           return row;
         });
         return res.json({ success: true, files: sanitizedFiles, isDelta: since > 0 });
@@ -1291,6 +1359,10 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
         }
         const sanitizedMem = list.slice(0, limit).map(f => {
           if (!f.timestamp || f.timestamp < 946684800000 || f.timestamp === 1784030400000) f.timestamp = Date.now();
+          if (!f.chunksJson) f.chunksJson = '[]';
+          f.channelId = f.channelId || '';
+          f.botTokenUsed = f.botTokenUsed || '';
+          f.totalChunks = f.totalChunks || 1;
           return f;
         });
         return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });
@@ -1302,6 +1374,10 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
       }
       const sanitizedMem = list.slice(0, limit).map(f => {
         if (!f.timestamp || f.timestamp < 946684800000 || f.timestamp === 1784030400000) f.timestamp = Date.now();
+        if (!f.chunksJson) f.chunksJson = '[]';
+        f.channelId = f.channelId || '';
+        f.botTokenUsed = f.botTokenUsed || '';
+        f.totalChunks = f.totalChunks || 1;
         return f;
       });
       return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });

@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 112,
-  "versionName": "2.2.9",
+  "versionCode": 113,
+  "versionName": "2.2.10",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.2.9:\n- 🔗 Large File Sharing Permanent Fix (>3.99 MB): Bit-exact random-access AES-256-CBC range decryption, Telegram CDN URL caching, and zero-RAM disk streaming solve downloads aborting or corrupting on large multi-part files\n- 🛡️ Chunk Completeness Safeguard: Android media resolver guarantees all sequential chunks are verified and present before initiating local assembly, eliminating truncated file corruption\n- ⚡ Zero-Disk Web Stream Engine: Enhanced web sharing portal with live download speed (MB/s), ETA calculations, and automatic retry on network blips"
+  "releaseNotes": "✨ What's New in Release v2.2.10:\n- 🚀 On-Device Multi-Chunk Download Fix: Fully resolves files stopping at 4.19 MB or failing with 'Download failed' by synchronizing chunksJson to Neon DB and local Room DB, enabling complete assembly of multi-part files\n- 🔍 Encrypted Telegram Channel Chunk Recovery: Bi-directional scanning and real-time AES-256 caption decryption reliably recovers concurrently dispatched chunk parts from Telegram channels\n- 📥 In-App Updater Network & Fallback Fix: Configured 10-minute streaming timeout, eliminated 404 header conflicts on GitHub releases, and added direct GitHub asset resolution with buttery smooth progress tracking\n- 🔄 Cloud Restore & System Share Sync: Complete chunk metadata automatically restored into Room chunk_upload_progress upon cloud sync and device migration"
 }
