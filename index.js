@@ -1478,27 +1478,45 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
     let body = '';
     ghRes.on('data', c => body += c);
     ghRes.on('end', () => {
+      let ghCode = 0;
+      let ghName = '';
+      let ghNotes = '';
       try {
         const json = JSON.parse(body);
         if (json && json.tag_name) {
           const tag = json.tag_name;
-          const name = tag.replace(/^v/, '');
-          const code = calculateVersionCode(name);
-          return res.json({
-            success: true,
-            versionCode: code,
-            versionName: name,
-            downloadUrl: downloadUrl,
-            releaseNotes: json.body || `Release ${tag}`
-          });
+          ghName = tag.replace(/^v/, '');
+          ghCode = calculateVersionCode(ghName);
+          ghNotes = json.body || `Release ${tag}`;
         }
       } catch (_) {}
       
-      const localVer = getLocalAppVersion();
+      const localVer = getLocalAppVersion() || {};
+      const localCode = localVer.versionCode || 0;
+
+      // Always prioritize whichever is higher
+      if (localCode > ghCode) {
+        return res.json({
+          success: true,
+          versionCode: localCode,
+          versionName: localVer.versionName || "2.3.0",
+          downloadUrl: downloadUrl,
+          releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
+        });
+      } else if (ghCode > 0) {
+        return res.json({
+          success: true,
+          versionCode: ghCode,
+          versionName: ghName,
+          downloadUrl: downloadUrl,
+          releaseNotes: ghNotes
+        });
+      }
+
       return res.json({
         success: true,
-        versionCode: localVer.versionCode || 106,
-        versionName: localVer.versionName || "2.2.3",
+        versionCode: localCode || 114,
+        versionName: localVer.versionName || "2.3.0",
         downloadUrl: downloadUrl,
         releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
       });

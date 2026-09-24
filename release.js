@@ -86,6 +86,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.0': `✨ What's New in Release v2.3.0:
+- 🔧 Critical Download Fix: Resolved persistent 4.19 MB download failure — files no longer stop mid-download with 'Download failed'
+- ⏱️ Extended Download Timeout: Switched from 30-second to 15-minute read timeout for reliable downloads on slow/mobile connections
+- ☁️ Cloud Chunk Re-Sync: Downloads now automatically fetch fresh chunk metadata from cloud when local data is missing (new device/reinstall)
+- 🔄 Retry with Backoff: Each chunk retries up to 3 times with exponential backoff instead of instant failure
+- 🛡️ Single-Stream Fallback: When chunk metadata is unavailable, attempts full-file single-stream download as last resort
+- 📦 File Sharing Fix: Same 4.19 MB stall in System Share/Send to App now resolved (same underlying code path)`,
     '2.2.10': `✨ What's New in Release v2.2.10:
 - 🚀 On-Device Multi-Chunk Download Fix: Fully resolves files stopping at 4.19 MB or failing with 'Download failed' by synchronizing chunksJson to Neon DB and local Room DB, enabling complete assembly of multi-part files
 - 🔍 Encrypted Telegram Channel Chunk Recovery: Bi-directional scanning and real-time AES-256 caption decryption reliably recovers concurrently dispatched chunk parts from Telegram channels
