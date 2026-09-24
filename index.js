@@ -1629,6 +1629,190 @@ async function getFreshTelegramUrl(botToken, fileId, retries = 3) {
   return null;
 }
 
+// In-memory cache for resolved Telegram CDN URLs (prevents 429 rate limits during multi-chunk downloads)
+const telegramCdnUrlCache = new Map(); // key: fileId, value: { url, expiresAt }
+
+// LRU chunk buffer cache (prevents duplicate network downloads across chunk boundaries)
+const chunkBufferCache = new Map(); // key: fileId, value: { buffer, accessedAt }
+const MAX_CHUNK_CACHE_ENTRIES = 24;
+
+const MAGIC_HEADER = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]); // "ENC256\x01\x00"
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB chunk size matching FileChunker.kt
+
+/**
+ * Resolves a chunk's fresh Telegram CDN URL with multi-bot fleet failover.
+ * Attempts cached URL first, then chunk's recorded bot, followed by all candidate bots in the fleet.
+ */
+async function resolveChunkUrl(chunk, shareData) {
+  if (!chunk) return null;
+  const targetFileId = (chunk.telegramFileId || chunk.fileId || '').trim();
+  if (!targetFileId) return null;
+  if (targetFileId.startsWith('http://') || targetFileId.startsWith('https://')) return targetFileId;
+
+  // Check in-memory CDN URL cache first (Telegram file paths are valid for 1 hour)
+  const cached = telegramCdnUrlCache.get(targetFileId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+
+  const candidateTokens = [];
+  const addToken = (t) => {
+    const clean = (t || '').trim();
+    if (clean && !candidateTokens.includes(clean)) candidateTokens.push(clean);
+  };
+
+  addToken(chunk.botTokenUsed);
+  addToken(chunk.botToken);
+  addToken(shareData?.botToken);
+  if (Array.isArray(shareData?.candidateBots)) {
+    shareData.candidateBots.forEach(addToken);
+  }
+  addToken(process.env.TELEGRAM_BOT_TOKEN);
+
+  for (const token of candidateTokens) {
+    const freshUrl = await getFreshTelegramUrl(token, targetFileId, 2);
+    if (freshUrl) {
+      chunk.botTokenUsed = token;
+      // Cache URL for 45 minutes to prevent Telegram Bot API 429 rate limits
+      telegramCdnUrlCache.set(targetFileId, {
+        url: freshUrl,
+        expiresAt: Date.now() + 45 * 60 * 1000
+      });
+      return freshUrl;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetches and caches a chunk's raw buffer from Telegram CDN.
+ */
+async function fetchChunkBuffer(chunk, shareData) {
+  const fileId = (chunk.telegramFileId || chunk.fileId || '').trim();
+  if (chunkBufferCache.has(fileId)) {
+    const entry = chunkBufferCache.get(fileId);
+    entry.accessedAt = Date.now();
+    return entry.buffer;
+  }
+
+  const freshUrl = await resolveChunkUrl(chunk, shareData);
+  if (!freshUrl) return null;
+
+  const res = await fetch(freshUrl);
+  if (!res.ok) return null;
+
+  const arrayBuf = await res.arrayBuffer();
+  const buffer = Buffer.from(arrayBuf);
+
+  if (chunkBufferCache.size >= MAX_CHUNK_CACHE_ENTRIES) {
+    let oldestKey = null;
+    let oldestTime = Infinity;
+    for (const [k, v] of chunkBufferCache.entries()) {
+      if (v.accessedAt < oldestTime) {
+        oldestTime = v.accessedAt;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) chunkBufferCache.delete(oldestKey);
+  }
+
+  chunkBufferCache.set(fileId, { buffer, accessedAt: Date.now() });
+  return buffer;
+}
+
+/**
+ * Reads a range of encrypted bytes [start, end] across sequential 4MB chunks.
+ */
+async function readEncryptedBytesFromChunks(chunkList, shareData, start, end) {
+  const bufs = [];
+  for (let idx = 0; idx < chunkList.length; idx++) {
+    const chunk = chunkList[idx];
+    const chunkStart = idx * CHUNK_SIZE;
+    const chunkBuf = await fetchChunkBuffer(chunk, shareData);
+    if (!chunkBuf) throw new Error(`Could not fetch chunk ${idx + 1}`);
+
+    const chunkEnd = chunkStart + chunkBuf.length - 1;
+    if (chunkEnd < start || chunkStart > end) continue;
+
+    const sliceStart = Math.max(0, start - chunkStart);
+    const sliceEnd = Math.min(chunkBuf.length - 1, end - chunkStart);
+    bufs.push(chunkBuf.subarray(sliceStart, sliceEnd + 1));
+  }
+  return Buffer.concat(bufs);
+}
+
+/**
+ * Decrypts any plaintext byte range [pStart, pEnd] on-the-fly.
+ * Seamlessly handles both AES-256-CBC encrypted multi-chunk files (with ENC256 magic header)
+ * and plain unencrypted multi-chunk files.
+ */
+async function getDecryptedPlaintextRange(chunkList, shareData, pStart, pEnd) {
+  const secretKey = (shareData.encryptionKey || '').trim();
+  const totalPlainSize = parseInt(shareData.fileSize) || 0;
+
+  // Check if chunk 1 has the ENC256 magic header
+  const firstChunkBuf = await fetchChunkBuffer(chunkList[0], shareData);
+  if (!firstChunkBuf) throw new Error('Could not fetch initial chunk');
+
+  const hasMagicHeader = firstChunkBuf.length >= 8 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER);
+
+  if (!hasMagicHeader || !secretKey) {
+    // Plain unencrypted file: slice directly from chunks
+    const bufs = [];
+    for (let idx = 0; idx < chunkList.length; idx++) {
+      const chunk = chunkList[idx];
+      const chunkStart = idx * CHUNK_SIZE;
+      const chunkBuf = (idx === 0) ? firstChunkBuf : await fetchChunkBuffer(chunk, shareData);
+      if (!chunkBuf) throw new Error(`Could not fetch chunk ${idx + 1}`);
+
+      const chunkEnd = chunkStart + chunkBuf.length - 1;
+      if (chunkEnd < pStart || chunkStart > pEnd) continue;
+
+      const sliceStart = Math.max(0, pStart - chunkStart);
+      const sliceEnd = Math.min(chunkBuf.length - 1, pEnd - chunkStart);
+      bufs.push(chunkBuf.subarray(sliceStart, sliceEnd + 1));
+    }
+    return Buffer.concat(bufs);
+  }
+
+  // Encrypted with AES-256-CBC Zero-Knowledge Encryption
+  const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+  const initialIv = crypto.createHash('md5').update(secretKey, 'utf8').digest();
+
+  const bStart = Math.floor(pStart / 16);
+  const bEnd = Math.floor(pEnd / 16);
+
+  const cByteStart = 8 + (bStart > 0 ? (bStart - 1) * 16 : 0);
+  const cByteEnd = 8 + (bEnd + 1) * 16 - 1;
+
+  const rawBytes = await readEncryptedBytesFromChunks(chunkList, shareData, cByteStart, cByteEnd);
+
+  let blockIv, toDecrypt;
+  if (bStart === 0) {
+    blockIv = initialIv;
+    toDecrypt = rawBytes;
+  } else {
+    if (rawBytes.length < 16) return Buffer.alloc(0);
+    blockIv = rawBytes.subarray(0, 16);
+    toDecrypt = rawBytes.subarray(16);
+  }
+
+  if (toDecrypt.length % 16 !== 0) {
+    toDecrypt = toDecrypt.subarray(0, Math.floor(toDecrypt.length / 16) * 16);
+  }
+  if (toDecrypt.length === 0) {
+    return Buffer.alloc(0);
+  }
+
+  const d = crypto.createDecipheriv('aes-256-cbc', key, blockIv);
+  d.setAutoPadding(false);
+  const decrypted = Buffer.concat([d.update(toDecrypt), d.final()]);
+
+  const offsetInBlock = pStart % 16;
+  const len = pEnd - pStart + 1;
+  return decrypted.subarray(offsetInBlock, offsetInBlock + len);
+}
+
 /**
  * Normalizes and resolves share metadata from either a database Share ID (s_...)
  * or a stateless encrypted / Base64 fallback token.
@@ -1657,7 +1841,8 @@ async function resolveShareData(identifier) {
       fileId: sensitive.fileId || '',
       encryptionKey: sensitive.encryptionKey || '',
       totalChunks: sensitive.totalChunks || 1,
-      chunks: Array.isArray(sensitive.chunks) ? sensitive.chunks : []
+      chunks: Array.isArray(sensitive.chunks) ? sensitive.chunks : [],
+      candidateBots: Array.isArray(sensitive.candidateBots) ? sensitive.candidateBots : []
     };
   }
 
@@ -1683,7 +1868,8 @@ async function resolveShareData(identifier) {
           fileId: sensitive.fileId || '',
           encryptionKey: sensitive.encryptionKey || '',
           totalChunks: sensitive.totalChunks || 1,
-          chunks: Array.isArray(sensitive.chunks) ? sensitive.chunks : []
+          chunks: Array.isArray(sensitive.chunks) ? sensitive.chunks : [],
+          candidateBots: Array.isArray(sensitive.candidateBots) ? sensitive.candidateBots : []
         };
         memoryShareCache.set(cleanId, {
           fileName: resolved.fileName,
@@ -1733,7 +1919,8 @@ async function resolveShareData(identifier) {
       fileId: raw.fileId || '',
       encryptionKey: raw.encryptionKey || raw.encKey || '',
       totalChunks: parseInt(raw.totalChunks) || chunks.length || 1,
-      chunks
+      chunks,
+      candidateBots: Array.isArray(raw.candidateBots) ? raw.candidateBots : []
     };
   } catch (_) {
     return null;
@@ -1746,7 +1933,7 @@ async function resolveShareData(identifier) {
  */
 async function handleShareCreate(req, res) {
   try {
-    const { fileName, fileSize, fileId, botToken, encryptionKey, chunks, pin, expiresAt } = req.body || {};
+    const { fileName, fileSize, fileId, botToken, encryptionKey, chunks, pin, expiresAt, candidateBots } = req.body || {};
     if (!fileName || (!fileId && (!Array.isArray(chunks) || chunks.length === 0))) {
       return res.status(400).json({ success: false, message: 'Missing required file data' });
     }
@@ -1766,12 +1953,17 @@ async function handleShareCreate(req, res) {
         }))
       : [{ chunkIndex: 1, telegramFileId: fileId, botTokenUsed: (botToken || '').trim() }];
 
+    const candidateBotsList = Array.isArray(candidateBots)
+      ? candidateBots.filter(b => typeof b === 'string' && b.trim()).map(b => b.trim())
+      : [];
+
     const sensitivePayload = {
       fileId: fileId || normalizedChunks[0].telegramFileId,
       botToken: (botToken || normalizedChunks[0].botTokenUsed || '').trim(),
       encryptionKey: (encryptionKey || '').trim(),
       totalChunks: normalizedChunks.length,
-      chunks: normalizedChunks
+      chunks: normalizedChunks,
+      candidateBots: candidateBotsList
     };
 
     const payloadEnc = encryptServerPayload(sensitivePayload);
@@ -1849,28 +2041,22 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
   }
   chunkList.sort((a, b) => (a.chunkIndex || 1) - (b.chunkIndex || 1));
 
-  // HTTP Range Request Handling (Essential for HTML5 video/audio playback and pause-resume download)
+  // HTTP Range Request Handling (Universal for all file sizes, single/multi-chunk, plain or AES-256 encrypted)
   const rangeHeader = req && req.headers ? req.headers.range : null;
-  if (rangeHeader && totalSize > 0 && !secretKey && chunkList.length === 1) {
-    const activeBot = (chunkList[0].botTokenUsed || botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-    const activeFileId = chunkList[0].telegramFileId || chunkList[0].fileId;
-    const freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+  if (rangeHeader && totalSize > 0) {
+    const parts = rangeHeader.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
 
-    if (freshUrl) {
-      const parts = rangeHeader.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
-      const chunkSize = (end - start) + 1;
-
+    if (!isNaN(start) && start >= 0 && end >= start && start < totalSize) {
+      const clampedEnd = Math.min(end, totalSize - 1);
       try {
-        const tgRes = await fetch(freshUrl, {
-          headers: { 'Range': `bytes=${start}-${end}` }
-        });
+        const decryptedRange = await getDecryptedPlaintextRange(chunkList, shareData, start, clampedEnd);
 
         res.status(206);
-        res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+        res.setHeader('Content-Range', `bytes ${start}-${clampedEnd}/${totalSize}`);
         res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Length', chunkSize);
+        res.setHeader('Content-Length', decryptedRange.length);
         res.setHeader('Content-Type', mimeType || 'application/octet-stream');
         if (isDownload) {
           res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
@@ -1879,12 +2065,9 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
         }
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.setHeader('X-Content-Type-Options', 'nosniff');
-
-        const { Readable } = require('stream');
-        Readable.fromWeb(tgRes.body).pipe(res);
-        return;
+        return res.end(decryptedRange);
       } catch (rangeErr) {
-        console.warn('[Range Request Fallback]', rangeErr.message);
+        console.warn('[Universal Range Request Fallback]', rangeErr.message);
       }
     }
   }
@@ -1913,7 +2096,6 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
     let headerChecked = false;
     let headerBuf = Buffer.alloc(0);
     let decipher = null;
-    const MAGIC_HEADER = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]); // "ENC256\x01\x00"
 
     const decryptTransform = new Transform({
       transform(chunk, encoding, callback) {
@@ -1992,9 +2174,7 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
     if (isAborted) break;
     const batch = chunkList.slice(i, i + batchSize);
     await Promise.all(batch.map(async (c) => {
-      const activeBot = (c.botTokenUsed || botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-      const activeFileId = c.telegramFileId || c.fileId;
-      let freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+      let freshUrl = await resolveChunkUrl(c, shareData);
       if (!freshUrl && c.directUrl) freshUrl = c.directUrl;
       if (!freshUrl && shareData.directUrl) freshUrl = shareData.directUrl;
       if (freshUrl) resolvedUrls.set(c.chunkIndex || 1, freshUrl);
@@ -2009,9 +2189,7 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
       const idx = chunk.chunkIndex || 1;
       let freshUrl = resolvedUrls.get(idx);
       if (!freshUrl) {
-        const activeBot = (chunk.botTokenUsed || botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-        const activeFileId = chunk.telegramFileId || chunk.fileId;
-        freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+        freshUrl = await resolveChunkUrl(chunk, shareData);
       }
 
       if (!freshUrl) {
@@ -2578,7 +2756,7 @@ async function handleShare(req, res) {
         <div class="portal-container">
           <!-- Brand Header -->
           <div class="brand-header">
-            <div class="brand-pill">☁️ Telegram Backup Cloud</div>
+            <div class="brand-pill">☁️ TSpace Cloud Storage & Vault</div>
             <div class="cloud-verified">🛡️ Verified Cloud Asset</div>
           </div>
 
@@ -2599,14 +2777,29 @@ async function handleShare(req, res) {
 
           <!-- Primary Action Buttons -->
           <div class="actions-row">
-            <a href="${downloadUrl}" class="btn-primary" id="downloadBtn" onclick="onDownloadClicked()">
+            <button class="btn-primary" id="downloadBtn" onclick="onDownloadClicked()">
               <span>⬇️</span>
               <span id="dlText">Download File ${humanSize ? '(' + humanSize + ')' : ''}</span>
-            </a>
+            </button>
             <button class="btn-tonal" onclick="copyLink()">
               <span>🔗</span>
               <span id="copyBtnText">Copy Share Link</span>
             </button>
+          </div>
+
+          <!-- Progressive Download Progress Bar (for multi-part large files) -->
+          <div id="progContainer" style="display: none; margin-top: 14px; background: rgba(255,255,255,0.06); border-radius: 14px; padding: 14px 18px; border: 1px solid rgba(255,255,255,0.12);">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 8px;">
+              <span id="progStatus" style="color: var(--md-sys-color-primary);">⚡ Preparing secure transfer...</span>
+              <span id="progPercent" style="color: #A6C8FF;">0%</span>
+            </div>
+            <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.12); border-radius: 6px; overflow: hidden;">
+              <div id="progBarFill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38EF7D, #11998E); border-radius: 6px; transition: width 0.2s ease;"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 8px;">
+              <span id="progDetails">0 MB / ${humanSize}</span>
+              <a href="${downloadUrl}" style="color: var(--md-sys-color-primary); text-decoration: underline;">Direct Stream Link</a>
+            </div>
           </div>
 
           <!-- Security & Integrity Badges -->
@@ -2636,27 +2829,169 @@ async function handleShare(req, res) {
 
           <!-- Footer -->
           <div class="portal-footer">
-            Protected & Delivered by <a href="/">Telegram Backup Cloud Network</a>
+            Protected & Delivered by <a href="/">TSpace Cloud Storage & Vault</a>
           </div>
         </div>
 
         <script>
+          const isChunkedFile = ${isChunked ? 'true' : 'false'};
+          const totalChunkCount = ${totalChunks || 1};
+          const shareIdentifier = "${escapeHtml(shareData.shareId || identifier)}";
+          const fileMimeType = "${escapeHtml(mimeType)}";
+          const targetFileName = "${escapeHtml(fileName)}";
+          const targetFileSize = ${parseInt(fileSize) || 0};
+          const directStreamUrl = "${downloadUrl}";
+          const sharePin = "${escapeHtml(userEnteredPin || '')}";
+
           async function onDownloadClicked() {
             const btn = document.getElementById('downloadBtn');
             const txt = document.getElementById('dlText');
-            txt.innerText = '⚡ Connecting Stream...';
-            setTimeout(() => {
-              if (txt.innerText.includes('Connecting')) {
-                txt.innerText = '⬇️ Downloading File...';
+            const progContainer = document.getElementById('progContainer');
+            const progBar = document.getElementById('progBarFill');
+            const progStatus = document.getElementById('progStatus');
+            const progPercent = document.getElementById('progPercent');
+            const progDetails = document.getElementById('progDetails');
+
+            // Single chunk or small files <= 4MB: direct download link is instantaneous
+            if (!isChunkedFile || totalChunkCount <= 1) {
+              window.location.href = directStreamUrl;
+              txt.innerText = '⚡ Connecting Stream...';
+              setTimeout(() => { txt.innerText = '⬇️ Downloading File...'; }, 1500);
+              setTimeout(() => { txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}'; }, 8000);
+              return;
+            }
+
+            // Multi-part large file (50MB, 500MB+):
+            // Download sequentially via chunk endpoints to bypass all serverless buffer/timeout limits
+            try {
+              btn.disabled = true;
+              btn.style.opacity = '0.7';
+              txt.innerText = '⚡ Fetching Chunks...';
+              progContainer.style.display = 'block';
+
+              // Try File System Access API for zero-RAM direct-to-disk streaming (Chrome, Edge, Opera)
+              let fileWritable = null;
+              if (window.showSaveFilePicker) {
+                try {
+                  const extName = targetFileName.split('.').pop() || '';
+                  const fileHandle = await window.showSaveFilePicker({
+                    suggestedName: targetFileName,
+                    types: [{
+                      description: 'File',
+                      accept: { [fileMimeType || 'application/octet-stream']: ['.' + extName] }
+                    }]
+                  });
+                  fileWritable = await fileHandle.createWritable();
+                } catch (pickerErr) {
+                  if (pickerErr.name === 'AbortError') {
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
+                    progContainer.style.display = 'none';
+                    return;
+                  }
+                  fileWritable = null;
+                }
               }
-            }, 2000);
-            setTimeout(() => {
-              txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
-            }, 8000);
+
+              const downloadedParts = [];
+              let receivedBytes = 0;
+              const startTime = Date.now();
+              const pinQuery = sharePin ? ('?pin=' + encodeURIComponent(sharePin)) : '';
+
+              for (let i = 1; i <= totalChunkCount; i++) {
+                // Update progress with speed and ETA
+                const elapsedSec = (Date.now() - startTime) / 1000;
+                const speedMBps = elapsedSec > 0.5 ? (receivedBytes / (1024 * 1024 * elapsedSec)).toFixed(1) : '...';
+                const remainingBytes = Math.max(0, targetFileSize - receivedBytes);
+                const etaSec = (speedMBps !== '...' && parseFloat(speedMBps) > 0) ? Math.ceil((remainingBytes / (1024 * 1024)) / parseFloat(speedMBps)) : null;
+                const etaText = etaSec != null && etaSec >= 0 ? (' • ' + etaSec + 's remaining') : '';
+
+                progStatus.innerText = '⬇️ Part ' + i + ' of ' + totalChunkCount + (speedMBps !== '...' ? (' • ' + speedMBps + ' MB/s') : '') + etaText;
+                const pct = Math.round(((i - 1) / totalChunkCount) * 100);
+                progBar.style.width = pct + '%';
+                progPercent.innerText = pct + '%';
+                const mbDownloaded = (receivedBytes / (1024 * 1024)).toFixed(1);
+                const mbTotal = targetFileSize > 0 ? (targetFileSize / (1024 * 1024)).toFixed(1) : (totalChunkCount * 4);
+                progDetails.innerText = mbDownloaded + ' MB / ' + mbTotal + ' MB';
+
+                const chunkEndpoint = '/api/share/chunk/' + encodeURIComponent(shareIdentifier) + '/' + i + pinQuery;
+
+                // Robust retry loop: retries up to 4 times per chunk on network blips
+                let chunkRes = null;
+                let lastError = null;
+                for (let attempt = 1; attempt <= 4; attempt++) {
+                  try {
+                    chunkRes = await fetch(chunkEndpoint);
+                    if (chunkRes.ok) break;
+                    lastError = new Error('HTTP ' + chunkRes.status);
+                  } catch (fetchErr) {
+                    lastError = fetchErr;
+                  }
+                  if (attempt < 4) {
+                    progStatus.innerText = '⚠️ Retrying Part ' + i + ' of ' + totalChunkCount + ' (Attempt ' + (attempt + 1) + ')...';
+                    await new Promise(r => setTimeout(r, 1000 * attempt));
+                  }
+                }
+
+                if (!chunkRes || !chunkRes.ok) {
+                  throw lastError || new Error('Part ' + i + ' failed to download');
+                }
+
+                const blobPart = await chunkRes.blob();
+                receivedBytes += blobPart.size;
+
+                if (fileWritable) {
+                  // Direct to disk: zero RAM consumption!
+                  await fileWritable.write(blobPart);
+                } else {
+                  // Mobile or non-FS-access browser: accumulate in disk-backed blob array
+                  downloadedParts.push(blobPart);
+                }
+              }
+
+              if (fileWritable) {
+                progStatus.innerText = '💾 Finalizing file on disk...';
+                await fileWritable.close();
+              } else {
+                progStatus.innerText = '🧩 Merging verified file...';
+                const finalBlob = new Blob(downloadedParts, { type: fileMimeType || 'application/octet-stream' });
+                const blobUrl = URL.createObjectURL(finalBlob);
+                const downloadLink = document.createElement('a');
+                downloadLink.href = blobUrl;
+                downloadLink.download = targetFileName;
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+              }
+
+              progBar.style.width = '100%';
+              progPercent.innerText = '100%';
+              progStatus.innerText = '✓ Download Complete!';
+              progDetails.innerText = (receivedBytes / (1024 * 1024)).toFixed(1) + ' MB Complete';
+              txt.innerText = '✓ Download Finished!';
+
+              setTimeout(() => {
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                txt.innerText = 'Download Again';
+              }, 4000);
+
+            } catch (err) {
+              console.warn('[Progressive chunk assembly notice, switching to direct stream]', err);
+              progStatus.innerText = '⚠️ Direct stream fallback...';
+              setTimeout(() => {
+                window.location.href = directStreamUrl;
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
+              }, 1200);
+            }
           }
 
           function copyLink() {
-            const url = window.location.origin + '/share/${escapeHtml(shareData.shareId)}';
+            const url = window.location.origin + '/share/' + encodeURIComponent(shareIdentifier);
             navigator.clipboard.writeText(url).then(() => {
               const btnTxt = document.getElementById('copyBtnText');
               btnTxt.innerText = '✓ Link Copied!';
@@ -2705,28 +3040,27 @@ async function handleShareChunk(req, res) {
     if (chunkList.length === 0) {
       chunkList = [{ chunkIndex: 1, telegramFileId: shareData.fileId, botTokenUsed: shareData.botToken }];
     }
-    const targetChunk = chunkList.find(c => (c.chunkIndex || 1) === chunkIdx) || chunkList[0];
+    chunkList.sort((a, b) => (a.chunkIndex || 1) - (b.chunkIndex || 1));
 
-    const activeBot = (targetChunk.botTokenUsed || shareData.botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-    const activeFileId = targetChunk.telegramFileId || targetChunk.fileId;
-    const freshUrl = await getFreshTelegramUrl(activeBot, activeFileId);
+    const totalPlainSize = parseInt(shareData.fileSize) || 0;
+    const pStart = (chunkIdx - 1) * CHUNK_SIZE;
+    const pEnd = totalPlainSize > 0 ? Math.min(chunkIdx * CHUNK_SIZE - 1, totalPlainSize - 1) : (chunkIdx * CHUNK_SIZE - 1);
 
-    if (!freshUrl) {
-      return res.status(502).json({ success: false, message: `Could not resolve Telegram CDN URL for chunk ${chunkIdx}` });
+    if (totalPlainSize > 0 && pStart >= totalPlainSize) {
+      return res.status(416).json({ success: false, message: 'Chunk index exceeds file size' });
     }
 
-    const tgRes = await fetch(freshUrl);
-    if (!tgRes.ok || !tgRes.body) {
-      return res.status(tgRes.status).json({ success: false, message: `Telegram CDN error: HTTP ${tgRes.status}` });
-    }
+    // Decrypt on-the-fly: returns verified plaintext bytes for this chunk
+    const plainChunk = await getDecryptedPlaintextRange(chunkList, shareData, pStart, pEnd);
 
     res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', plainChunk.length);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    const { Readable } = require('stream');
-    Readable.fromWeb(tgRes.body).pipe(res);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.end(plainChunk);
   } catch (err) {
-    console.error('[Share Chunk Error]', err);
+    console.error(`[Share Chunk Error] Part ${req.params?.chunkIndex}:`, err);
     return res.status(500).json({ success: false, message: err.message });
   }
 }

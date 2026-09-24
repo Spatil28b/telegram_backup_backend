@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.2.8': `✨ What's New in Release v2.2.8:
+- 🌌 Rebranded to TSpace: Official name upgraded to TSpace Cloud Storage & Vault across the entire system, onboarding dialogs, and notifications
+- 🎨 Dynamic Launcher App Icon Switcher: Choose between signature Emerald Forest Green (Default) and Cyber Electric Blue directly from Settings > Appearance with instant live preview
+- 🔗 Large File Sharing Permanent Fix (>3.99 MB): Multi-bot fleet chunk resolution failover and progressive client-side assembly ensure 50MB, 500MB+ files download and stream completely with live progress
+- ⚡ Vercel Serverless Optimization: 60-second runtime limit and sequential chunk streaming bypass 4.5MB gateway buffer restrictions`,
     '2.2.7': `✨ What's New in Release v2.2.7:
 - 🔗 Large File Sharing (No 3.99 MB Limit): Resolved chunk resolution so large files of any size (50MB, 500MB+) stream and download completely
 - 📅 September Archive Healing: Repaired corrupted and legacy July 2026 placeholder timestamps, restoring them cleanly to September 2026
@@ -329,7 +334,7 @@ async function main() {
   console.log('6️⃣  Deploying backend updates to GitHub repository...');
   try {
     execSync('git add .', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Timestamp fix, 100% internal storage replica, Komi nav bar"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - TSpace Rebrand, Dynamic App Icons, Large File Sharing (>3.99 MB) fix"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {

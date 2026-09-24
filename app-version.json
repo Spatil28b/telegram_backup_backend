@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 110,
-  "versionName": "2.2.7",
+  "versionCode": 111,
+  "versionName": "2.2.8",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.2.7:\n- 🔗 Large File Sharing (No 3.99 MB Limit): Resolved chunk resolution so large files of any size (50MB, 500MB+) stream and download completely\n- 📅 September Archive Healing: Repaired corrupted and legacy July 2026 placeholder timestamps, restoring them cleanly to September 2026\n- 📂 Moved & Cloud File Opening: Resolved local file relocations and cloud-only files, assembling full multi-part downloads for flawless playback"
+  "releaseNotes": "✨ What's New in Release v2.2.8:\n- 🌌 Rebranded to TSpace: Official name upgraded to TSpace Cloud Storage & Vault across the entire system, onboarding dialogs, and notifications\n- 🎨 Dynamic Launcher App Icon Switcher: Choose between signature Emerald Forest Green (Default) and Cyber Electric Blue directly from Settings > Appearance with instant live preview\n- 🔗 Large File Sharing Permanent Fix (>3.99 MB): Multi-bot fleet chunk resolution failover and progressive client-side assembly ensure 50MB, 500MB+ files download and stream completely with live progress\n- ⚡ Vercel Serverless Optimization: 60-second runtime limit and sequential chunk streaming bypass 4.5MB gateway buffer restrictions"
 }
