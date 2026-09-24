@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 115,
-  "versionName": "2.3.1",
+  "versionCode": 116,
+  "versionName": "2.3.2",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.3.1:\n- 🔗 Link Sharing Multi-Chunk Fix: Server dynamically auto-heals chunk metadata from cloud database, prohibiting premature 1-chunk stream cut-off at 4.19 MB\n- 🛡️ Strict Chunk Completeness Guard: TelegramMediaResolver strictly validates all sequential parts (1..N) exist before assembling, eliminating false-success incomplete file saves\n- 🛑 Corrupted Download & Re-backup Prevention: Verifies post-decryption size against declared metadata (90% threshold) and immediately purges truncated downloads to prevent BackupWorker index poisoning\n- ✏️ Preserve Metadata on Rename & Actions: Retains chunksJson, channelId, totalChunks, and botToken across cloud index and local Room database when renaming files"
+  "releaseNotes": "✨ What's New in Release v2.3.2:\n- 🔗 Permanent Multi-Chunk Share Link Fix: Complete multi-part streams restored for all files of any size without 4.19 MB cutoffs\n- ☁️ Delta Sync Chunk Backfill: Room DB automatically hydrates and pushes chunk metadata for existing cloud files\n- 🛡️ BackupWorker Incomplete Download Guard: App download/cache folders are excluded and partial files on disk are strictly prevented from overwriting complete cloud backups\n- ⚡ High-Speed Batch Database Indexing: Multi-row parameterized queries run in < 200ms, eliminating Vercel 504 gateway timeouts\n- 📦 Universal Multi-Chunk Assembly: All in-app preview and download operations seamlessly assemble and decrypt all parts"
 }

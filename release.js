@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.2': `✨ What's New in Release v2.3.2:
+- 🔗 Permanent Multi-Chunk Share Link Fix: Complete multi-part streams restored for all files of any size without 4.19 MB cutoffs
+- ☁️ Delta Sync Chunk Backfill: Room DB automatically hydrates and pushes chunk metadata for existing cloud files
+- 🛡️ BackupWorker Incomplete Download Guard: App download/cache folders are excluded and partial files on disk are strictly prevented from overwriting complete cloud backups
+- ⚡ High-Speed Batch Database Indexing: Multi-row parameterized queries run in < 200ms, eliminating Vercel 504 gateway timeouts
+- 📦 Universal Multi-Chunk Assembly: All in-app preview and download operations seamlessly assemble and decrypt all parts`,
     '2.3.1': `✨ What's New in Release v2.3.1:
 - 🔗 Link Sharing Multi-Chunk Fix: Server dynamically auto-heals chunk metadata from cloud database, prohibiting premature 1-chunk stream cut-off at 4.19 MB
 - 🛡️ Strict Chunk Completeness Guard: TelegramMediaResolver strictly validates all sequential parts (1..N) exist before assembling, eliminating false-success incomplete file saves

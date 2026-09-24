@@ -53,7 +53,7 @@ process.on('uncaughtException', (err) => {
  * degrades gracefully to in-memory storage without breaking API calls.
  */
 const pool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 3000, idleTimeoutMillis: 10000 })
+  ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000, idleTimeoutMillis: 15000 })
   : null;
 
 if (pool) {
@@ -64,18 +64,38 @@ if (pool) {
 }
 
 /**
- * Executes a PostgreSQL query with a strict timeout (default 3.5 seconds).
- * If the database hangs or is unreachable, it throws a timeout error so the route handler
- * can fall back to in-memory storage immediately instead of triggering a 504 Gateway Timeout.
+ * Executes a PostgreSQL query with a resilient timeout (default 8 seconds) and automatic 1x retry
+ * on transient connection reset/wake-up errors to handle serverless cold starts seamlessly.
  */
-async function queryWithTimeout(text, params, timeoutMs = 3500) {
+async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) {
   if (!pool) throw new Error('Database pool is disabled or null');
-  return Promise.race([
-    pool.query(text, params),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Database query timed out after ${timeoutMs}ms`)), timeoutMs)
-    )
-  ]);
+  let lastErr = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await Promise.race([
+        pool.query(text, params),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Database query timed out after ${timeoutMs}ms`)), timeoutMs)
+        )
+      ]);
+    } catch (err) {
+      lastErr = err;
+      const isTransient = err.message && (
+        err.message.includes('timed out') ||
+        err.message.includes('Connection terminated') ||
+        err.message.includes('WebSocket') ||
+        err.message.includes('ECONNRESET') ||
+        err.message.includes('ENOTFOUND')
+      );
+      if (attempt < maxRetries && isTransient) {
+        console.warn(`[Neon Postgres Retry] Transient DB error (attempt ${attempt + 1}): ${err.message}. Retrying in 400ms...`);
+        await new Promise(r => setTimeout(r, 400));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 
@@ -966,11 +986,16 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
           `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload, chunks_json, channel_id, bot_token_used, total_chunks)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT (email, path) DO UPDATE SET
-             file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8,
-             chunks_json = CASE WHEN $9 != '[]' AND $9 != '' THEN $9 ELSE backed_files.chunks_json END,
-             channel_id = CASE WHEN $10 != '' THEN $10 ELSE backed_files.channel_id END,
-             bot_token_used = CASE WHEN $11 != '' THEN $11 ELSE backed_files.bot_token_used END,
-             total_chunks = CASE WHEN $12 > 1 THEN $12 ELSE backed_files.total_chunks END`,
+             file_name = EXCLUDED.file_name,
+             size = CASE WHEN EXCLUDED.size >= backed_files.size OR backed_files.size = 0 OR EXCLUDED.total_chunks > backed_files.total_chunks THEN EXCLUDED.size ELSE backed_files.size END,
+             telegram_file_id = CASE WHEN EXCLUDED.size >= backed_files.size OR backed_files.size = 0 OR EXCLUDED.total_chunks > backed_files.total_chunks THEN EXCLUDED.telegram_file_id ELSE backed_files.telegram_file_id END,
+             message_id = CASE WHEN EXCLUDED.size >= backed_files.size OR backed_files.size = 0 OR EXCLUDED.total_chunks > backed_files.total_chunks THEN EXCLUDED.message_id ELSE backed_files.message_id END,
+             timestamp = EXCLUDED.timestamp,
+             is_drive_upload = EXCLUDED.is_drive_upload,
+             chunks_json = CASE WHEN EXCLUDED.chunks_json != '[]' AND EXCLUDED.chunks_json != '' AND (EXCLUDED.total_chunks >= backed_files.total_chunks OR backed_files.chunks_json = '[]' OR backed_files.chunks_json = '') THEN EXCLUDED.chunks_json ELSE backed_files.chunks_json END,
+             channel_id = CASE WHEN EXCLUDED.channel_id != '' THEN EXCLUDED.channel_id ELSE backed_files.channel_id END,
+             bot_token_used = CASE WHEN EXCLUDED.bot_token_used != '' THEN EXCLUDED.bot_token_used ELSE backed_files.bot_token_used END,
+             total_chunks = CASE WHEN EXCLUDED.total_chunks > 1 AND (EXCLUDED.total_chunks >= backed_files.total_chunks OR backed_files.total_chunks <= 1) THEN EXCLUDED.total_chunks ELSE backed_files.total_chunks END`,
           [lowerEmail, fileName, telegramFileId, size || 0, path || '', safeTimestamp, msgId, isDrive, finalChunksJson, finalChannelId, finalBotToken, finalTotalChunks]
         );
       } catch (dbErr) {
@@ -1034,10 +1059,14 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
 
     if (pool) {
       try {
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          for (const f of validFiles) {
+        const BATCH_CHUNK_SIZE = 50;
+        for (let b = 0; b < validFiles.length; b += BATCH_CHUNK_SIZE) {
+          const fileSlice = validFiles.slice(b, b + BATCH_CHUNK_SIZE);
+          const values = [];
+          const params = [];
+          let pIdx = 1;
+
+          for (const f of fileSlice) {
             const fName = (f.fileName || f.name || '').trim();
             const tgId = (f.telegramFileId || f.fileId || '').trim();
             const fSize = parseInt(f.size || '0', 10) || 0;
@@ -1054,24 +1083,27 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
             const fBot = String(f.botTokenUsed || f.bot_token_used || '').trim();
             const fTotal = parseInt(f.totalChunks || f.total_chunks || '1', 10) || 1;
 
-            await client.query(
-              `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload, chunks_json, channel_id, bot_token_used, total_chunks)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-               ON CONFLICT (email, path) DO UPDATE SET
-                 file_name = $2, telegram_file_id = $3, size = $4, timestamp = $6, message_id = $7, is_drive_upload = $8,
-                 chunks_json = CASE WHEN $9 != '[]' AND $9 != '' THEN $9 ELSE backed_files.chunks_json END,
-                 channel_id = CASE WHEN $10 != '' THEN $10 ELSE backed_files.channel_id END,
-                 bot_token_used = CASE WHEN $11 != '' THEN $11 ELSE backed_files.bot_token_used END,
-                 total_chunks = CASE WHEN $12 > 1 THEN $12 ELSE backed_files.total_chunks END`,
-              [lowerEmail, fName, tgId, fSize, fPath, fTime, msgId, isDrive, fChunksJson, fChannel, fBot, fTotal]
-            );
+            values.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6}, $${pIdx + 7}, $${pIdx + 8}, $${pIdx + 9}, $${pIdx + 10}, $${pIdx + 11})`);
+            params.push(lowerEmail, fName, tgId, fSize, fPath, fTime, msgId, isDrive, fChunksJson, fChannel, fBot, fTotal);
+            pIdx += 12;
           }
-          await client.query('COMMIT');
-        } catch (txErr) {
-          await client.query('ROLLBACK');
-          throw txErr;
-        } finally {
-          client.release();
+
+          const batchSql = `
+            INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload, chunks_json, channel_id, bot_token_used, total_chunks)
+            VALUES ${values.join(', ')}
+            ON CONFLICT (email, path) DO UPDATE SET
+              file_name = EXCLUDED.file_name,
+              size = CASE WHEN EXCLUDED.size >= backed_files.size OR backed_files.size = 0 OR EXCLUDED.total_chunks > backed_files.total_chunks THEN EXCLUDED.size ELSE backed_files.size END,
+              telegram_file_id = CASE WHEN EXCLUDED.size >= backed_files.size OR backed_files.size = 0 OR EXCLUDED.total_chunks > backed_files.total_chunks THEN EXCLUDED.telegram_file_id ELSE backed_files.telegram_file_id END,
+              message_id = CASE WHEN EXCLUDED.size >= backed_files.size OR backed_files.size = 0 OR EXCLUDED.total_chunks > backed_files.total_chunks THEN EXCLUDED.message_id ELSE backed_files.message_id END,
+              timestamp = EXCLUDED.timestamp,
+              is_drive_upload = EXCLUDED.is_drive_upload,
+              chunks_json = CASE WHEN EXCLUDED.chunks_json != '[]' AND EXCLUDED.chunks_json != '' AND (EXCLUDED.total_chunks >= backed_files.total_chunks OR backed_files.chunks_json = '[]' OR backed_files.chunks_json = '') THEN EXCLUDED.chunks_json ELSE backed_files.chunks_json END,
+              channel_id = CASE WHEN EXCLUDED.channel_id != '' THEN EXCLUDED.channel_id ELSE backed_files.channel_id END,
+              bot_token_used = CASE WHEN EXCLUDED.bot_token_used != '' THEN EXCLUDED.bot_token_used ELSE backed_files.bot_token_used END,
+              total_chunks = CASE WHEN EXCLUDED.total_chunks > 1 AND (EXCLUDED.total_chunks >= backed_files.total_chunks OR backed_files.total_chunks <= 1) THEN EXCLUDED.total_chunks ELSE backed_files.total_chunks END
+          `;
+          await queryWithTimeout(batchSql, params, 8000);
         }
       } catch (dbErr) {
         console.error('[DB Warn] Batch files DB save failed, saving to memory cache:', dbErr.message);
@@ -1978,17 +2010,17 @@ async function resolveShareData(identifier) {
               `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
                FROM backed_files
                WHERE (file_name = $1 OR path LIKE '%' || $1)
-                 AND size = $2
-                 AND total_chunks >= $3
+                 AND (size = $2 OR (size >= $2 * 0.90 AND size <= $2 * 1.10) OR total_chunks >= $3)
+                 AND total_chunks >= 2
                  AND chunks_json IS NOT NULL
                  AND chunks_json != '[]'
-               ORDER BY total_chunks DESC LIMIT 1`,
+               ORDER BY total_chunks DESC, size DESC LIMIT 1`,
               [resolved.fileName, resolved.fileSize, expectedChunksCount]
             );
             if (repairRes && repairRes.rows && repairRes.rows.length > 0) {
               const rRow = repairRes.rows[0];
               const pChunks = JSON.parse(rRow.chunks_json);
-              if (Array.isArray(pChunks) && pChunks.length >= expectedChunksCount) {
+              if (Array.isArray(pChunks) && pChunks.length >= 2) {
                 resolved.chunks = pChunks.map((c, i) => ({
                   chunkIndex: c.chunkIndex || (i + 1),
                   telegramFileId: c.telegramFileId || c.fileId,
@@ -2101,17 +2133,17 @@ async function handleShareCreate(req, res) {
           `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
            FROM backed_files
            WHERE (file_name = $1 OR path LIKE '%' || $1)
-             AND size = $2
-             AND total_chunks >= $3
+             AND (size = $2 OR (size >= $2 * 0.90 AND size <= $2 * 1.10) OR total_chunks >= $3)
+             AND total_chunks >= 2
              AND chunks_json IS NOT NULL
              AND chunks_json != '[]'
-           ORDER BY total_chunks DESC LIMIT 1`,
+           ORDER BY total_chunks DESC, size DESC LIMIT 1`,
           [safeFileName, parsedSize, expectedChunksCount]
         );
         if (repairRes && repairRes.rows && repairRes.rows.length > 0) {
           const row = repairRes.rows[0];
           const parsedChunks = JSON.parse(row.chunks_json);
-          if (Array.isArray(parsedChunks) && parsedChunks.length >= expectedChunksCount) {
+          if (Array.isArray(parsedChunks) && parsedChunks.length >= 2) {
             normalizedChunks = parsedChunks.map((c, i) => ({
               chunkIndex: c.chunkIndex || (i + 1),
               telegramFileId: c.telegramFileId || c.fileId,
