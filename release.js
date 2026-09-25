@@ -421,7 +421,7 @@ async function main() {
   }
   console.log(`   ✓ Release ID: ${releaseId}\n`);
 
-  // 5. Upload APK Assets with curl (bulletproof binary streaming)
+  // 5. Upload APK Assets with robust Node.js stream
   console.log('5️⃣  Uploading Release Binaries...');
   async function uploadAsset(assetName) {
     if (existingRelease && Array.isArray(existingRelease.assets)) {
@@ -433,18 +433,24 @@ async function main() {
     }
     const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
     console.log(`   Uploading ${assetName} (${apkSizeMB} MB)...`);
-    const safeApkPath = APK_SRC.replace(/\\/g, '/');
-    const curlCmd = `curl.exe -s -L -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${safeApkPath}" "${uploadUrl}"`;
-    try {
-      const res = execSync(curlCmd, { encoding: 'utf8' });
-      const json = JSON.parse(res);
-      if (json.state === 'uploaded' || json.id) {
-        console.log(`   ✓ ${assetName} uploaded successfully!`);
-      } else {
-        console.log(`   ✓ ${assetName} uploaded.`);
-      }
-    } catch (e) {
-      console.log(`   ✓ ${assetName} upload completed.`);
+    const stats = fs.statSync(APK_SRC);
+    const stream = fs.createReadStream(APK_SRC);
+    const res = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Node',
+        'Authorization': `Bearer ${TOKEN}`,
+        'Content-Type': 'application/vnd.android.package-archive',
+        'Content-Length': stats.size.toString()
+      },
+      body: stream,
+      duplex: 'half'
+    });
+    if (res.status === 201 || res.status === 200) {
+      console.log(`   ✓ ${assetName} uploaded successfully! (HTTP ${res.status})`);
+    } else {
+      const errText = await res.text();
+      throw new Error(`Failed to upload ${assetName}: HTTP ${res.status} - ${errText}`);
     }
   }
 
