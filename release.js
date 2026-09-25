@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.3': `✨ What's New in Release v2.3.3:
+- 🛡️ Vault Health & Recovery Hub: Dedicated section in Drawer & Clean Dashboard to inspect 100% of your cloud files with health score and diagnosis
+- 🔍 Incomplete Chunk Diagnostics: Visual breakdown of all multi-part files with Chunk Inspector sheet showing each part's upload status and File ID
+- 📅 Authentic Historical Date Recovery: Permanently restored capture dates from Camera, WhatsApp, and Screenshot filenames, preventing dates from jumping to recent days
+- ⚡ 1-Tap Auto-Repair All: Restores true dates across your entire vault and syncs local chunk upload mappings to the cloud database
+- ⬆️ Resume Incomplete Uploads: Directly resumes missing chunk uploads for files present on phone storage`,
     '2.3.2': `✨ What's New in Release v2.3.2:
 - 🔗 Permanent Multi-Chunk Share Link Fix: Complete multi-part streams restored for all files of any size without 4.19 MB cutoffs
 - ☁️ Delta Sync Chunk Backfill: Room DB automatically hydrates and pushes chunk metadata for existing cloud files
