@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.3': `✨ What's New in Release v2.4.3:
+- 🔍 AI Photo & Document Search: Natural-language visual photo & document search. Search for "bonafide certificate", "payment receipt", "pan card", "party photos", "10th marksheet", "10k transfer receipt" and get matching images in a visual gallery grid
+- ⚡ Main Screen Quick-Access Icon: Prominent 1-tap AI Search button directly on the top search bar, Home dashboard card, and navigation drawer
+- 🎨 Top 6 Essential Themes: Cleaned up unused palettes, keeping only the top 6 premium styles: System Default, Clean Light, Midnight Dark, Pure AMOLED Black, Emerald Forest, and Sunset Amber
+- 🖼️ Multimodal Batch Vision & Tag Cache: Fast 0ms instant keyword matching coupled with Google Gemini 2.0 Flash batch vision evaluation and local tag persistence`,
     '2.4.2': `✨ What's New in Release v2.4.2:
 - 🤖 Dynamic Google ModelService Auto-Discovery: Intelligently detects active models from Google's ModelService API, eliminating HTTP 404 errors caused by deprecated models like gemini-1.5-flash
 - ⚡ Gemini 2.0 & 2.5 Flash Engine: Upgraded default vision intelligence engine to Google's latest Gemini 2.0 and 2.5 Flash architectures for sub-second responses and high-accuracy document parsing
