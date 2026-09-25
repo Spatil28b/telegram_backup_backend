@@ -86,6 +86,14 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.7': `✨ What's New in Release v2.3.7:
+- 📁 Google Files-Style Context Actions System-Wide: Long-press or tap 3-dots on any folder or file across Browse, Drive, Monthly Archive, Local Files, and Trash Bin for instant actions
+- ✏️ Cloud & Local Rename: Seamlessly rename files and entire folder hierarchies with Room database and Telegram cloud metadata propagation
+- 📋 Instant Path Copy: Quick copy full file and folder paths to clipboard with 1-tap feedback
+- ℹ️ Rich Properties & Info Sheets: View real-time technical info including folder size, file counts, AES-256 GCM encryption status, multi-chunk parts, and cloud IDs
+- 📦 Download as ZIP Everywhere: Download any directory as a ZIP archive or compress single files into ZIP directly from long-press
+- 🗑️ Recursive Folder & File Deletion: Safe soft-delete to Trash Bin or permanent purging with automatic child item cascade
+- 🚀 High-Speed Multi-Bot Fleet & Overlapped Pre-fetching: Maximize bandwidth with zero-copy NIO chunk merging and Deflater.BEST_SPEED archive creation`,
     '2.3.6': `✨ What's New in Release v2.3.6:
 - ⚡ 10x Faster Downloads & Streaming: Added dedicated high-throughput download client with 32 concurrent requests per host and 64 max requests, removing OkHttp single-host bottleneck
 - 🚀 Parallel Multi-Bot Chunk Fleet: Dynamic concurrency (6 to 20 streams) maximizes cellular/Wi-Fi bandwidth for multi-part large files regardless of bot fleet count
