@@ -104,6 +104,15 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.6': `✨ What's New in Release v2.4.6:
+- 🚀 In-App Updater 404 Resolution: Direct pre-signed CDN resolution and redirect-sanitized downloads eliminate HTTP 404 on updates.
+- 🎨 Material You Dynamic Theming: Android 12+ wallpaper Monet color scheme extraction with adaptive surface tones.
+- 🧹 Visual Duplicate Cleaner: Side-by-side thumbnail comparison cards and smart "Auto-Keep Best" algorithm favoring original camera captures.
+- 🎵 Mini Audio Player Capsule & Speed Controls: Compact floating audio capsule above nav bar with background playback & 0.5x–2.0x playback speeds.
+- 🖼️ 60/120fps Smooth Thumbnail Scrolling: Optimized thumbnail downsampling while strictly preserving 100% original uncompressed quality for downloads, viewer, and sharing.
+- ⏰ Strict Wi-Fi Night Backup: Exact alarm wakeup at 2:00 AM immune to Android Doze mode (AlarmManager.setAlarmClock) with Wi-Fi network validation.
+- 🔔 Modernized M3 Notifications & App Icon: Upgraded notifications to clean Material 3 typography and redesigned app icon to an obsidian/emerald vault shield.
+- 📁 Internal Storage Navigation Polish: Fixed internal storage directory resolution, folder category expansion, and eliminated tab navigation freezes.`,
     '2.4.5': `✨ What's New in Release v2.4.5:
 - ⚡ On-Device Google ML Kit OCR: Integrated local high-speed Google ML Kit text recognition (~15ms per image) running 100% on-device and offline. Pinpoint accuracy for bonafide certificates, PAN cards, UPI receipts (₹10k), and bills without requiring network or API keys.
 - 🤖 Gemini 2.0 / 3.0 Vision & Deprecation Auto-Healing: Completely resolved Gemini 2.5 Flash deprecation error by automatically prioritizing Gemini 2.0 Flash / Gemini 3.0 Flash, with self-healing model failover on deprecated endpoints.
@@ -462,7 +471,7 @@ async function main() {
   console.log('6️⃣  Deploying backend updates to GitHub repository...');
   try {
     execSync('git add .', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Multi-Chunk Link Sharing & On-Device Download Invariant Fix"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Updater 404 Fix, Monet Theming, Duplicate Cleaner, Audio Mini-Player, Night Backup"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {
