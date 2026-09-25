@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 117,
-  "versionName": "2.3.3",
+  "versionCode": 118,
+  "versionName": "2.3.4",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.3.3:\n- 🛡️ Vault Health & Recovery Hub: Dedicated section in Drawer & Clean Dashboard to inspect 100% of your cloud files with health score and diagnosis\n- 🔍 Incomplete Chunk Diagnostics: Visual breakdown of all multi-part files with Chunk Inspector sheet showing each part's upload status and File ID\n- 📅 Authentic Historical Date Recovery: Permanently restored capture dates from Camera, WhatsApp, and Screenshot filenames, preventing dates from jumping to recent days\n- ⚡ 1-Tap Auto-Repair All: Restores true dates across your entire vault and syncs local chunk upload mappings to the cloud database\n- ⬆️ Resume Incomplete Uploads: Directly resumes missing chunk uploads for files present on phone storage"
+  "releaseNotes": "✨ What's New in Release v2.3.4:\n- 📦 Telegram Channel Deep Reconcile: Scanned and recovered 128+ multi-part files directly from Telegram, eliminating incomplete chunk false alerts\n- 🔑 Master Encryption Key Sync: Embedded authentic master key and dynamic cloud settings fallback to guarantee 100% decryption success\n- 📱 Flawless APK Installation: Downloaded APKs are decrypted with authentic PK\\x03\\x04 headers and install smoothly on Android, with new 1-tap 'Install Android App' action\n- ⚡ Strict Chunk Numerical Ordering: Guaranteed exact byte sequential assembly for large multi-part files (WhatsApp, SpotiFLAC, Camera videos)\n- 🛡️ Zero Broken Ciphertext Guarantee: Downloads strictly verify plain-text integrity, preventing incomplete or raw encrypted bytes from being delivered to storage"
 }

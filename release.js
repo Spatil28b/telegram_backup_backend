@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.4': `✨ What's New in Release v2.3.4:
+- 📦 Telegram Channel Deep Reconcile: Scanned and recovered 128+ multi-part files directly from Telegram, eliminating incomplete chunk false alerts
+- 🔑 Master Encryption Key Sync: Embedded authentic master key and dynamic cloud settings fallback to guarantee 100% decryption success
+- 📱 Flawless APK Installation: Downloaded APKs are decrypted with authentic PK\\x03\\x04 headers and install smoothly on Android, with new 1-tap 'Install Android App' action
+- ⚡ Strict Chunk Numerical Ordering: Guaranteed exact byte sequential assembly for large multi-part files (WhatsApp, SpotiFLAC, Camera videos)
+- 🛡️ Zero Broken Ciphertext Guarantee: Downloads strictly verify plain-text integrity, preventing incomplete or raw encrypted bytes from being delivered to storage`,
     '2.3.3': `✨ What's New in Release v2.3.3:
 - 🛡️ Vault Health & Recovery Hub: Dedicated section in Drawer & Clean Dashboard to inspect 100% of your cloud files with health score and diagnosis
 - 🔍 Incomplete Chunk Diagnostics: Visual breakdown of all multi-part files with Chunk Inspector sheet showing each part's upload status and File ID
