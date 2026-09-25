@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 126,
-  "versionName": "2.4.2",
+  "versionCode": 127,
+  "versionName": "2.4.3",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.4.2:\n- 🤖 Dynamic Google ModelService Auto-Discovery: Intelligently detects active models from Google's ModelService API, eliminating HTTP 404 errors caused by deprecated models like gemini-1.5-flash\n- ⚡ Gemini 2.0 & 2.5 Flash Engine: Upgraded default vision intelligence engine to Google's latest Gemini 2.0 and 2.5 Flash architectures for sub-second responses and high-accuracy document parsing\n- 🛡️ Self-Healing Model Fallover & Retry: Automatic runtime fallback and retry if any requested model is sunset or unsupported, ensuring 100% uninterrupted Ask Photo Q&A\n- 🔄 Automatic Model Migration: Saved preferences automatically upgrade deprecated 1.5 models to modern auto-discovery without requiring manual reset"
+  "releaseNotes": "✨ What's New in Release v2.4.3:\n- 🚀 Performance improvements & memory optimizations\n- ⚡ Faster chunk uploading with multi-bot fleet\n- 🛡️ Stability fixes & enhanced cloud sync"
 }
