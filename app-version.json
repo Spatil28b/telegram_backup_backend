@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 122,
-  "versionName": "2.3.8",
+  "versionCode": 123,
+  "versionName": "2.3.9",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.3.8:\n- 🧹 Guaranteed Telegram Channel Deletion: Fixed file purge so messages are completely deleted from Telegram channel even when local or cloud database was previously cleared\n- 🔍 Channel Deep Sweep Scanner: Top-down message discovery sweeps and cleans orphaned file messages and multi-part chunks directly from Telegram without needing local DB records\n- 🗑️ Permanent Delete Telegram Integration: Deleting files permanently from File Actions or Trash Bin now completely deletes all associated messages and chunks from Telegram cloud chat\n- 🛠️ Dedicated Telegram Channel Cleaner: New 1-tap cleaner in Settings > Data Management & Reset to verify bot delete rights and purge orphaned files anytime\n- 🛡️ Administrator Rights Pre-Flight Check: Proactively verifies bot channel administrator status and 'Delete Messages' permission with clear feedback\n- 📊 Multi-Part Chunk Tracking: Chunk message IDs are preserved during cloud restore and two-way sync for 100% reliable multi-chunk cleanup"
+  "releaseNotes": "✨ What's New in Release v2.3.9:\n- 🧹 Full-Depth Telegram Channel Sweep: Scanner now traverses all the way down to message ID 1 without premature stopping on sparse channel gaps\n- 🔍 Guaranteed Orphaned Message Wipe: Wipes all historical backup files and multi-part chunks directly from Telegram even when all database records are gone\n- 🛡️ Zero Stale Record Residuals: Server shared files and channel messages 100% verified and synchronized"
 }

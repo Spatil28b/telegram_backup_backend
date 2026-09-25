@@ -86,6 +86,10 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.9': `✨ What's New in Release v2.3.9:
+- 🧹 Full-Depth Telegram Channel Sweep: Scanner now traverses all the way down to message ID 1 without premature stopping on sparse channel gaps
+- 🔍 Guaranteed Orphaned Message Wipe: Wipes all historical backup files and multi-part chunks directly from Telegram even when all database records are gone
+- 🛡️ Zero Stale Record Residuals: Server shared files and channel messages 100% verified and synchronized`,
     '2.3.8': `✨ What's New in Release v2.3.8:
 - 🧹 Guaranteed Telegram Channel Deletion: Fixed file purge so messages are completely deleted from Telegram channel even when local or cloud database was previously cleared
 - 🔍 Channel Deep Sweep Scanner: Top-down message discovery sweeps and cleans orphaned file messages and multi-part chunks directly from Telegram without needing local DB records
