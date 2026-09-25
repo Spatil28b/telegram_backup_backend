@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.1': `✨ What's New in Release v2.4.1:
+- 🤖 Google Gemini Multimodal Vision & Ask Photos: Ask natural language questions about your photos and documents like Google Photos. Instant presets for 10th/12th marksheets, 10k payment receipts, bills, and ID cards
+- 🔑 Single & Multiple API Key Support with Auto-Failover: Enter one or multiple Gemini API keys. Automatic round-robin rotation and seamless failover on rate limits (HTTP 429) ensure uninterrupted document analysis
+- ⚡ Zero Extreme Device Load: Images are downsampled efficiently using RGB_565 under 5MB RAM before cloud reasoning, preventing battery drain, heating, or thermal throttling
+- 🖼️ High-Performance Gallery Thumbnails: 2-tier caching with 30MB memory LRU and persistent 8-12KB WebP thumbnails on disk enables buttery smooth 120Hz scrolling without downloading full files
+- 🛡️ Zero-Loss Chunk Upload Integrity: Strict multi-chunk validation checks every chunk 1..totalChunks for non-empty file IDs and exact chunk counts before committing, guaranteeing zero missing chunks`,
     '2.4.0': `✨ What's New in Release v2.4.0:
 - 🖋️ System-Wide UI/UX Typography Overhaul: Redesigned Jetpack Compose type scales with strict letter-spacing, optical font weights, and proportional line-heights
 - 📐 Zero Font-Padding Vertical Centering: Eliminated Android legacy font padding across all buttons, chips, tabs, search inputs, and dialogs for pixel-perfect vertical alignment

@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 124,
-  "versionName": "2.4.0",
+  "versionCode": 125,
+  "versionName": "2.4.1",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.4.0:\n- 🖋️ System-Wide UI/UX Typography Overhaul: Redesigned Jetpack Compose type scales with strict letter-spacing, optical font weights, and proportional line-heights\n- 📐 Zero Font-Padding Vertical Centering: Eliminated Android legacy font padding across all buttons, chips, tabs, search inputs, and dialogs for pixel-perfect vertical alignment\n- 📑 Navigation & Drawer Typography Polish: Refined category headers with premium uppercase tracking, bold section labels, and single-line truncated top app bars\n- ⏱️ Tabular Monospace Numeric Scales: Introduced dedicated monospace styles for audio player timers, transfer metrics, bitrates, and progress counters to prevent jitter\n- 🗂️ Activity Feed & Card Polishing: Enhanced status chips, metric counters, and secondary metadata rows with clean Material 3 contrast hierarchy"
+  "releaseNotes": "✨ What's New in Release v2.4.1:\n- 🤖 Google Gemini Multimodal Vision & Ask Photos: Ask natural language questions about your photos and documents like Google Photos. Instant presets for 10th/12th marksheets, 10k payment receipts, bills, and ID cards\n- 🔑 Single & Multiple API Key Support with Auto-Failover: Enter one or multiple Gemini API keys. Automatic round-robin rotation and seamless failover on rate limits (HTTP 429) ensure uninterrupted document analysis\n- ⚡ Zero Extreme Device Load: Images are downsampled efficiently using RGB_565 under 5MB RAM before cloud reasoning, preventing battery drain, heating, or thermal throttling\n- 🖼️ High-Performance Gallery Thumbnails: 2-tier caching with 30MB memory LRU and persistent 8-12KB WebP thumbnails on disk enables buttery smooth 120Hz scrolling without downloading full files\n- 🛡️ Zero-Loss Chunk Upload Integrity: Strict multi-chunk validation checks every chunk 1..totalChunks for non-empty file IDs and exact chunk counts before committing, guaranteeing zero missing chunks"
 }
