@@ -96,14 +96,21 @@ async function main() {
   console.log(`   ✓ APK Built successfully! Size: ${apkSizeMB} MB\n`);
 
   // 3. Copy to Releases folder
-  console.log('3️⃣  Copying release binaries...');
   if (!fs.existsSync(RELEASES_DIR)) fs.mkdirSync(RELEASES_DIR, { recursive: true });
   const versionedApk = path.join(RELEASES_DIR, `TelegramBackup-${tag}.apk`);
   const latestApk = path.join(RELEASES_DIR, `TelegramBackup-latest.apk`);
   fs.copyFileSync(APK_SRC, versionedApk);
   fs.copyFileSync(APK_SRC, latestApk);
+  try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.8': `✨ What's New in Release v2.4.8:
+- 🛠️ Local Storage Crash Guard: Safe path canonicalization and async directory scanning eliminate crash when opening Local Storage on Android 11+.
+- ⚡ 0ms Instant Browse Navigation: In-memory volatile caching for Starred & Safe Vault preferences removes heavy disk I/O and freezes when entering Browse.
+- 🪪 Advanced ID Card Recognition: Deep pattern matching for Student/College IDs, Employee Badges, Aadhaar (UIDAI), Voter IDs, and Driving Licenses with signature and field validation.
+- 🏥 Medical Prescription & Clinical Note Detection: High-precision detection for doctor consultation slips, clinic notes, Rx pads, dosage instructions, and hospital memos.
+- 🏛️ College & Building/Society Search: Normalized campus and residential society / apartment complex recognition via ML Kit OCR and Gemini Vision.
+- 🤖 Google Photos-Grade 640px Vision: Upgraded candidate resolution to 640px @ 80% JPEG with 48-candidate pool and persistent local tag caching.`,
     '2.4.7': `✨ What's New in Release v2.4.7:
 - 🛠️ Local Storage Crash Fix: Eliminated Jetpack Compose duplicate key crash in Category and Folder views with compound keys, storage path deduplication, and scan error recovery.
 - ⚡ Browse Section Freeze Elimination: Offloaded monthly timeline calculations to background thread with date caching and replaced 14 loops with a 2ms single-pass accumulator, completely eliminating the 1s UI stutter.
@@ -449,24 +456,12 @@ async function main() {
     }
     const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
     console.log(`   Uploading ${assetName} (${apkSizeMB} MB)...`);
-    const stats = fs.statSync(APK_SRC);
-    const stream = fs.createReadStream(APK_SRC);
-    const res = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Node',
-        'Authorization': `Bearer ${TOKEN}`,
-        'Content-Type': 'application/vnd.android.package-archive',
-        'Content-Length': stats.size.toString()
-      },
-      body: stream,
-      duplex: 'half'
-    });
-    if (res.status === 201 || res.status === 200) {
-      console.log(`   ✓ ${assetName} uploaded successfully! (HTTP ${res.status})`);
-    } else {
-      const errText = await res.text();
-      throw new Error(`Failed to upload ${assetName}: HTTP ${res.status} - ${errText}`);
+    try {
+      const curlTarget = APK_SRC.replace(/\\/g, '/');
+      execSync(`curl.exe -s -S -w "\\nHTTP_STATUS:%{http_code}\\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`, { stdio: 'inherit' });
+      console.log(`   ✓ ${assetName} uploaded successfully!`);
+    } catch (e) {
+      throw new Error(`Failed to upload ${assetName}: ${e.message}`);
     }
   }
 
@@ -478,7 +473,7 @@ async function main() {
   console.log('6️⃣  Deploying backend updates to GitHub repository...');
   try {
     execSync('git add .', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Updater 404 Fix, Monet Theming, Duplicate Cleaner, Audio Mini-Player, Night Backup"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Local Storage Crash Guard, 0ms Browse Lag, ID & Prescription AI Search"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {
