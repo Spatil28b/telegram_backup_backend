@@ -86,6 +86,10 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.4': `✨ What's New in Release v2.4.4:
+- 🏷️ Refined Single-Line Badges & Top-Right Placement: Fixed the App Icon "Default" tag wrapping vertically into individual letters. Badges ("Default", "Active", "OLED") are now properly positioned in the top right corner of cards across all 6 themes and launcher icons in single-line horizontal pills.
+- 📐 Single-Line Main Settings Hierarchy: Simplified and tightened main settings headers (like "Quick Controller" and "Cache & Storage") into clean, single-line titles with ellipsis guards, keeping the rich descriptions below intact.
+- 🚀 Ultra-Fast & High-Accuracy AI Vision Search: Streamlined AI Photo & Document search with strict Gemini classification rules, lightweight 384px payloads, and bounded 2-way parallel batch evaluation for 7x faster and highly accurate results.`,
     '2.4.3': `✨ What's New in Release v2.4.3:
 - 🔍 AI Photo & Document Search: Natural-language visual photo & document search. Search for "bonafide certificate", "payment receipt", "pan card", "party photos", "10th marksheet", "10k transfer receipt" and get matching images in a visual gallery grid
 - ⚡ Main Screen Quick-Access Icon: Prominent 1-tap AI Search button directly on the top search bar, Home dashboard card, and navigation drawer
