@@ -104,6 +104,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.7': `✨ What's New in Release v2.4.7:
+- 🛠️ Local Storage Crash Fix: Eliminated Jetpack Compose duplicate key crash in Category and Folder views with compound keys, storage path deduplication, and scan error recovery.
+- ⚡ Browse Section Freeze Elimination: Offloaded monthly timeline calculations to background thread with date caching and replaced 14 loops with a 2ms single-pass accumulator, completely eliminating the 1s UI stutter.
+- 🪪 ID Card AI & OCR Recognition: Instant on-device OCR and Gemini Vision recognition for student/college IDs, office badges, Aadhaar cards (UIDAI), Voter IDs, and Driving Licenses.
+- 🏥 Medical Prescription & Doctor Note Detection: High-accuracy detection for doctor consultation sheets, clinic notes, Rx pads, dosage instructions, medicine slips, and pharmacy bills.
+- 🏛️ College & Building/Society Search: Deep visual & text recognition for colleges, universities, residential societies, apartment complexes, towers, and named locations (e.g. 'XYZ College', 'ABC Society').
+- 🔍 Smart Query Tokenizer & Filler Stripping: Automatically strips query filler words ('image', 'photo', 'pic', 'show me') while preserving crucial short tokens ('id', 'rx', 'dl', 'dr') to avoid false negatives.`,
     '2.4.6': `✨ What's New in Release v2.4.6:
 - 🚀 In-App Updater 404 Resolution: Direct pre-signed CDN resolution and redirect-sanitized downloads eliminate HTTP 404 on updates.
 - 🎨 Material You Dynamic Theming: Android 12+ wallpaper Monet color scheme extraction with adaptive surface tones.
