@@ -1240,6 +1240,8 @@ app.post(['/api/files/purge', '/files/purge'], async (req, res, next) => {
       queryText += ` AND (is_drive_upload = true OR telegram_file_id = 'DIR_MARKER' OR path LIKE 'Internal Storage%')`;
     } else if (purgeMode === 'AUTO_BACKUP_ONLY') {
       queryText += ` AND (is_drive_upload = false AND telegram_file_id != 'DIR_MARKER' AND path NOT LIKE 'Internal Storage%')`;
+    } else if (purgeMode === 'TRASH_ONLY') {
+      queryText += ` AND is_deleted = true`;
     } else if (purgeMode === 'OLDER_THAN_DAYS') {
       const days = parseInt(olderThanDays) || 30;
       const cutoffMs = Date.now() - (days * 86400 * 1000);
@@ -1248,16 +1250,51 @@ app.post(['/api/files/purge', '/files/purge'], async (req, res, next) => {
     }
 
     let deletedItems = [];
+    const allMessageIds = new Set();
 
     if (pool) {
       try {
         const fetchRes = await queryWithTimeout(
-          `SELECT message_id as "messageId", telegram_file_id as "telegramFileId", path FROM backed_files ${queryText}`,
+          `SELECT message_id as "messageId", telegram_file_id as "telegramFileId", path, chunks_json as "chunksJson" FROM backed_files ${queryText}`,
           queryParams
         );
         deletedItems = fetchRes.rows || [];
 
+        for (const item of deletedItems) {
+          const mid = parseInt(item.messageId, 10);
+          if (!isNaN(mid) && mid > 0) {
+            allMessageIds.add(mid);
+          }
+          if (item.chunksJson) {
+            try {
+              const parsed = typeof item.chunksJson === 'string' ? JSON.parse(item.chunksJson) : item.chunksJson;
+              if (Array.isArray(parsed)) {
+                for (const chunk of parsed) {
+                  const cMid = parseInt(chunk.messageId || chunk.msgId, 10);
+                  if (!isNaN(cMid) && cMid > 0) {
+                    allMessageIds.add(cMid);
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Delete from backed_files
         await queryWithTimeout(`DELETE FROM backed_files ${queryText}`, queryParams);
+
+        // Also clean up any associated shared files records
+        if (purgeMode === 'ALL') {
+          await queryWithTimeout(`DELETE FROM shared_files WHERE email = $1`, [lowerEmail]);
+        } else if (deletedItems.length > 0) {
+          const paths = deletedItems.map(d => d.path).filter(Boolean);
+          if (paths.length > 0) {
+            await queryWithTimeout(
+              `DELETE FROM shared_files WHERE email = $1 AND file_path = ANY($2)`,
+              [lowerEmail, paths]
+            );
+          }
+        }
       } catch (dbErr) {
         console.error('[DB Warn] Files purge DB query failed:', dbErr.message);
         const list = memoryFiles.get(lowerEmail) || [];
@@ -1266,6 +1303,10 @@ app.post(['/api/files/purge', '/files/purge'], async (req, res, next) => {
     } else {
       const list = memoryFiles.get(lowerEmail) || [];
       deletedItems = list.map(f => ({ messageId: f.messageId, telegramFileId: f.telegramFileId, path: f.path }));
+      for (const item of deletedItems) {
+        const mid = parseInt(item.messageId, 10);
+        if (!isNaN(mid) && mid > 0) allMessageIds.add(mid);
+      }
       memoryFiles.set(lowerEmail, []);
     }
 
@@ -1273,6 +1314,7 @@ app.post(['/api/files/purge', '/files/purge'], async (req, res, next) => {
       success: true,
       message: `Successfully purged ${deletedItems.length} file record(s) from cloud database.`,
       deletedCount: deletedItems.length,
+      allMessageIds: Array.from(allMessageIds),
       deletedItems
     });
   } catch (err) {
@@ -1310,12 +1352,30 @@ app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, 
           }
         }
 
-        // 1. Fetch file message IDs for Telegram cleanup
-        const filesRes = await queryWithTimeout(`SELECT message_id as "messageId", telegram_file_id as "telegramFileId" FROM backed_files WHERE email = $1`, [lowerEmail]);
+        // 1. Fetch file message IDs and chunks for Telegram cleanup
+        const filesRes = await queryWithTimeout(`SELECT message_id as "messageId", telegram_file_id as "telegramFileId", chunks_json as "chunksJson" FROM backed_files WHERE email = $1`, [lowerEmail]);
         const deletedItems = filesRes.rows || [];
+        const allMessageIds = new Set();
+        for (const item of deletedItems) {
+          const mid = parseInt(item.messageId, 10);
+          if (!isNaN(mid) && mid > 0) allMessageIds.add(mid);
+          if (item.chunksJson) {
+            try {
+              const parsed = typeof item.chunksJson === 'string' ? JSON.parse(item.chunksJson) : item.chunksJson;
+              if (Array.isArray(parsed)) {
+                for (const chunk of parsed) {
+                  const cMid = parseInt(chunk.messageId || chunk.msgId, 10);
+                  if (!isNaN(cMid) && cMid > 0) allMessageIds.add(cMid);
+                }
+              }
+            } catch (_) {}
+          }
+        }
 
-        // 2. Delete all backed files
+        // 2. Delete all backed files, shared links, and settings
         await queryWithTimeout(`DELETE FROM backed_files WHERE email = $1`, [lowerEmail]);
+        await queryWithTimeout(`DELETE FROM shared_files WHERE email = $1`, [lowerEmail]);
+        await queryWithTimeout(`DELETE FROM user_settings WHERE email = $1`, [lowerEmail]);
 
         // 3. Delete user account record
         await queryWithTimeout(`DELETE FROM users WHERE email = $1`, [lowerEmail]);
@@ -1324,6 +1384,7 @@ app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, 
           success: true,
           message: 'User account and all associated cloud file data deleted permanently.',
           deletedCount: deletedItems.length,
+          allMessageIds: Array.from(allMessageIds),
           deletedItems
         });
       } catch (dbErr) {

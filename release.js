@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.5': `✨ What's New in Release v2.3.5:
+- 🧹 Granular 'Clear File Data' in Settings: Dedicated selective purge with 3 independent storage target switches (Local App Data, Neon Cloud Database, and Telegram Channel)
+- 🔍 Multi-Scope Purge Filters: Wipe All Files, Cloud Drive Only, Auto-Backup Only, Older Than (30/60/90) Days, or Recycle Bin / Trash Only
+- 🤖 Multi-Bot Fleet Telegram Deletion: Rotates bot tokens to delete actual file parts and all 4MB chunks without single-bot rate limits or permission drops
+- 📊 Dynamic Impact Preview & Safety: Real-time calculation of affected files, megabytes, and Telegram chunk parts with 'CLEAR' safety typing gate for high-impact full wipes
+- 📦 Monthly ZIP Archive Rebuild: Full multi-chunk cloud parallel assembly, zero duplicate-entry collisions, folder hierarchy preservation, and interactive Material 3 progress dialog`,
     '2.3.4': `✨ What's New in Release v2.3.4:
 - 📦 Telegram Channel Deep Reconcile: Scanned and recovered 128+ multi-part files directly from Telegram, eliminating incomplete chunk false alerts
 - 🔑 Master Encryption Key Sync: Embedded authentic master key and dynamic cloud settings fallback to guarantee 100% decryption success
