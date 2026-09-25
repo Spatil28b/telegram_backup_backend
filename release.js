@@ -86,6 +86,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.3.8': `✨ What's New in Release v2.3.8:
+- 🧹 Guaranteed Telegram Channel Deletion: Fixed file purge so messages are completely deleted from Telegram channel even when local or cloud database was previously cleared
+- 🔍 Channel Deep Sweep Scanner: Top-down message discovery sweeps and cleans orphaned file messages and multi-part chunks directly from Telegram without needing local DB records
+- 🗑️ Permanent Delete Telegram Integration: Deleting files permanently from File Actions or Trash Bin now completely deletes all associated messages and chunks from Telegram cloud chat
+- 🛠️ Dedicated Telegram Channel Cleaner: New 1-tap cleaner in Settings > Data Management & Reset to verify bot delete rights and purge orphaned files anytime
+- 🛡️ Administrator Rights Pre-Flight Check: Proactively verifies bot channel administrator status and 'Delete Messages' permission with clear feedback
+- 📊 Multi-Part Chunk Tracking: Chunk message IDs are preserved during cloud restore and two-way sync for 100% reliable multi-chunk cleanup`,
     '2.3.7': `✨ What's New in Release v2.3.7:
 - 📁 Google Files-Style Context Actions System-Wide: Long-press or tap 3-dots on any folder or file across Browse, Drive, Monthly Archive, Local Files, and Trash Bin for instant actions
 - ✏️ Cloud & Local Rename: Seamlessly rename files and entire folder hierarchies with Room database and Telegram cloud metadata propagation
