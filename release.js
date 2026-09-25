@@ -86,6 +86,11 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.2': `✨ What's New in Release v2.4.2:
+- 🤖 Dynamic Google ModelService Auto-Discovery: Intelligently detects active models from Google's ModelService API, eliminating HTTP 404 errors caused by deprecated models like gemini-1.5-flash
+- ⚡ Gemini 2.0 & 2.5 Flash Engine: Upgraded default vision intelligence engine to Google's latest Gemini 2.0 and 2.5 Flash architectures for sub-second responses and high-accuracy document parsing
+- 🛡️ Self-Healing Model Fallover & Retry: Automatic runtime fallback and retry if any requested model is sunset or unsupported, ensuring 100% uninterrupted Ask Photo Q&A
+- 🔄 Automatic Model Migration: Saved preferences automatically upgrade deprecated 1.5 models to modern auto-discovery without requiring manual reset`,
     '2.4.1': `✨ What's New in Release v2.4.1:
 - 🤖 Google Gemini Multimodal Vision & Ask Photos: Ask natural language questions about your photos and documents like Google Photos. Instant presets for 10th/12th marksheets, 10k payment receipts, bills, and ID cards
 - 🔑 Single & Multiple API Key Support with Auto-Failover: Enter one or multiple Gemini API keys. Automatic round-robin rotation and seamless failover on rate limits (HTTP 429) ensure uninterrupted document analysis
