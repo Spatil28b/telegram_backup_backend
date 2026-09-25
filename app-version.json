@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 123,
-  "versionName": "2.3.9",
+  "versionCode": 124,
+  "versionName": "2.4.0",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.3.9:\n- 🧹 Full-Depth Telegram Channel Sweep: Scanner now traverses all the way down to message ID 1 without premature stopping on sparse channel gaps\n- 🔍 Guaranteed Orphaned Message Wipe: Wipes all historical backup files and multi-part chunks directly from Telegram even when all database records are gone\n- 🛡️ Zero Stale Record Residuals: Server shared files and channel messages 100% verified and synchronized"
+  "releaseNotes": "✨ What's New in Release v2.4.0:\n- 🖋️ System-Wide UI/UX Typography Overhaul: Redesigned Jetpack Compose type scales with strict letter-spacing, optical font weights, and proportional line-heights\n- 📐 Zero Font-Padding Vertical Centering: Eliminated Android legacy font padding across all buttons, chips, tabs, search inputs, and dialogs for pixel-perfect vertical alignment\n- 📑 Navigation & Drawer Typography Polish: Refined category headers with premium uppercase tracking, bold section labels, and single-line truncated top app bars\n- ⏱️ Tabular Monospace Numeric Scales: Introduced dedicated monospace styles for audio player timers, transfer metrics, bitrates, and progress counters to prevent jitter\n- 🗂️ Activity Feed & Card Polishing: Enhanced status chips, metric counters, and secondary metadata rows with clean Material 3 contrast hierarchy"
 }

@@ -86,6 +86,12 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.0': `✨ What's New in Release v2.4.0:
+- 🖋️ System-Wide UI/UX Typography Overhaul: Redesigned Jetpack Compose type scales with strict letter-spacing, optical font weights, and proportional line-heights
+- 📐 Zero Font-Padding Vertical Centering: Eliminated Android legacy font padding across all buttons, chips, tabs, search inputs, and dialogs for pixel-perfect vertical alignment
+- 📑 Navigation & Drawer Typography Polish: Refined category headers with premium uppercase tracking, bold section labels, and single-line truncated top app bars
+- ⏱️ Tabular Monospace Numeric Scales: Introduced dedicated monospace styles for audio player timers, transfer metrics, bitrates, and progress counters to prevent jitter
+- 🗂️ Activity Feed & Card Polishing: Enhanced status chips, metric counters, and secondary metadata rows with clean Material 3 contrast hierarchy`,
     '2.3.9': `✨ What's New in Release v2.3.9:
 - 🧹 Full-Depth Telegram Channel Sweep: Scanner now traverses all the way down to message ID 1 without premature stopping on sparse channel gaps
 - 🔍 Guaranteed Orphaned Message Wipe: Wipes all historical backup files and multi-part chunks directly from Telegram even when all database records are gone
