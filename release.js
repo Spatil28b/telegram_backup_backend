@@ -1,9 +1,27 @@
 const fs = require('fs');
 const path = require('path');
 const dns = require('dns');
+const resolver = new dns.Resolver();
 try {
-  dns.setServers(['8.8.8.8', '1.1.1.1']);
-  dns.setDefaultResultOrder('ipv4first');
+  resolver.setServers(['8.8.8.8', '1.1.1.1']);
+  const origLookup = dns.lookup;
+  dns.lookup = function(hostname, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    resolver.resolve4(hostname, (err, addresses) => {
+      if (!err && addresses && addresses.length > 0) {
+        if (options && options.all) {
+          callback(null, addresses.map(a => ({ address: a, family: 4 })));
+        } else {
+          callback(null, addresses[0], 4);
+        }
+      } else {
+        origLookup(hostname, options, callback);
+      }
+    });
+  };
 } catch {}
 const { execSync } = require('child_process');
 
@@ -86,6 +104,13 @@ async function main() {
   fs.copyFileSync(APK_SRC, latestApk);
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.4.5': `✨ What's New in Release v2.4.5:
+- ⚡ On-Device Google ML Kit OCR: Integrated local high-speed Google ML Kit text recognition (~15ms per image) running 100% on-device and offline. Pinpoint accuracy for bonafide certificates, PAN cards, UPI receipts (₹10k), and bills without requiring network or API keys.
+- 🤖 Gemini 2.0 / 3.0 Vision & Deprecation Auto-Healing: Completely resolved Gemini 2.5 Flash deprecation error by automatically prioritizing Gemini 2.0 Flash / Gemini 3.0 Flash, with self-healing model failover on deprecated endpoints.
+- 🧈 Buttery Smooth Tab Transitions: Replaced heavy scale/size transformations during tab switching with lightweight, snappy crossfades, eliminating the 1-second lag/stuck frame behavior.
+- 🧭 Smart Navigation Bar & Tap-to-Hide: Navigation bar never hides on non-scrollable screens; tapping empty screen margins or background smoothly toggles/hides the nav bar.
+- 🎨 Modern Theme Shade Colors Overhaul: Enriched all 6 themes with multi-tier Material 3 surface containers, luminous borders, and dynamic theme-matched bottom nav highlights across Clean Light, Midnight Dark, AMOLED, Emerald, and Sunset.
+- 🚫 Backup Exceptions Redesign: Completely overhauled Backup Exceptions screen with full theme adaptability, path breadcrumbs, and modern exclusion badges.`,
     '2.4.4': `✨ What's New in Release v2.4.4:
 - 🏷️ Refined Single-Line Badges & Top-Right Placement: Fixed the App Icon "Default" tag wrapping vertically into individual letters. Badges ("Default", "Active", "OLED") are now properly positioned in the top right corner of cards across all 6 themes and launcher icons in single-line horizontal pills.
 - 📐 Single-Line Main Settings Hierarchy: Simplified and tightened main settings headers (like "Quick Controller" and "Cache & Storage") into clean, single-line titles with ellipsis guards, keeping the rich descriptions below intact.
