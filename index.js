@@ -360,7 +360,11 @@ async function initDb() {
     console.error('[Neon Postgres Error] Failed to initialize database tables:', err.message);
   }
 }
-initDb().catch(err => console.error('[InitDb Catch]', err.message));
+// Database schema migrations are executed during deployment via migrate.js.
+// In local development or when explicitly requested, initDb runs once on boot.
+if (process.env.RUN_MIGRATIONS === 'true' || (process.env.NODE_ENV !== 'production' && require.main === module)) {
+  initDb().catch(err => console.error('[InitDb Catch]', err.message));
+}
 
 /**
  * -------------------------------------------------------------------------------------
@@ -2089,12 +2093,6 @@ async function resolveChunkUrl(chunk, shareData) {
   if (!targetFileId) return null;
   if (targetFileId.startsWith('http://') || targetFileId.startsWith('https://')) return targetFileId;
 
-  // Check in-memory CDN URL cache first (Telegram file paths are valid for 1 hour)
-  const cached = telegramCdnUrlCache.get(targetFileId);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.url;
-  }
-
   const candidateTokens = [];
   const addToken = (t) => {
     const clean = (t || '').trim();
@@ -2110,11 +2108,17 @@ async function resolveChunkUrl(chunk, shareData) {
   addToken(process.env.TELEGRAM_BOT_TOKEN);
 
   for (const token of candidateTokens) {
+    const cacheKey = `${token}:${targetFileId}`;
+    const cached = telegramCdnUrlCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.url;
+    }
+
     const freshUrl = await getFreshTelegramUrl(token, targetFileId, 2);
     if (freshUrl) {
       chunk.botTokenUsed = token;
       // Cache URL for 45 minutes to prevent Telegram Bot API 429 rate limits
-      telegramCdnUrlCache.set(targetFileId, {
+      telegramCdnUrlCache.set(cacheKey, {
         url: freshUrl,
         expiresAt: Date.now() + 45 * 60 * 1000
       });

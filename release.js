@@ -542,6 +542,15 @@ async function main() {
     console.warn('   (Old release cleanup note:', cleanErr.message, ')');
   }
 
+  // 6b. Run database schema migrations
+  console.log('6️⃣b Running database schema migrations on Neon Postgres...');
+  try {
+    execSync('node migrate.js', { cwd: __dirname, stdio: 'inherit' });
+  } catch (mErr) {
+    console.error('❌ Migration failed:', mErr.message);
+    throw mErr;
+  }
+
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
@@ -551,7 +560,7 @@ async function main() {
     '2.5.0': 'Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming',
   };
   const commitTitle = releaseTitleMap[versionName] || 'Security, Performance & Stability Update';
-  execSync('git add app-version.json index.js release.js package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
+  execSync('git add app-version.json index.js release.js migrate.js vercel.json package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
   try {
     execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - ${commitTitle}"`, { cwd: __dirname });
   } catch (cErr) {
