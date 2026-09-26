@@ -111,6 +111,12 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.5.2': `✨ What's New in Release v2.5.2:
+- 🚀 Zero-OOM Hardware-Scaled Video Thumbnails: Resolved OutOfMemoryError crash on app open by utilizing API 27+ MediaMetadataRetriever.getScaledFrameAtTime hardware downsampling and bounded 2-way semaphore throttling.
+- 🧠 Large Heap Memory Expansion: Enabled android:largeHeap='true' in AndroidManifest to grant up to 512MB RAM for intensive media viewing, multi-GB cloud backups, and high-resolution photo galleries.
+- 🛡️ Global OutOfMemoryError Shield Absorption: Hardened AppCrashShield to intercept unhandled bitmap OOM events, trigger immediate Garbage Collection, and prevent process death.
+- ⚡ Instant Cold-Boot Launch Resolution: Overhauled AppCrashShield with looper-level message pumping and crash-loop guards, eliminating the startup black screen caused by infinite restart loops and dead main loopers.
+- 📱 Launcher Alias Synchronization: Added automatic launcher activity-alias synchronization during boot and app updates, ensuring the launcher icon stays active regardless of which theme icon was chosen.`,
     '2.5.1': `✨ What's New in Release v2.5.1:
 - ⚡ Instant Cold-Boot Launch Resolution: Overhauled AppCrashShield with looper-level message pumping and crash-loop guards, eliminating the startup black screen caused by infinite restart loops and dead main loopers.
 - 📱 Launcher Alias Synchronization: Added automatic launcher activity-alias synchronization during boot and app updates, ensuring the launcher icon stays active regardless of which theme icon was chosen.
@@ -531,13 +537,15 @@ async function main() {
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   try {
     const releaseTitleMap = {
+      '2.5.2': 'Zero-OOM Video Thumbnails, Large Heap & OutOfMemoryError Absorption',
       '2.5.1': 'Cold-Boot Black Screen Fix, Launcher Sync & Room Migration Resilience',
       '2.5.0': 'Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming',
     };
     const commitTitle = releaseTitleMap[versionName] || 'Performance & Stability Update';
     execSync('git add app-version.json index.js release.js package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
     execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - ${commitTitle}"`, { cwd: __dirname });
-    execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
+    const remoteUrl = `https://${TOKEN}@github.com/${OWNER}/${REPO}.git`;
+    execSync(`git push ${remoteUrl} main`, { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {
     console.warn(`   (Git note: ${err.message})`);

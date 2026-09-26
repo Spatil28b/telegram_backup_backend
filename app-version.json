@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 135,
-  "versionName": "2.5.1",
+  "versionCode": 136,
+  "versionName": "2.5.2",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.5.1:\n- ⚡ Instant Cold-Boot Launch Resolution: Overhauled AppCrashShield with looper-level message pumping and crash-loop guards, eliminating the startup black screen caused by infinite restart loops and dead main loopers.\n- 📱 Launcher Alias Synchronization: Added automatic launcher activity-alias synchronization during boot and app updates, ensuring the launcher icon stays active regardless of which theme icon was chosen.\n- 🗄️ Fail-Safe Room DB Auto-Healing: Added runtime PRAGMA column checks for chunk progress and cloud metadata with destructive fallback safety, preventing startup crashes from legacy schema mismatches.\n- 🛡️ Clean Display Frame Compositing: Deferred window security flags until after Compose window initialization, preventing display surface drops and blank black frames during cold startup."
+  "releaseNotes": "✨ What's New in Release v2.5.2:\n- 🚀 Zero-OOM Hardware-Scaled Video Thumbnails: Resolved OutOfMemoryError crash on app open by utilizing API 27+ MediaMetadataRetriever.getScaledFrameAtTime hardware downsampling and bounded 2-way semaphore throttling.\n- 🧠 Large Heap Memory Expansion: Enabled android:largeHeap='true' in AndroidManifest to grant up to 512MB RAM for intensive media viewing, multi-GB cloud backups, and high-resolution photo galleries.\n- 🛡️ Global OutOfMemoryError Shield Absorption: Hardened AppCrashShield to intercept unhandled bitmap OOM events, trigger immediate Garbage Collection, and prevent process death.\n- ⚡ Instant Cold-Boot Launch Resolution: Overhauled AppCrashShield with looper-level message pumping and crash-loop guards, eliminating the startup black screen caused by infinite restart loops and dead main loopers.\n- 📱 Launcher Alias Synchronization: Added automatic launcher activity-alias synchronization during boot and app updates, ensuring the launcher icon stays active regardless of which theme icon was chosen."
 }
