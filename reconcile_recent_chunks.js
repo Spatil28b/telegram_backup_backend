@@ -74,10 +74,27 @@ async function probeMessage(botToken, mId) {
   return null;
 }
 
+function safeJsonParse(val, fallback = null) {
+  try { return typeof val === 'string' ? JSON.parse(val) : (val || fallback); } catch { return fallback; }
+}
+
 async function main() {
   const settingsRes = await pool.query("SELECT settings_json FROM user_settings WHERE email='spatil28a@gmail.com'");
-  const settings = JSON.parse(settingsRes.rows[0].settings_json);
-  const bots = settings.bot_fleet.map(b => b.bot_token);
+  const row = settingsRes.rows[0];
+  if (!row || !row.settings_json) {
+    console.error('❌ User settings not found. Cannot load bot fleet.');
+    await pool.end();
+    return;
+  }
+  const settings = safeJsonParse(row.settings_json, {});
+  const bots = Array.isArray(settings?.bot_fleet)
+    ? settings.bot_fleet.map(b => (b.bot_token || '').trim()).filter(Boolean)
+    : [];
+  if (bots.length === 0) {
+    console.error('❌ No active Telegram bots configured in bot_fleet.');
+    await pool.end();
+    return;
+  }
   console.log(`Initialized fleet with ${bots.length} bots.`);
 
   // Load all remaining incomplete files from Neon DB
@@ -96,7 +113,7 @@ async function main() {
   // Range of messages to crawl: 6380 down to 4700
   const START_MSG = 6380;
   const END_MSG = 4700;
-  const BATCH_SIZE = bots.length;
+  const BATCH_SIZE = Math.max(1, bots.length);
 
   console.log(`Crawling recent messages ${START_MSG} down to ${END_MSG}...`);
   let totalDocsFound = 0;

@@ -74,32 +74,52 @@ async function probeMessage(botToken, mId) {
   return null;
 }
 
+function safeJsonParse(val, fallback = null) {
+  try { return typeof val === 'string' ? JSON.parse(val) : (val || fallback); } catch { return fallback; }
+}
+
 async function main() {
   const settingsRes = await pool.query("SELECT settings_json FROM user_settings WHERE email='spatil28a@gmail.com'");
-  const settings = JSON.parse(settingsRes.rows[0].settings_json);
-  const bots = settings.bot_fleet.map(b => b.bot_token);
+  const row = settingsRes.rows[0];
+  if (!row || !row.settings_json) {
+    console.error('❌ User settings not found. Cannot load bot fleet.');
+    await pool.end();
+    return;
+  }
+  const settings = safeJsonParse(row.settings_json, {});
+  const bots = Array.isArray(settings?.bot_fleet)
+    ? settings.bot_fleet.map(b => (b.bot_token || '').trim()).filter(Boolean)
+    : [];
+  if (bots.length === 0) {
+    console.error('❌ No active Telegram bots configured in bot_fleet. Exiting crawler.');
+    await pool.end();
+    return;
+  }
   console.log(`Initialized fleet with ${bots.length} bots.`);
 
   // Load all incomplete files from Neon DB
   const incompleteRes = await pool.query(
-    "SELECT id, file_name, total_chunks, size, telegram_file_id FROM backed_files WHERE total_chunks > 1 AND (chunks_json IS NULL OR chunks_json = '[]')"
+    "SELECT id, file_name, total_chunks, size, telegram_file_id, chunks_json FROM backed_files WHERE total_chunks > 1 AND (chunks_json IS NULL OR chunks_json = '[]')"
   );
   console.log(`Loaded ${incompleteRes.rows.length} incomplete multi-chunk files from Neon DB.`);
 
-  // Create lookup maps
-  const fileMap = new Map(); // fileName -> dbRow
-  for (const row of incompleteRes.rows) {
-    fileMap.set(row.file_name.toLowerCase(), row);
-    // Also store without extension / base prefix for fuzzy matching if needed
+  // Create lookup maps: id -> dbRow, and lowercase fileName -> [dbRow, ...]
+  const fileMap = new Map(); // id -> dbRow
+  const nameToRows = new Map();
+  for (const r of incompleteRes.rows) {
+    fileMap.set(r.id, r);
+    const fn = (r.file_name || '').toLowerCase();
+    if (!nameToRows.has(fn)) nameToRows.set(fn, []);
+    nameToRows.get(fn).push(r);
   }
 
-  // Discovered chunks accumulator: fileName -> Map<chunkIndex, chunkData>
+  // Discovered chunks accumulator: id -> { dbRow, chunks: Map<chunkIndex, chunkData> }
   const discoveredMap = new Map();
 
   // Range of messages to crawl: 2000 down to 1
   const START_MSG = 2000;
   const END_MSG = 1;
-  const BATCH_SIZE = bots.length; // 10 messages at a time, each using a distinct bot
+  const BATCH_SIZE = Math.max(1, bots.length);
 
   console.log(`Beginning crawler across messages ${START_MSG} down to ${END_MSG} (${START_MSG - END_MSG} messages)...`);
   let totalDocsFound = 0;
@@ -124,28 +144,38 @@ async function main() {
       if (partMatch) {
         const chunkIndex = parseInt(partMatch[1], 10);
         const totalChunks = parseInt(partMatch[2], 10);
+        if (isNaN(chunkIndex) || isNaN(totalChunks) || chunkIndex < 1 || totalChunks < 1 || chunkIndex > totalChunks) {
+          continue;
+        }
 
-        // Find matching file
-        for (const [fnameLower, dbRow] of fileMap.entries()) {
-          if (r.caption.toLowerCase().includes(fnameLower) || (r.doc.file_name && r.doc.file_name.toLowerCase().includes(fnameLower))) {
-            if (!discoveredMap.has(dbRow.id)) {
-              discoveredMap.set(dbRow.id, {
-                dbRow,
-                chunks: new Map()
-              });
+        // Find candidate matching file rows
+        const captionLower = (r.caption || '').toLowerCase();
+        const docNameLower = (r.doc.file_name || '').toLowerCase();
+
+        for (const [fnameLower, candidates] of nameToRows.entries()) {
+          if (captionLower.includes(fnameLower) || (docNameLower && docNameLower.includes(fnameLower))) {
+            for (const dbRow of candidates) {
+              if (dbRow.total_chunks !== totalChunks) continue;
+
+              if (!discoveredMap.has(dbRow.id)) {
+                discoveredMap.set(dbRow.id, {
+                  dbRow,
+                  chunks: new Map()
+                });
+              }
+              const fileEntry = discoveredMap.get(dbRow.id);
+              if (!fileEntry.chunks.has(chunkIndex)) {
+                fileEntry.chunks.set(chunkIndex, {
+                  chunkIndex,
+                  telegramFileId: r.doc.file_id,
+                  botTokenUsed: r.botToken,
+                  messageId: r.mId,
+                  chunkSize: r.doc.file_size
+                });
+                matchedChunksCount++;
+              }
+              break;
             }
-            const fileEntry = discoveredMap.get(dbRow.id);
-            if (!fileEntry.chunks.has(chunkIndex)) {
-              fileEntry.chunks.set(chunkIndex, {
-                chunkIndex,
-                telegramFileId: r.doc.file_id,
-                botTokenUsed: r.botToken,
-                messageId: r.mId,
-                chunkSize: r.doc.file_size
-              });
-              matchedChunksCount++;
-            }
-            break;
           }
         }
       }
@@ -158,16 +188,18 @@ async function main() {
 
   console.log(`\nCrawl complete! Found chunks for ${discoveredMap.size} files.`);
 
-  // Write discovered chunks to Neon DB
+  // Write discovered chunks to Neon DB only when new result is better
   let fullyReconciled = 0;
   let partiallyReconciled = 0;
 
   for (const [id, entry] of discoveredMap.entries()) {
     const dbRow = entry.dbRow;
     const chunkArray = Array.from(entry.chunks.values()).sort((a, b) => a.chunkIndex - b.chunkIndex);
+    const existingChunks = safeJsonParse(dbRow.chunks_json, []);
+    if (Array.isArray(existingChunks) && existingChunks.length >= chunkArray.length && existingChunks.length >= dbRow.total_chunks) {
+      continue; // Don't overwrite existing complete chunks with fewer chunks
+    }
 
-    // Format as chunks_json structure expected by Android client and server:
-    // [{ chunkIndex, telegramFileId, botTokenUsed, messageId, chunkSize }]
     const chunksJson = JSON.stringify(chunkArray);
     const minMsgId = chunkArray[0]?.messageId || 0;
     const firstTgId = chunkArray[0]?.telegramFileId || dbRow.telegram_file_id;

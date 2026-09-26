@@ -60,11 +60,29 @@ async function probeMessage(botToken, mId) {
   return null;
 }
 
+function safeJsonParse(val, fallback = null) {
+  try { return typeof val === 'string' ? JSON.parse(val) : (val || fallback); } catch { return fallback; }
+}
+
 async function main() {
   const settingsRes = await pool.query("SELECT settings_json FROM user_settings WHERE email='spatil28a@gmail.com'");
-  const bots = JSON.parse(settingsRes.rows[0].settings_json).bot_fleet.map(b => b.bot_token);
+  const row = settingsRes.rows[0];
+  if (!row || !row.settings_json) {
+    console.error('❌ User settings not found. Cannot load bot fleet.');
+    await pool.end();
+    return;
+  }
+  const settings = safeJsonParse(row.settings_json, {});
+  const bots = Array.isArray(settings?.bot_fleet)
+    ? settings.bot_fleet.map(b => (b.bot_token || '').trim()).filter(Boolean)
+    : [];
+  if (bots.length === 0) {
+    console.error('❌ No active Telegram bots configured in bot_fleet.');
+    await pool.end();
+    return;
+  }
 
-  // Load the 27 remaining incomplete files
+  // Load the remaining incomplete files
   const incompleteRes = await pool.query(
     "SELECT id, file_name, total_chunks, size, telegram_file_id FROM backed_files WHERE total_chunks > 1 AND (chunks_json IS NULL OR chunks_json = '[]')"
   );
@@ -77,7 +95,7 @@ async function main() {
   const discoveredMap = new Map();
   const START = 1600;
   const END = 1;
-  const BATCH = bots.length;
+  const BATCH = Math.max(1, bots.length);
 
   console.log(`Scanning 1600 down to 1...`);
   let totalDocs = 0;

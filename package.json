@@ -5,6 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "test": "node --check index.js && node --check release.js && echo 'Syntax validation tests passed'",
+    "lint": "node --check index.js && echo 'Syntax lint checks passed'",
+    "check": "npm run lint && npm test",
     "release": "node release.js"
   },
   "dependencies": {

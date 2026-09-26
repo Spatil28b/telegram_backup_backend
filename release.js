@@ -25,7 +25,11 @@ try {
 } catch {}
 const { execSync } = require('child_process');
 
-const TOKEN = 'REDACTED_GITHUB_PERSONAL_ACCESS_TOKEN_01';
+const TOKEN = process.env.GITHUB_TOKEN;
+if (!TOKEN) {
+  console.error('❌ GITHUB_TOKEN environment variable is not configured. Please set GITHUB_TOKEN before running release.');
+  process.exit(1);
+}
 const OWNER = 'sid-codes28';
 const REPO = 'telegram_backup_backend';
 
@@ -411,16 +415,8 @@ async function main() {
   console.log(`   ✓ Updated app-version.json with v${versionName} (Code: ${versionCode})\n`);
 
   // 4. Update or Create GitHub Release
-  console.log('4️⃣  Cleaning up old releases on GitHub...');
+  console.log('4️⃣  Creating or updating GitHub Release: ' + tag + '...');
   const listRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases`);
-  if (Array.isArray(listRes.data)) {
-    for (const rel of listRes.data) {
-      if (rel.tag_name !== tag) {
-        console.log(`   Deleting old release ${rel.tag_name} (ID: ${rel.id})...`);
-        await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/${rel.id}`, 'DELETE');
-      }
-    }
-  }
 
   let releaseId;
   let uploadUrlTemplate;
@@ -451,11 +447,10 @@ async function main() {
   }
   console.log(`   ✓ Release ID: ${releaseId}\n`);
 
-  // 5. Upload APK Assets with robust Node.js stream
+  // 5. Upload APK Assets with verified HTTP response
   console.log('5️⃣  Uploading Release Binaries...');
   async function uploadAsset(assetName) {
     const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
-    const curlTarget = APK_SRC.replace(/\\/g, '/');
 
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
@@ -470,8 +465,28 @@ async function main() {
         }
 
         console.log(`   Uploading ${assetName} (${apkSizeMB} MB) [Attempt ${attempt}/4]...`);
-        execSync(`curl.exe -s -S --http1.1 --retry 3 --retry-delay 2 -w "\\nHTTP_STATUS:%{http_code}\\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`, { stdio: 'inherit' });
-        console.log(`   ✓ ${assetName} uploaded successfully!`);
+        const fileBuffer = fs.readFileSync(APK_SRC);
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${TOKEN}`,
+            'User-Agent': 'ReleasePipeline/2.5',
+            'Content-Type': 'application/vnd.android.package-archive',
+            'Content-Length': fileBuffer.length.toString()
+          },
+          body: fileBuffer
+        });
+
+        if (uploadRes.status === 201 || uploadRes.status === 200) {
+          console.log(`   ✓ ${assetName} uploaded and verified successfully (HTTP ${uploadRes.status})!`);
+          return;
+        }
+
+        // If fetch upload failed, try platform-aware curl fallback
+        const curlCmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
+        const curlTarget = APK_SRC.replace(/\\/g, '/');
+        execSync(`${curlCmd} -s -S --http1.1 --retry 3 --retry-delay 2 -w "\\nHTTP_STATUS:%{http_code}\\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`, { stdio: 'inherit' });
+        console.log(`   ✓ ${assetName} uploaded successfully via curl!`);
         return;
       } catch (e) {
         console.warn(`   ⚠️ Upload attempt ${attempt} for ${assetName} failed: ${e.message}`);
@@ -489,19 +504,34 @@ async function main() {
   await uploadAsset(`TelegramBackup-latest.apk`);
   console.log('');
 
-  // 6. Deploy backend to GitHub & Vercel
-  console.log('6️⃣  Deploying backend updates to GitHub repository...');
+  // 6. Only clean up old releases AFTER new release assets are 100% verified
+  console.log('6️⃣  Cleaning up superseded releases on GitHub...');
   try {
-    execSync('git add .', { cwd: __dirname });
+    if (Array.isArray(listRes.data)) {
+      for (const rel of listRes.data) {
+        if (rel.tag_name !== tag) {
+          console.log(`   Deleting old release ${rel.tag_name} (ID: ${rel.id})...`);
+          await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/${rel.id}`, 'DELETE');
+        }
+      }
+    }
+  } catch (cleanErr) {
+    console.warn('   (Old release cleanup note:', cleanErr.message, ')');
+  }
+
+  // 7. Deploy backend to GitHub & Vercel with explicit file staging
+  console.log('7️⃣  Deploying backend updates to GitHub repository...');
+  try {
+    execSync('git add app-version.json index.js release.js package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
     execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {
-    console.log(`   (Git note: ${err.message})`);
+    console.warn(`   (Git note: ${err.message})`);
   }
 
-  // 7. Verify Server Endpoint
-  console.log('7️⃣  Verifying dynamic server updater...');
+  // 8. Verify Server Endpoint
+  console.log('8️⃣  Verifying dynamic server updater...');
   try {
     const vRes = await fetch('https://telegram-backup-backend.vercel.app/api/app/latest-version');
     const vData = await vRes.json();

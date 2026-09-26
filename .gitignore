@@ -30,6 +30,9 @@ yarn-error.log*
 
 TelegramBackup/
 Releases/
+*.apk
+*.bin
+*.aab
 
 
 # Android & Gradle Build Artifacts / IDE Configs
