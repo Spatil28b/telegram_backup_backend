@@ -21,21 +21,45 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('@neondatabase/serverless');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'tspace-secure-jwt-key-2026-backup';
+// Cryptographically Secure JWT Secret Key (Minimum 32 characters required)
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.DATABASE_URL ? crypto.createHmac('sha256', 'tspace-jwt-salt-2026').update(process.env.DATABASE_URL).digest('hex') : null);
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error('FATAL: JWT_SECRET environment variable is missing or less than 32 characters');
+}
 
 // Initialize Express Application Instance
 const app = express();
 
-// Middleware: Enable Cross-Origin Resource Sharing with configured security
+// Middleware: Request Correlation ID Tracking (Fix #49)
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.id);
+  next();
+});
+
+// Middleware: Enable Cross-Origin Resource Sharing with Origin Whitelist (Fix #4)
+const ALLOWED_ORIGINS = new Set([
+  'https://telegram-backup-backend.vercel.app',
+  'https://tspace-vault.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173'
+]);
+
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => {
+    // Mobile apps and CLI tools send no Origin header; web clients must match whitelist
+    if (!origin || ALLOWED_ORIGINS.has(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS: Unauthorized cross-origin request rejected'));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Access-Token', 'X-Share-Pin', 'Range'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Access-Token', 'X-Share-Pin', 'Range', 'X-Request-Id'],
   credentials: true
 }));
 
-// Middleware: Parse Incoming JSON Request Payloads with safe 10MB limit
-app.use(express.json({ limit: '10mb' }));
+// Middleware: Parse Incoming JSON Request Payloads with safe 256KB default limit (Fix #48)
+app.use(express.json({ limit: '256kb' }));
 
 /**
  * Validates and normalizes email input with strict RFC-compliant regex and length constraints.
@@ -69,7 +93,8 @@ function verifyUserToken(token) {
 
 /**
  * Universal Authorization Middleware:
- * Inspects Authorization: Bearer <token> or X-Access-Token headers.
+ * Inspects Authorization: Bearer <token> or X-Access-Token headers only.
+ * Tokens in URL query parameters are strictly forbidden (Fix #3).
  * Attaches verified user context to req.user and req.authenticatedEmail.
  */
 function authenticateToken(req, res, next) {
@@ -81,9 +106,6 @@ function authenticateToken(req, res, next) {
     } else if (typeof authHeader === 'string') {
       token = authHeader.trim();
     }
-  }
-  if (!token && req.query?.token) {
-    token = String(req.query.token).trim();
   }
 
   if (token) {
@@ -101,7 +123,7 @@ function authenticateToken(req, res, next) {
 }
 
 /**
- * Mandatory Authorization Guard: Rejects unauthenticated requests with 401.
+ * Mandatory Authorization Guard: Rejects unauthenticated requests with 401 (Fix #1).
  */
 function requireAuth(req, res, next) {
   if (!req.user || !req.authenticatedEmail) {
@@ -116,19 +138,62 @@ function requireAuth(req, res, next) {
 app.use(authenticateToken);
 
 /**
+ * Liveness and Readiness Health Endpoints (Fix #50)
+ */
+app.get('/live', (req, res) => {
+  res.status(200).json({ status: 'live', uptime: process.uptime(), timestamp: Date.now() });
+});
+
+app.get('/ready', async (req, res) => {
+  let dbStatus = 'disconnected';
+  let dbLatencyMs = null;
+  if (pool) {
+    try {
+      const start = Date.now();
+      await queryWithTimeout('SELECT 1', [], 3000);
+      dbLatencyMs = Date.now() - start;
+      dbStatus = 'connected';
+    } catch (err) {
+      dbStatus = 'error: ' + err.message;
+    }
+  }
+  const isReady = dbStatus === 'connected';
+  return res.status(isReady ? 200 : 503).json({
+    status: isReady ? 'ready' : 'unhealthy',
+    database: { status: dbStatus, latencyMs: dbLatencyMs },
+    uptime: process.uptime(),
+    timestamp: Date.now()
+  });
+});
+
+/**
  * -------------------------------------------------------------------------------------
- * PROCESS LEVEL SAFETY HANDLERS
+ * PROCESS LEVEL SAFETY & LIFECYCLE HANDLERS (Fix #46, #47)
  * -------------------------------------------------------------------------------------
- * Prevents Vercel serverless worker processes from crashing when unhandled promise
- * rejections or uncaught exceptions occur during async database or network IO operations.
  */
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Process Warning] Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('[Process Warning] Uncaught Exception thrown:', err);
+  console.error('[Process Fatal] Uncaught Exception thrown:', err);
+  setTimeout(() => process.exit(1), 500);
 });
+
+async function gracefulShutdown(signal) {
+  console.log(`[Process] Received ${signal}, closing resources gracefully...`);
+  if (pool) {
+    try {
+      await pool.end();
+      console.log('[Neon Postgres Pool] Closed connection pool cleanly.');
+    } catch (err) {
+      console.error('[Neon Postgres Pool] Error ending pool:', err.message);
+    }
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 /**
  * -------------------------------------------------------------------------------------
@@ -257,8 +322,9 @@ async function initDb() {
 
       -- Create indexes safely after ensuring all columns exist
       CREATE INDEX IF NOT EXISTS idx_shared_files_exp ON shared_files(expires_at);
-      CREATE INDEX IF NOT EXISTS idx_shared_files_email ON shared_files(email);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path) WHERE path != '';
+      -- Drop old unique index if it was created without the partial WHERE clause (Fix #16)
+      DROP INDEX IF EXISTS idx_backed_files_email_path;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path) WHERE path IS NOT NULL AND path <> '';
       CREATE INDEX IF NOT EXISTS idx_backed_files_email_ts ON backed_files(email, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_backed_files_email_drive ON backed_files(email, is_drive_upload);
 
@@ -489,11 +555,73 @@ async function deleteOtp(email) {
 }
 
 /**
+ * Atomically validates and consumes an unexpired OTP for the specified purpose (Fix #11, #12, #14).
+ * Eliminates race condition window where two concurrent requests could validate the same OTP.
+ */
+async function consumeOtpAtomic(email, code, expectedType) {
+  const lowerEmail = (email || '').trim().toLowerCase();
+  const cleanCode = String(code || '').trim();
+  const hashedCode = hashOTP(cleanCode);
+  const now = Date.now();
+
+  // 1. Database Atomic Deletion with Purpose & Time Verification
+  if (pool) {
+    try {
+      const res = await queryWithTimeout(
+        `DELETE FROM otps
+         WHERE LOWER(email) = $1
+           AND (code = $2 OR code = $3)
+           AND type = $4
+           AND expires_at > $5
+         RETURNING email, type`,
+        [lowerEmail, hashedCode, cleanCode, expectedType, now]
+      );
+      if (res.rowCount > 0) {
+        memoryOtps.delete(lowerEmail);
+        return { success: true };
+      }
+    } catch (err) {
+      console.error('[DB Warn] consumeOtpAtomic DB query error:', err.message);
+    }
+  }
+
+  // 2. Memory Store Atomic Deletion
+  const mem = memoryOtps.get(lowerEmail);
+  if (mem) {
+    if (now <= mem.expiresAt && mem.type === expectedType && verifyOTPCode(cleanCode, mem.code)) {
+      memoryOtps.delete(lowerEmail);
+      return { success: true };
+    }
+  }
+
+  return { success: false };
+}
+
+/**
+ * In-Memory Rate Limiting for OTP generation (Fix #13)
+ * Maximum 5 OTP dispatches per email per 15 minutes.
+ */
+const otpRateLimitMap = new Map(); // key: email, value: { count, resetAt }
+function checkOtpRateLimit(email) {
+  const now = Date.now();
+  const record = otpRateLimitMap.get(email);
+  if (!record || now > record.resetAt) {
+    otpRateLimitMap.set(email, { count: 1, resetAt: now + 15 * 60 * 1000 });
+    return true;
+  }
+  if (record.count >= 5) {
+    return false;
+  }
+  record.count++;
+  return true;
+}
+
+/**
  * -------------------------------------------------------------------------------------
  * 3. API ROUTE: SEND OTP VERIFICATION CODE
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/auth/send-otp (Also aliases: /auth/send-otp, /send-otp)
- * Accepts: { email: string, type: 'register' | '2fa' }
+ * Accepts: { email: string, type: 'register' | '2fa' | 'reset' }
  * Generates 6-digit code with 5-minute expiration and dispatches via Multi-SMTP.
  */
 app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/request-reset', '/auth/request-reset', '/request-reset'], async (req, res, next) => {
@@ -503,13 +631,23 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
       return res.status(400).json({ success: false, message: 'Valid RFC-compliant email address is required.' });
     }
 
+    const lowerEmail = email.trim().toLowerCase();
+    if (!checkOtpRateLimit(lowerEmail)) {
+      return res.status(429).json({ success: false, message: 'Too many OTP requests. Please wait 15 minutes before requesting again.' });
+    }
+
+    const reqPath = (req.originalUrl || req.url || '').toLowerCase();
+    let resolvedType = type;
+    if (reqPath.includes('reset')) {
+      resolvedType = 'reset';
+    }
+
     const code = generateOTP();
     const hashedCode = hashOTP(code);
-    const lowerEmail = email.trim().toLowerCase();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 Minutes TTL
 
     // Save hashed code to Memory Store ALWAYS for guaranteed instant fallback
-    memoryOtps.set(lowerEmail, { code: hashedCode, expiresAt, type });
+    memoryOtps.set(lowerEmail, { code: hashedCode, expiresAt, type: resolvedType });
 
     // Also persist hashed code to PostgreSQL DB if available
     if (pool) {
@@ -517,7 +655,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
         await queryWithTimeout(
           `INSERT INTO otps (email, code, expires_at, type) VALUES ($1, $2, $3, $4)
            ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3, type = $4`,
-          [lowerEmail, hashedCode, expiresAt, type]
+          [lowerEmail, hashedCode, expiresAt, resolvedType]
         );
       } catch (dbErr) {
         console.error('[DB Warn] OTP DB save failed, relying on memory store:', dbErr.message);
@@ -525,9 +663,15 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
     }
 
     // Construct Responsive HTML Email Template (raw code sent to user, hashed code stored)
+    const emailSubject = resolvedType === 'reset'
+      ? 'Password Reset Code: Telegram Backup Cloud'
+      : (resolvedType === '2fa'
+        ? '2FA Code: Modify Telegram Credentials'
+        : 'Verification Code: Telegram Backup Registration');
+
     const mailOptions = {
       to: lowerEmail,
-      subject: type === '2fa' ? '2FA Code: Modify Telegram Credentials' : 'Verification Code: Telegram Backup Registration',
+      subject: emailSubject,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
           <h2 style="color: #0088cc;">Telegram Backup Cloud</h2>
@@ -552,6 +696,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
         message: `Failed to send OTP email: ${error.message}`
       });
     }
+
   } catch (err) {
     next(err);
   }
@@ -562,17 +707,21 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
  * 3b. API ROUTE: SEND AES-256 MASTER SECURITY ENCRYPTION KEY
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/auth/send-key (Also aliases: /auth/send-key, /send-key)
- * Accepts: { email: string, encryptionKey: string }
- * Sends Master Encryption Key file attachment & access PIN to user's email.
+ * Requires: Authorization: Bearer <token> (Fix #1, #8)
+ * Accepts: { encryptionKey: string }
+ * Sends Master Encryption Key file attachment & access PIN to authenticated user's email.
  */
 const handleSendKey = async (req, res, next) => {
   try {
-    const { email, encryptionKey } = req.body || {};
-    if (!isValidEmail(email) || !encryptionKey) {
-      return res.status(400).json({ success: false, message: 'Valid email and encryption key are required.' });
+    const { encryptionKey } = req.body || {};
+    const lowerEmail = req.authenticatedEmail;
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    if (!encryptionKey || typeof encryptionKey !== 'string') {
+      return res.status(400).json({ success: false, message: 'Valid encryption key is required.' });
     }
 
-    const lowerEmail = (email || '').trim().toLowerCase();
     // Cryptographically random 6-character access PIN for the backup attachment
     const filePassword = crypto.randomBytes(3).toString('hex').toUpperCase();
 
@@ -615,16 +764,7 @@ const handleSendKey = async (req, res, next) => {
   }
 };
 
-// Universal middleware matcher for Vercel rewrite URLs
-app.use((req, res, next) => {
-  const fullUrl = (req.originalUrl || req.url || '').toLowerCase();
-  if (req.method === 'POST' && fullUrl.includes('send-key')) {
-    return handleSendKey(req, res, next);
-  }
-  next();
-});
-
-app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], handleSendKey);
+app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], requireAuth, handleSendKey);
 
 /**
  * -------------------------------------------------------------------------------------
@@ -650,29 +790,16 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
     }
 
     const cleanCode = String(code || '').trim();
-    const otpRecord = await getLatestOtp(lowerEmail);
-
-    if (!otpRecord) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired verification code. Please request a new code.' });
-    }
-
-    const storedCode = otpRecord.code;
-    const expiresAt = otpRecord.expiresAt;
-
-    if (Date.now() > expiresAt) {
-      await deleteOtp(lowerEmail);
-      return res.status(400).json({ success: false, message: 'Verification code expired after 5 minutes. Please request a new code.' });
-    }
-
-    if (!verifyOTPCode(cleanCode, storedCode)) {
+    // Atomic validation & deletion bound specifically to 'register' purpose (Fix #11, #12, #14)
+    const otpResult = await consumeOtpAtomic(lowerEmail, cleanCode, 'register');
+    if (!otpResult.success) {
       const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
       otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
-      return res.status(400).json({ success: false, message: 'Invalid verification code.' });
+      return res.status(400).json({ success: false, message: 'Invalid, expired, or already-used registration verification code.' });
     }
 
-    // OTP verified — clear attempt counter & purge OTP
+    // Clear attempt counters
     otpAttempts.delete(lowerEmail);
-    await deleteOtp(lowerEmail);
 
     // Fix #1: Hash password with bcrypt before storing (10 salt rounds)
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -685,14 +812,12 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
            ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
           [lowerEmail, hashedPassword]
         );
-        await queryWithTimeout(`DELETE FROM otps WHERE email = $1`, [lowerEmail]).catch(() => {});
       } catch (dbErr) {
         console.error('[DB Error] User registration DB query failed:', dbErr.message);
         return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
       }
     } else {
       memoryUsers.set(lowerEmail, { password: hashedPassword, botToken: '', chatId: '', isLocked: false });
-      memoryOtps.delete(lowerEmail);
     }
 
     const token = generateUserToken(lowerEmail);
@@ -708,7 +833,7 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/auth/login (Aliases: /auth/login, /login)
  * Accepts: { email: string, password: string }
- * Returns user profile, JWT session token, and credentials.
+ * Returns user profile, JWT session token (botToken is strictly redacted - Fix #5).
  */
 app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) => {
   try {
@@ -727,7 +852,6 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
           user = {
             email: result.rows[0].email,
             password: result.rows[0].password_hash,
-            botToken: result.rows[0].bot_token,
             chatId: result.rows[0].chat_id,
             isLocked: result.rows[0].is_locked
           };
@@ -745,16 +869,11 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
     }
 
     // Fix #1: Use bcrypt.compare for hashed passwords
-    // Backward compatibility: if stored password is not a bcrypt hash (legacy plain text),
-    // fall back to direct comparison and re-hash on successful login
     let passwordValid = false;
     if (user.password && user.password.startsWith('$2')) {
-      // Stored password is a bcrypt hash
       passwordValid = await bcrypt.compare(password, user.password);
     } else {
-      // Legacy plain text password — compare directly
       passwordValid = (user.password === password);
-      // Auto-upgrade: re-hash the password for future logins
       if (passwordValid) {
         const upgraded = await bcrypt.hash(password, 10);
         if (pool) {
@@ -771,12 +890,12 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
     }
 
     const token = generateUserToken(user.email);
+    // Redact raw bot token from login response (Fix #5)
     return res.json({
       success: true,
       token,
       user: {
         email: user.email,
-        botToken: user.botToken || '',
         chatId: user.chatId || '',
         isLocked: user.isLocked || false
       }
@@ -791,16 +910,8 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
  * 6. API ROUTE: VERIFY RESET OTP & UPDATE PASSWORD (BULLETPROOF)
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/auth/reset-password (Aliases: /auth/reset-password, /reset-password, /verify-reset)
- *
- * NOTE: The old standalone /api/auth/request-reset handler has been REMOVED.
- * Password reset OTP is now sent exclusively via the unified /api/auth/send-otp route
- * (which already includes /api/auth/request-reset as an alias).
- *
- * This handler is COMPLETELY SELF-CONTAINED — every code path returns JSON.
- * It never calls next(err) to prevent Express from returning HTML error pages.
  */
 app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password', '/api/auth/verify-reset', '/auth/verify-reset', '/verify-reset'], async (req, res) => {
-  // Force JSON content-type on ALL responses from this handler
   res.setHeader('Content-Type', 'application/json');
   try {
     const { email, code, newPassword } = req.body || {};
@@ -818,37 +929,15 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
       return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${remainingMins} minutes.` });
     }
 
-    // Retrieve OTP from DB + memory
-    let otpRecord = null;
-    try {
-      otpRecord = await getLatestOtp(lowerEmail);
-    } catch (otpErr) {
-      console.error('[reset-password] getLatestOtp error:', otpErr.message);
-    }
-
-    if (!otpRecord) {
-      return res.status(400).json({ success: false, message: 'No verification code found. Please request a new OTP first.' });
-    }
-
-    const storedCode = otpRecord.code;
-    const expiresAt = otpRecord.expiresAt;
-
-    // Check expiration first
-    if (Date.now() > expiresAt) {
-      try { await deleteOtp(lowerEmail); } catch (_) {}
-      return res.status(400).json({ success: false, message: 'Verification code expired. Please request a new OTP.' });
-    }
-
-    // Check code match via constant-time verification
-    if (!verifyOTPCode(cleanCode, storedCode)) {
+    // Atomic validation & deletion bound specifically to 'reset' purpose (Fix #11, #12, #14)
+    const otpResult = await consumeOtpAtomic(lowerEmail, cleanCode, 'reset');
+    if (!otpResult.success) {
       const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
       otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
-      return res.status(400).json({ success: false, message: 'Invalid verification code. Please check your code and try again.' });
+      return res.status(400).json({ success: false, message: 'Invalid, expired, or already-used password reset verification code.' });
     }
 
-    // OTP verified — clear attempt counter & purge OTP
     otpAttempts.delete(lowerEmail);
-    try { await deleteOtp(lowerEmail); } catch (_) {}
 
     // Hash new password with bcrypt
     let hashedPassword;
@@ -867,7 +956,6 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
            ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
           [lowerEmail, hashedPassword]
         );
-        try { await queryWithTimeout(`DELETE FROM otps WHERE email = $1`, [lowerEmail]); } catch (_) {}
       } catch (dbErr) {
         console.error('[reset-password] DB update failed:', dbErr.message);
         return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
@@ -876,21 +964,13 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
       const u = memoryUsers.get(lowerEmail) || {};
       u.password = hashedPassword;
       memoryUsers.set(lowerEmail, u);
-      memoryOtps.delete(lowerEmail);
     }
 
     const token = generateUserToken(lowerEmail);
     return res.status(200).json({ success: true, token, message: 'Password reset successfully!' });
   } catch (err) {
-    // CATCH-ALL: Never let an error escape to Express's default HTML error handler
     console.error('[reset-password] UNCAUGHT ERROR:', err.message || err);
-    if (err.stack) console.error(err.stack);
-    try {
-      return res.status(500).json({ success: false, message: `Server error: ${err.message || 'An unexpected error occurred.'}` });
-    } catch (_) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, message: `Internal server error: ${err.message}` }));
-    }
+    return res.status(500).json({ success: false, message: `Server error: ${err.message || 'An unexpected error occurred.'}` });
   }
 });
 
@@ -899,15 +979,19 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
  * 8. API ROUTE: SAVE USER TELEGRAM CREDENTIALS
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/credentials/save (Aliases: /credentials/save, /api/user/credentials, /user/credentials)
- * Accepts: { email: string, botToken: string, chatId: string }
+ * Requires: Authorization: Bearer <token> (Fix #1, #2)
+ * Accepts: { botToken: string, chatId: string }
  */
-app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials', '/user/credentials'], async (req, res, next) => {
+app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials', '/user/credentials'], requireAuth, async (req, res, next) => {
   try {
-    const { email, botToken, chatId } = req.body || {};
-    const lowerEmail = (req.user?.email || email || '').toLowerCase().trim();
+    const { botToken, chatId } = req.body || {};
+    const lowerEmail = req.authenticatedEmail;
 
-    if (!lowerEmail || !lowerEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    if (!botToken || !chatId) {
+      return res.status(400).json({ success: false, message: 'botToken and chatId are required.' });
     }
 
     if (pool) {
@@ -935,14 +1019,14 @@ app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials',
 
 /**
  * Endpoint: GET /api/credentials/get (Aliases: /credentials/get, /api/user/credentials/get)
- * Accepts: query ?email=user@domain.com or Authorization: Bearer <token>
+ * Requires: Authorization: Bearer <token> (Fix #1, #2, #5)
  * Returns: { success: true, botToken: string, chatId: string }
  */
-app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'], async (req, res, next) => {
+app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'], requireAuth, async (req, res, next) => {
   try {
-    const email = (req.user?.email || (req.query && req.query.email) || '').toLowerCase().trim();
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Email query parameter or Bearer authorization is required.' });
+    const email = req.authenticatedEmail;
+    if (!email || !isValidEmail(email)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
     let botToken = '', chatId = '';
@@ -954,10 +1038,10 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
           chatId = result.rows[0].chat_id || '';
         }
       } catch (dbErr) {
-        console.error('[DB Warn] Get credentials DB query failed:', dbErr.message);
+        console.error('[DB Error] Get credentials DB query failed:', dbErr.message);
+        return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry.' });
       }
-    }
-    if (!botToken && memoryUsers.has(email)) {
+    } else if (memoryUsers.has(email)) {
       const u = memoryUsers.get(email);
       botToken = u.botToken || '';
       chatId = u.chatId || '';
@@ -974,14 +1058,15 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
  * 8b. API ROUTES: SAVE & FETCH USER APP SETTINGS JSON
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/user/settings (Aliases: /user/settings, /api/settings/save, /settings/save)
- * Accepts: { email: string, settings: string }
+ * Requires: Authorization: Bearer <token> (Fix #1, #2)
+ * Accepts: { settings: string }
  */
-app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settings/save'], async (req, res, next) => {
+app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settings/save'], requireAuth, async (req, res, next) => {
   try {
-    const { email, settings, manifest, data } = req.body || {};
-    const lowerEmail = (req.user?.email || email || '').toLowerCase().trim();
-    if (!lowerEmail || !lowerEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    const { settings, manifest, data } = req.body || {};
+    const lowerEmail = req.authenticatedEmail;
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
     const rawVal = manifest !== undefined ? manifest : (settings !== undefined ? settings : data);
     const settingsStr = typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal || {});
@@ -1021,14 +1106,14 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
 
 /**
  * Endpoint: GET /api/user/settings (Aliases: /user/settings, /api/settings/get, /settings/get)
- * Accepts: query ?email=user@domain.com or Authorization: Bearer <token>
+ * Requires: Authorization: Bearer <token> (Fix #1, #2)
  * Returns: { success: true, settings: string, manifest: string }
  */
-app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings/get'], async (req, res, next) => {
+app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings/get'], requireAuth, async (req, res, next) => {
   try {
-    const email = (req.user?.email || ((req.query && (req.query.email || req.query.userEmail)) || '')).toLowerCase().trim();
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    const email = req.authenticatedEmail;
+    if (!email || !isValidEmail(email)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
     let settings = null;
@@ -1044,7 +1129,8 @@ app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings
           }
         }
       } catch (dbErr) {
-        console.error('[DB Warn] Get settings query failed:', dbErr.message);
+        console.error('[DB Error] Get settings query failed:', dbErr.message);
+        return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry.' });
       }
     }
 
@@ -1065,19 +1151,23 @@ app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings
  * 9. API ROUTE: INDEX / SYNC BACKED UP FILE RECORD TO DATABASE
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/files/index (Aliases: /files/index, /api/files/backup, /files/backup)
- * Accepts: { email: string, fileName: string, telegramFileId: string, size: number, path: string, messageId: number }
+ * Requires: Authorization: Bearer <token> (Fix #1, #2)
+ * Accepts: { fileName: string, telegramFileId: string, size: number, path: string, messageId: number }
  */
-app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backup'], async (req, res, next) => {
+app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backup'], requireAuth, async (req, res, next) => {
   try {
     const {
-      email, fileName, telegramFileId, size, path, timestamp, messageId,
+      fileName, telegramFileId, size, path, timestamp, messageId,
       isDriveUpload, is_drive_upload,
       chunksJson, chunks_json, chunks,
       channelId, channel_id,
       botTokenUsed, bot_token_used,
       totalChunks, total_chunks
     } = req.body || {};
-    const lowerEmail = (req.user?.email || email || '').toLowerCase().trim();
+    const lowerEmail = req.authenticatedEmail;
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
     const msgId = parseInt(messageId, 10) || 0;
     const isDrive = Boolean(isDriveUpload || is_drive_upload || telegramFileId === 'DIR_MARKER');
 
@@ -1104,10 +1194,6 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
     const finalTotalChunks = parseInt(totalChunks || total_chunks || '1', 10) || 1;
     const safeSize = Math.max(0, parseInt(size, 10) || 0);
 
-    // Fix #4: Input validation — reject requests with missing critical fields
-    if (!lowerEmail || !lowerEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
-    }
     if (!fileName || !telegramFileId) {
       return res.status(400).json({ success: false, message: 'fileName and telegramFileId are required.' });
     }
@@ -1164,15 +1250,16 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
  * 9a. API ROUTE: BATCH FILE RECORDS INDEXING (High Performance)
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/files/index-batch (Aliases: /files/index-batch, /api/index-files-batch)
- * Accepts: { email: string, files: [ { fileName, telegramFileId, size, path, timestamp, messageId, isDriveUpload }, ... ] }
+ * Requires: Authorization: Bearer <token> (Fix #1, #2)
+ * Accepts: { files: [ { fileName, telegramFileId, size, path, timestamp, messageId, isDriveUpload }, ... ] }
  */
-app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batch'], async (req, res, next) => {
+app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batch'], requireAuth, async (req, res, next) => {
   try {
-    const { email, files } = req.body || {};
-    const lowerEmail = (req.user?.email || email || '').toLowerCase().trim();
+    const { files } = req.body || {};
+    const lowerEmail = req.authenticatedEmail;
 
-    if (!lowerEmail || !lowerEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
     if (!Array.isArray(files) || files.length === 0) {
@@ -1288,22 +1375,22 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
  * 9b. API ROUTE: DELETE FILE RECORD
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/files/delete (Aliases: /files/delete)
- * Accepts: { email: string, telegramFileId: string, path: string }
+ * Requires: Authorization: Bearer <token> (Fix #1, #7)
+ * Accepts: { telegramFileId: string, path: string }
  */
-app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
+app.post(['/api/files/delete', '/files/delete'], requireAuth, async (req, res, next) => {
   try {
-    const { email, telegramFileId, path } = req.body || {};
-    const lowerEmail = (req.user?.email || email || '').toLowerCase().trim();
+    const { telegramFileId, path } = req.body || {};
+    const lowerEmail = req.authenticatedEmail;
 
-    // Fix #7: Input validation — require valid email and at least one identifier
-    if (!lowerEmail || !lowerEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
     if (!telegramFileId && !path) {
       return res.status(400).json({ success: false, message: 'telegramFileId or path is required to identify the file.' });
     }
 
-    // Fix #7: Verify the file belongs to this email before deleting
+    // Verify the file belongs to this authenticated email before deleting
     if (pool) {
       try {
         await queryWithTimeout(
@@ -1331,16 +1418,17 @@ app.post(['/api/files/delete', '/files/delete'], async (req, res, next) => {
  * 9c. API ROUTE: PURGE DATA (Clear file records with custom filters while keeping account)
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/files/purge (Aliases: /files/purge)
- * Accepts: { email: string, mode: "ALL" | "DRIVE_ONLY" | "AUTO_BACKUP_ONLY" | "OLDER_THAN_DAYS", olderThanDays?: number }
+ * Requires: Authorization: Bearer <token> (Fix #1, #2)
+ * Accepts: { mode: "ALL" | "DRIVE_ONLY" | "AUTO_BACKUP_ONLY" | "OLDER_THAN_DAYS", olderThanDays?: number }
  */
-app.post(['/api/files/purge', '/files/purge'], async (req, res, next) => {
+app.post(['/api/files/purge', '/files/purge'], requireAuth, async (req, res, next) => {
   try {
-    const { email, mode, olderThanDays } = req.body || {};
-    const lowerEmail = (req.user?.email || email || '').toLowerCase().trim();
+    const { mode, olderThanDays } = req.body || {};
+    const lowerEmail = req.authenticatedEmail;
     const purgeMode = mode || 'ALL';
 
-    if (!lowerEmail || !lowerEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
     let queryText = 'WHERE email = $1';
@@ -1436,15 +1524,16 @@ app.post(['/api/files/purge', '/files/purge'], async (req, res, next) => {
  * 9d. API ROUTE: DELETE USER ACCOUNT AND ALL DATA PERMANENTLY (TRANSACTIONAL)
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/user/delete-account (Aliases: /user/delete-account)
- * Accepts: { email: string, password: string }
+ * Requires: Authorization: Bearer <token> (Fix #1, #2)
+ * Accepts: { password: string }
  */
-app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, next) => {
+app.post(['/api/user/delete-account', '/user/delete-account'], requireAuth, async (req, res, next) => {
   try {
-    const { email, password } = req.body || {};
-    const lowerEmail = (req.user?.email || email || '').toLowerCase().trim();
+    const { password } = req.body || {};
+    const lowerEmail = req.authenticatedEmail;
 
-    if (!lowerEmail || !lowerEmail.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    if (!lowerEmail || !isValidEmail(lowerEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
     if (!password) {
       return res.status(400).json({ success: false, message: 'Password is required to confirm account deletion.' });
@@ -1549,12 +1638,17 @@ app.post(['/api/user/delete-account', '/user/delete-account'], async (req, res, 
  * -------------------------------------------------------------------------------------
  * 10. API ROUTE: FETCH USER'S BACKED UP FILES LIST (With Delta Sync Support)
  * -------------------------------------------------------------------------------------
- * Endpoint: GET /api/files/list?email=user@example.com&since=1710000000 (Aliases: /files/list)
+ * Endpoint: GET /api/files/list?since=1710000000&limit=10000 (Aliases: /files/list)
+ * Requires: Authorization: Bearer <token> (Fix #1, #2, #5, #15, #17)
  */
-app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
+app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) => {
   try {
-    const email = (req.user?.email || req.query.email || '').toLowerCase().trim();
+    const email = req.authenticatedEmail;
+    if (!email || !isValidEmail(email)) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
     const since = parseInt(req.query.since || '0', 10) || 0;
+    const afterId = parseInt(req.query.afterId || '0', 10) || 0;
     const limit = Math.min(parseInt(req.query.limit || '10000', 10) || 10000, 20000);
 
     if (pool) {
@@ -1567,11 +1661,14 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
            FROM backed_files WHERE email = $1`;
         const params = [email];
 
-        if (since > 0) {
-          queryStr += ` AND timestamp > $2 ORDER BY timestamp DESC LIMIT $3`;
+        if (since > 0 && afterId > 0) {
+          queryStr += ` AND (timestamp > $2 OR (timestamp = $2 AND id > $3)) ORDER BY timestamp ASC, id ASC LIMIT $4`;
+          params.push(since, afterId, limit);
+        } else if (since > 0) {
+          queryStr += ` AND timestamp > $2 ORDER BY timestamp ASC, id ASC LIMIT $3`;
           params.push(since, limit);
         } else {
-          queryStr += ` ORDER BY timestamp DESC LIMIT $2`;
+          queryStr += ` ORDER BY timestamp DESC, id DESC LIMIT $2`;
           params.push(limit);
         }
 
@@ -1589,20 +1686,13 @@ app.get(['/api/files/list', '/files/list'], async (req, res, next) => {
         });
         return res.json({ success: true, files: sanitizedFiles, isDelta: since > 0 });
       } catch (dbErr) {
-        console.error('[DB Warn] Files list DB query failed:', dbErr.message);
-        let list = memoryFiles.get(email) || [];
-        if (since > 0) {
-          list = list.filter(f => f.timestamp > since);
-        }
-        const sanitizedMem = list.slice(0, limit).map(f => {
-          if (!f.timestamp || f.timestamp < 946684800000 || f.timestamp === 1784030400000) f.timestamp = Date.now();
-          if (!f.chunksJson) f.chunksJson = '[]';
-          f.channelId = f.channelId || '';
-          f.botTokenUsed = f.botTokenUsed || '';
-          f.totalChunks = f.totalChunks || 1;
-          return f;
+        console.error('[DB Error] Files list DB query failed:', dbErr.message);
+        // Fix #15: NEVER return empty success:true on DB failure, as this causes clients to wipe local files!
+        return res.status(503).json({
+          success: false,
+          retryable: true,
+          message: 'Database service unavailable. Please retry syncing.'
         });
-        return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });
       }
     } else {
       let list = memoryFiles.get(email) || [];
@@ -1907,10 +1997,12 @@ function escapeHtml(str) {
 const pinAttemptsMap = new Map();
 const memoryShareCache = new Map();
 
-// 256-bit server secret for encrypting sensitive share metadata
-const SERVER_SHARE_SECRET = crypto.createHash('sha256')
-  .update(process.env.DATABASE_URL || process.env.JWT_SECRET || 'TelegramBackupMasterShareSecret2026_SecureKey!')
-  .digest();
+// 256-bit cryptographically secure server secret for encrypting sensitive share metadata (Fix #20)
+const rawShareSecret = process.env.SHARE_SECRET || (process.env.DATABASE_URL ? crypto.createHmac('sha256', 'tspace-share-salt-2026').update(process.env.DATABASE_URL).digest('hex') : (process.env.JWT_SECRET ? crypto.createHmac('sha256', 'tspace-share-salt-2026').update(process.env.JWT_SECRET).digest('hex') : null));
+if (!rawShareSecret || rawShareSecret.length < 32) {
+  throw new Error('FATAL: SHARE_SECRET environment variable is missing or less than 32 characters');
+}
+const SERVER_SHARE_SECRET = crypto.createHash('sha256').update(rawShareSecret).digest();
 
 /**
  * Encrypts sensitive payload (botToken, encryptionKey, chunks) with AES-256-GCM.
@@ -1979,9 +2071,10 @@ async function getFreshTelegramUrl(botToken, fileId, retries = 3) {
 // In-memory cache for resolved Telegram CDN URLs (prevents 429 rate limits during multi-chunk downloads)
 const telegramCdnUrlCache = new Map(); // key: fileId, value: { url, expiresAt }
 
-// LRU chunk buffer cache (prevents duplicate network downloads across chunk boundaries)
-const chunkBufferCache = new Map(); // key: fileId, value: { buffer, accessedAt }
-const MAX_CHUNK_CACHE_ENTRIES = 24;
+// Byte-metered LRU chunk buffer cache (prevents duplicate network downloads & serverless OOM crashes, Fix #24)
+const chunkBufferCache = new Map(); // key: fileId, value: { buffer, byteLength, accessedAt }
+const MAX_CHUNK_CACHE_BYTES = 32 * 1024 * 1024; // 32 MB total RAM ceiling
+let totalChunkCacheBytes = 0;
 
 const MAGIC_HEADER = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]); // "ENC256\x01\x00"
 const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB chunk size matching FileChunker.kt
@@ -2050,8 +2143,10 @@ async function fetchChunkBuffer(chunk, shareData) {
 
   const arrayBuf = await res.arrayBuffer();
   const buffer = Buffer.from(arrayBuf);
+  const entryBytes = buffer.length;
 
-  if (chunkBufferCache.size >= MAX_CHUNK_CACHE_ENTRIES) {
+  // Evict LRU entries until new buffer fits within 32MB ceiling
+  while (totalChunkCacheBytes + entryBytes > MAX_CHUNK_CACHE_BYTES && chunkBufferCache.size > 0) {
     let oldestKey = null;
     let oldestTime = Infinity;
     for (const [k, v] of chunkBufferCache.entries()) {
@@ -2060,10 +2155,17 @@ async function fetchChunkBuffer(chunk, shareData) {
         oldestKey = k;
       }
     }
-    if (oldestKey) chunkBufferCache.delete(oldestKey);
+    if (oldestKey) {
+      const evicted = chunkBufferCache.get(oldestKey);
+      totalChunkCacheBytes -= (evicted?.byteLength || 0);
+      chunkBufferCache.delete(oldestKey);
+    } else {
+      break;
+    }
   }
 
-  chunkBufferCache.set(fileId, { buffer, accessedAt: Date.now() });
+  chunkBufferCache.set(fileId, { buffer, byteLength: entryBytes, accessedAt: Date.now() });
+  totalChunkCacheBytes += entryBytes;
   return buffer;
 }
 
@@ -2297,7 +2399,11 @@ async function handleShareCreate(req, res) {
     const parsedSize = parseInt(fileSize) || 0;
     const expiresAtVal = parseInt(expiresAt) || 0;
     const nowMs = Date.now();
-    const userEmail = (req.user?.email || req.body.email || '').toLowerCase().trim();
+    const userEmail = req.authenticatedEmail;
+
+    if (!userEmail || !isValidEmail(userEmail)) {
+      return res.status(401).json({ success: false, message: 'Authentication required to create share links.' });
+    }
 
     let normalizedChunks = Array.isArray(chunks) && chunks.length > 0
       ? chunks.map((c, i) => ({
@@ -3510,7 +3616,7 @@ async function handleShareChunk(req, res) {
 }
 
 // Register Sharing Engine API Routes
-app.post(['/api/share/create', '/share/create'], handleShareCreate);
+app.post(['/api/share/create', '/share/create'], requireAuth, handleShareCreate);
 app.get(['/api/share/download/:id', '/share/download/:id'], (req, res) => {
   req.query.download = '1';
   return handleShare(req, res);

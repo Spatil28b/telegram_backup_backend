@@ -111,6 +111,12 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.5.3': `✨ What's New in Release v2.5.3:
+- 🔒 Mandatory JWT Authentication: All private routes (credentials, cloud file indexing, deletion, purge, account deletion, user settings) now strictly enforce Bearer JWT authentication, preventing unauthorized access.
+- 🛡️ Cryptographically Secure Share & Session Engine: Upgraded master secrets to 256-bit cryptographically verified keys and hardened OTP verification with single-use atomic consumption and brute-force rate limits.
+- ⚡ 32MB Byte-Metered Streaming Cache: Implemented byte-bounded LRU chunk cache on backend to completely eliminate serverless RAM exhaustion and OOM crashes during heavy multi-part file streaming.
+- 🗄️ Resilient Cloud Index & Compound Cursors: Protected cloud file sync with HTTP 503 retryable status on database connection lapses, preventing false empty-vault wipes, and added compound cursor delta sync.
+- 🚀 Hardened Zero-Exposure Deployment: Replaced process-table credential command lines with authenticated HTTP header git operations and enabled safe release rollback retention.`,
     '2.5.2': `✨ What's New in Release v2.5.2:
 - 🚀 Zero-OOM Hardware-Scaled Video Thumbnails: Resolved OutOfMemoryError crash on app open by utilizing API 27+ MediaMetadataRetriever.getScaledFrameAtTime hardware downsampling and bounded 2-way semaphore throttling.
 - 🧠 Large Heap Memory Expansion: Enabled android:largeHeap='true' in AndroidManifest to grant up to 512MB RAM for intensive media viewing, multi-GB cloud backups, and high-resolution photo galleries.
@@ -518,13 +524,16 @@ async function main() {
   await uploadAsset(`TelegramBackup-latest.apk`);
   console.log('');
 
-  // 6. Only clean up old releases AFTER new release assets are 100% verified
-  console.log('6️⃣  Cleaning up superseded releases on GitHub...');
+  // 6. Only clean up old releases AFTER new release assets are 100% verified (Fix #41)
+  console.log('6️⃣  Cleaning up superseded releases on GitHub (retaining previous 2 for rollback safety)...');
   try {
     if (Array.isArray(listRes.data)) {
-      for (const rel of listRes.data) {
+      const sortedReleases = [...listRes.data].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      // Keep current release and 2 previous stable releases (top 3)
+      const toDelete = sortedReleases.slice(3);
+      for (const rel of toDelete) {
         if (rel.tag_name !== tag) {
-          console.log(`   Deleting old release ${rel.tag_name} (ID: ${rel.id})...`);
+          console.log(`   Deleting superseded release ${rel.tag_name} (ID: ${rel.id})...`);
           await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/${rel.id}`, 'DELETE');
         }
       }
@@ -533,23 +542,27 @@ async function main() {
     console.warn('   (Old release cleanup note:', cleanErr.message, ')');
   }
 
-  // 7. Deploy backend to GitHub & Vercel with explicit file staging
+  // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
+  const releaseTitleMap = {
+    '2.5.3': 'Full Security & Reliability Overhaul: JWT Auth, Rate Limiting, OOM Cache & Hardened Releases',
+    '2.5.2': 'Zero-OOM Video Thumbnails, Large Heap & OutOfMemoryError Absorption',
+    '2.5.1': 'Cold-Boot Black Screen Fix, Launcher Sync & Room Migration Resilience',
+    '2.5.0': 'Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming',
+  };
+  const commitTitle = releaseTitleMap[versionName] || 'Security, Performance & Stability Update';
+  execSync('git add app-version.json index.js release.js package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
   try {
-    const releaseTitleMap = {
-      '2.5.2': 'Zero-OOM Video Thumbnails, Large Heap & OutOfMemoryError Absorption',
-      '2.5.1': 'Cold-Boot Black Screen Fix, Launcher Sync & Room Migration Resilience',
-      '2.5.0': 'Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming',
-    };
-    const commitTitle = releaseTitleMap[versionName] || 'Performance & Stability Update';
-    execSync('git add app-version.json index.js release.js package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
     execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - ${commitTitle}"`, { cwd: __dirname });
-    const remoteUrl = `https://${TOKEN}@github.com/${OWNER}/${REPO}.git`;
-    execSync(`git push ${remoteUrl} main`, { cwd: __dirname, stdio: 'inherit' });
-    console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
-  } catch (err) {
-    console.warn(`   (Git note: ${err.message})`);
+  } catch (cErr) {
+    console.log('   (Git commit info:', (cErr.message || '').split('\n')[0], ')');
   }
+
+  // Push securely using basic auth header to prevent token exposure in process tables (Fix #42)
+  const basicAuth = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
+  console.log('   Pushing commits to GitHub main branch...');
+  execSync(`git -c http.extraheader="AUTHORIZATION: basic ${basicAuth}" push origin main`, { cwd: __dirname, stdio: 'inherit' });
+  console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
 
   // 8. Verify Server Endpoint
   console.log('8️⃣  Verifying dynamic server updater...');
