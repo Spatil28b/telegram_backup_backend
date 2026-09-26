@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 132,
-  "versionName": "2.4.8",
+  "versionCode": 133,
+  "versionName": "2.4.9",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.4.8:\n- 🛠️ Local Storage Crash Guard: Safe path canonicalization and async directory scanning eliminate crash when opening Local Storage on Android 11+.\n- ⚡ 0ms Instant Browse Navigation: In-memory volatile caching for Starred & Safe Vault preferences removes heavy disk I/O and freezes when entering Browse.\n- 🪪 Advanced ID Card Recognition: Deep pattern matching for Student/College IDs, Employee Badges, Aadhaar (UIDAI), Voter IDs, and Driving Licenses with signature and field validation.\n- 🏥 Medical Prescription & Clinical Note Detection: High-precision detection for doctor consultation slips, clinic notes, Rx pads, dosage instructions, and hospital memos.\n- 🏛️ College & Building/Society Search: Normalized campus and residential society / apartment complex recognition via ML Kit OCR and Gemini Vision.\n- 🤖 Google Photos-Grade 640px Vision: Upgraded candidate resolution to 640px @ 80% JPEG with 48-candidate pool and persistent local tag caching."
+  "releaseNotes": "✨ What's New in Release v2.4.9:\n- 🚀 Performance improvements & memory optimizations\n- ⚡ Faster chunk uploading with multi-bot fleet\n- 🛡️ Stability fixes & enhanced cloud sync"
 }
