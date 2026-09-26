@@ -25,6 +25,9 @@ try {
 } catch {}
 const { execSync } = require('child_process');
 
+try { require('dotenv').config({ path: path.join(__dirname, '.env') }); } catch {}
+try { require('dotenv').config({ path: path.join(__dirname, '.env.local') }); } catch {}
+
 const TOKEN = process.env.GITHUB_TOKEN;
 if (!TOKEN) {
   console.error('❌ GITHUB_TOKEN environment variable is not configured. Please set GITHUB_TOKEN before running release.');
@@ -108,6 +111,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.5.1': `✨ What's New in Release v2.5.1:
+- ⚡ Instant Cold-Boot Launch Resolution: Overhauled AppCrashShield with looper-level message pumping and crash-loop guards, eliminating the startup black screen caused by infinite restart loops and dead main loopers.
+- 📱 Launcher Alias Synchronization: Added automatic launcher activity-alias synchronization during boot and app updates, ensuring the launcher icon stays active regardless of which theme icon was chosen.
+- 🗄️ Fail-Safe Room DB Auto-Healing: Added runtime PRAGMA column checks for chunk progress and cloud metadata with destructive fallback safety, preventing startup crashes from legacy schema mismatches.
+- 🛡️ Clean Display Frame Compositing: Deferred window security flags until after Compose window initialization, preventing display surface drops and blank black frames during cold startup.`,
     '2.5.0': `✨ What's New in Release v2.5.0:
 - 🛡️ Zero-Crash App Crash Shield: Global application-level crash shield intercepts uncaught coroutine and thread errors, suppresses OEM window manager crashes, and safely recovers the user session.
 - 🖼️ Jetpack Compose Media Viewer Hardening: Resolved slot table memoization glitches in media dialogs, added 256KB safe text reader limits, and removed unsafe manual bitmap recycling.
@@ -522,8 +530,13 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   try {
+    const releaseTitleMap = {
+      '2.5.1': 'Cold-Boot Black Screen Fix, Launcher Sync & Room Migration Resilience',
+      '2.5.0': 'Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming',
+    };
+    const commitTitle = releaseTitleMap[versionName] || 'Performance & Stability Update';
     execSync('git add app-version.json index.js release.js package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - ${commitTitle}"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {
