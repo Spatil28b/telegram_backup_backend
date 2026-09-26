@@ -37,6 +37,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// Middleware: Structured Performance & Observability Tracking
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    if (req.path.startsWith('/favicon') || req.path.startsWith('/static')) return;
+    const userHash = req.authenticatedEmail
+      ? crypto.createHash('sha256').update(req.authenticatedEmail).digest('hex').slice(0, 10)
+      : 'anon';
+    console.log(`[API Metric] id=${req.id} u=${userHash} ${req.method} ${req.path} -> ${res.statusCode} in ${duration}ms`);
+  });
+  next();
+});
+
 // Middleware: Enable Cross-Origin Resource Sharing with Origin Whitelist (Fix #4)
 const ALLOWED_ORIGINS = new Set([
   'https://telegram-backup-backend.vercel.app',
@@ -1654,6 +1668,17 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
     const since = parseInt(req.query.since || '0', 10) || 0;
     const afterId = parseInt(req.query.afterId || '0', 10) || 0;
     const limit = Math.min(parseInt(req.query.limit || '10000', 10) || 10000, 20000);
+    const cursor = req.query.cursor ? String(req.query.cursor).trim() : null;
+    let cursorTs = 0;
+    let cursorId = 0;
+    if (cursor) {
+      try {
+        const decoded = Buffer.from(cursor, 'base64').toString('utf8');
+        const [tsPart, idPart] = decoded.split(':');
+        cursorTs = parseInt(tsPart, 10) || 0;
+        cursorId = parseInt(idPart, 10) || 0;
+      } catch (_) {}
+    }
 
     if (pool) {
       try {
@@ -1665,7 +1690,10 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
            FROM backed_files WHERE email = $1`;
         const params = [email];
 
-        if (since > 0 && afterId > 0) {
+        if (cursorTs > 0 && cursorId > 0) {
+          queryStr += ` AND (timestamp < $2 OR (timestamp = $2 AND id < $3)) ORDER BY timestamp DESC, id DESC LIMIT $4`;
+          params.push(cursorTs, cursorId, limit);
+        } else if (since > 0 && afterId > 0) {
           queryStr += ` AND (timestamp > $2 OR (timestamp = $2 AND id > $3)) ORDER BY timestamp ASC, id ASC LIMIT $4`;
           params.push(since, afterId, limit);
         } else if (since > 0) {
@@ -1688,7 +1716,14 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
           row.totalChunks = parseInt(row.totalChunks, 10) || 1;
           return row;
         });
-        return res.json({ success: true, files: sanitizedFiles, isDelta: since > 0 });
+
+        let nextCursor = null;
+        if (sanitizedFiles.length === limit && sanitizedFiles.length > 0) {
+          const last = sanitizedFiles[sanitizedFiles.length - 1];
+          nextCursor = Buffer.from(`${last.timestamp}:${last.id}`).toString('base64');
+        }
+
+        return res.json({ success: true, files: sanitizedFiles, nextCursor, isDelta: since > 0 });
       } catch (dbErr) {
         console.error('[DB Error] Files list DB query failed:', dbErr.message);
         // Fix #15: NEVER return empty success:true on DB failure, as this causes clients to wipe local files!
@@ -1711,7 +1746,239 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
         f.totalChunks = f.totalChunks || 1;
         return f;
       });
-      return res.json({ success: true, files: sanitizedMem, isDelta: since > 0 });
+      return res.json({ success: true, files: sanitizedMem, nextCursor: null, isDelta: since > 0 });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
+ * 10a. API ROUTE: SAVE / UPDATE SINGLE CHUNK METADATA (Idempotent Resumable Uploads)
+ * -------------------------------------------------------------------------------------
+ * Endpoint: POST /api/files/chunk (Aliases: /files/chunk, /api/files/:fileId/chunks)
+ * Requires: Authorization: Bearer <token>
+ * Accepts: { fileId, chunkIndex, totalChunks, telegramFileId, messageId, chunkSize, sha256, botId, status }
+ */
+app.post(['/api/files/chunk', '/files/chunk', '/api/files/:fileId/chunks'], requireAuth, async (req, res, next) => {
+  try {
+    const email = req.authenticatedEmail;
+    const body = req.body || {};
+    const fileId = parseInt(req.params.fileId || body.fileId, 10);
+    const chunkIndex = parseInt(body.chunkIndex, 10);
+    const totalChunks = parseInt(body.totalChunks, 10) || 1;
+    const telegramFileId = String(body.telegramFileId || '').trim();
+    const messageId = parseInt(body.messageId || '0', 10) || 0;
+    const chunkSize = Math.max(0, parseInt(body.chunkSize || '0', 10) || 0);
+    const sha256 = String(body.sha256 || '').trim().toLowerCase();
+    const botId = String(body.botId || '').trim();
+    const status = String(body.status || 'COMPLETED').trim().toUpperCase();
+
+    if (isNaN(fileId) || fileId <= 0 || isNaN(chunkIndex) || chunkIndex <= 0 || !telegramFileId) {
+      return res.status(400).json({ success: false, message: 'Valid fileId, chunkIndex (> 0), and telegramFileId are required.' });
+    }
+
+    if (pool) {
+      try {
+        // Verify file ownership
+        const ownerCheck = await queryWithTimeout(`SELECT id FROM backed_files WHERE id = $1 AND email = $2`, [fileId, email]);
+        if (ownerCheck.rows.length === 0) {
+          return res.status(404).json({ success: false, message: 'File not found or unauthorized.' });
+        }
+
+        await queryWithTimeout(`
+          INSERT INTO file_chunks (file_id, chunk_index, telegram_file_id, message_id, bot_id, chunk_size, sha256, status, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+          ON CONFLICT (file_id, chunk_index) DO UPDATE SET
+            telegram_file_id = EXCLUDED.telegram_file_id,
+            message_id = EXCLUDED.message_id,
+            bot_id = EXCLUDED.bot_id,
+            chunk_size = EXCLUDED.chunk_size,
+            sha256 = CASE WHEN EXCLUDED.sha256 <> '' THEN EXCLUDED.sha256 ELSE file_chunks.sha256 END,
+            status = EXCLUDED.status,
+            updated_at = NOW()
+        `, [fileId, chunkIndex, telegramFileId, messageId, botId, chunkSize, sha256, status]);
+
+        return res.json({ success: true, message: `Chunk ${chunkIndex} recorded successfully.` });
+      } catch (dbErr) {
+        console.error('[DB Error] Chunk record failed:', dbErr.message);
+        return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry recording chunk.' });
+      }
+    } else {
+      return res.json({ success: true, message: `Chunk ${chunkIndex} recorded in memory.` });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
+ * 10b. API ROUTE: FETCH FILE MANIFEST & CHUNKS
+ * -------------------------------------------------------------------------------------
+ * Endpoint: GET /api/files/:fileId/manifest (Aliases: /files/:fileId/manifest, /api/files/manifest)
+ * Requires: Authorization: Bearer <token>
+ */
+app.get(['/api/files/:fileId/manifest', '/files/:fileId/manifest', '/api/files/manifest', '/files/manifest'], requireAuth, async (req, res, next) => {
+  try {
+    const email = req.authenticatedEmail;
+    const fileIdParam = req.params.fileId || req.query.fileId || req.query.id;
+    const fileId = parseInt(fileIdParam, 10);
+    const pathParam = req.query.path ? String(req.query.path).trim() : null;
+
+    if (pool) {
+      try {
+        let fileRow = null;
+        if (!isNaN(fileId) && fileId > 0) {
+          const resFile = await queryWithTimeout(
+            `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, total_chunks as "totalChunks", chunks_json as "chunksJson"
+             FROM backed_files WHERE id = $1 AND email = $2`,
+            [fileId, email]
+          );
+          if (resFile.rows.length > 0) fileRow = resFile.rows[0];
+        } else if (pathParam) {
+          const resFile = await queryWithTimeout(
+            `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, total_chunks as "totalChunks", chunks_json as "chunksJson"
+             FROM backed_files WHERE path = $1 AND email = $2 LIMIT 1`,
+            [pathParam, email]
+          );
+          if (resFile.rows.length > 0) fileRow = resFile.rows[0];
+        }
+
+        if (!fileRow) {
+          return res.status(404).json({ success: false, message: 'File not found.' });
+        }
+
+        // Fetch discrete chunks from file_chunks table
+        const chunksRes = await queryWithTimeout(
+          `SELECT chunk_index as "chunkIndex", telegram_file_id as "telegramFileId", message_id as "messageId", bot_id as "botId", chunk_size as "chunkSize", sha256, status
+           FROM file_chunks WHERE file_id = $1 ORDER BY chunk_index ASC`,
+          [fileRow.id]
+        );
+
+        let chunks = chunksRes.rows || [];
+        // Fallback to legacy chunks_json if file_chunks table is empty for this file
+        if (chunks.length === 0 && fileRow.chunksJson && fileRow.chunksJson !== '[]') {
+          try {
+            const parsed = typeof fileRow.chunksJson === 'string' ? JSON.parse(fileRow.chunksJson) : fileRow.chunksJson;
+            if (Array.isArray(parsed)) {
+              chunks = parsed.map(c => ({
+                chunkIndex: c.chunkIndex || c.index || c.part || 1,
+                telegramFileId: c.telegramFileId || c.fileId || '',
+                messageId: c.messageId || c.msgId || 0,
+                botId: c.botToken || c.botId || '',
+                chunkSize: c.size || c.chunkSize || 0,
+                sha256: c.sha256 || '',
+                status: 'COMPLETED'
+              }));
+            }
+          } catch (_) {}
+        }
+
+        return res.json({
+          success: true,
+          file: {
+            id: fileRow.id,
+            fileName: fileRow.fileName,
+            telegramFileId: fileRow.telegramFileId,
+            size: fileRow.size,
+            path: fileRow.path,
+            timestamp: fileRow.timestamp,
+            totalChunks: fileRow.totalChunks || 1
+          },
+          chunks,
+          totalChunks: fileRow.totalChunks || 1,
+          completedCount: chunks.length
+        });
+      } catch (dbErr) {
+        console.error('[DB Error] File manifest query failed:', dbErr.message);
+        return res.status(503).json({ success: false, message: 'Database service unavailable.' });
+      }
+    } else {
+      return res.status(503).json({ success: false, message: 'Database unavailable.' });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
+ * 10c. API ROUTE: FETCH MISSING CHUNKS FOR RESUMABLE UPLOADS
+ * -------------------------------------------------------------------------------------
+ * Endpoint: GET /api/files/:fileId/missing-chunks (Aliases: /files/:fileId/missing-chunks, /api/files/missing-chunks)
+ * Requires: Authorization: Bearer <token>
+ */
+app.get(['/api/files/:fileId/missing-chunks', '/files/:fileId/missing-chunks', '/api/files/missing-chunks', '/files/missing-chunks'], requireAuth, async (req, res, next) => {
+  try {
+    const email = req.authenticatedEmail;
+    const fileIdParam = req.params.fileId || req.query.fileId || req.query.id;
+    const fileId = parseInt(fileIdParam, 10);
+    const pathParam = req.query.path ? String(req.query.path).trim() : null;
+
+    if (pool) {
+      try {
+        let fileRow = null;
+        if (!isNaN(fileId) && fileId > 0) {
+          const resFile = await queryWithTimeout(
+            `SELECT id, total_chunks as "totalChunks", chunks_json as "chunksJson" FROM backed_files WHERE id = $1 AND email = $2`,
+            [fileId, email]
+          );
+          if (resFile.rows.length > 0) fileRow = resFile.rows[0];
+        } else if (pathParam) {
+          const resFile = await queryWithTimeout(
+            `SELECT id, total_chunks as "totalChunks", chunks_json as "chunksJson" FROM backed_files WHERE path = $1 AND email = $2 LIMIT 1`,
+            [pathParam, email]
+          );
+          if (resFile.rows.length > 0) fileRow = resFile.rows[0];
+        }
+
+        if (!fileRow) {
+          return res.status(404).json({ success: false, message: 'File not found.' });
+        }
+
+        const totalChunks = Math.max(1, parseInt(fileRow.totalChunks, 10) || 1);
+        const existingChunksRes = await queryWithTimeout(
+          `SELECT chunk_index FROM file_chunks WHERE file_id = $1 AND status = 'COMPLETED'`,
+          [fileRow.id]
+        );
+
+        const completedSet = new Set(existingChunksRes.rows.map(r => parseInt(r.chunk_index, 10)));
+        if (completedSet.size === 0 && fileRow.chunksJson && fileRow.chunksJson !== '[]') {
+          try {
+            const parsed = typeof fileRow.chunksJson === 'string' ? JSON.parse(fileRow.chunksJson) : fileRow.chunksJson;
+            if (Array.isArray(parsed)) {
+              for (const c of parsed) {
+                const idx = parseInt(c.chunkIndex || c.index || c.part, 10);
+                if (!isNaN(idx) && idx > 0) completedSet.add(idx);
+              }
+            }
+          } catch (_) {}
+        }
+
+        const missing = [];
+        for (let i = 1; i <= totalChunks; i++) {
+          if (!completedSet.has(i)) {
+            missing.push(i);
+          }
+        }
+
+        return res.json({
+          success: true,
+          fileId: fileRow.id,
+          totalChunks,
+          completedCount: completedSet.size,
+          missingCount: missing.length,
+          missingChunks: missing,
+          isComplete: missing.length === 0
+        });
+      } catch (dbErr) {
+        console.error('[DB Error] Missing chunks query failed:', dbErr.message);
+        return res.status(503).json({ success: false, message: 'Database service unavailable.' });
+      }
+    } else {
+      return res.status(503).json({ success: false, message: 'Database unavailable.' });
     }
   } catch (err) {
     next(err);

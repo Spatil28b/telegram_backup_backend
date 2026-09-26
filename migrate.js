@@ -102,6 +102,9 @@ async function runMigrations() {
 
       ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT '';
       ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT '';
+
+      ALTER TABLE file_chunks ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'COMPLETED';
+      ALTER TABLE file_chunks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
     `);
     console.log('   ✓ Columns verified.');
 
