@@ -111,6 +111,12 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.0': `✨ What's New in Major Release v2.6.0:
+- ⚡ Direct High-Speed Telegram Architecture: Android app streams file chunks directly to and from Telegram Bot API and CDN, eliminating serverless proxy latency and keeping raw file bytes completely off Vercel.
+- 🚀 Vercel Fluid Compute & Standalone Migrations: Enabled Vercel Fluid Compute with 300s execution duration and decoupled database DDL migrations into a standalone deployment engine, reducing cold-start latency to near-instant.
+- 🔄 Bounded Channel Concurrency & Backpressure: Replaced unbounded coroutine mapping with bounded 4–12 worker Channel pools for uploads and downloads, eliminating RAM spikes, coroutine exhaustion, and disk contention.
+- 🤖 Dynamic Least-Connections Bot Load Balancer: Bot fleet manager dynamically load-balances chunk transfers to bots with fewest active requests and isolates HTTP 429 rate-limited bots into automatic cooldown.
+- 🗄️ Idempotent file_chunks & Resume Manifests: Added dedicated file_chunks table with ON CONFLICT DO UPDATE upserts, fast manifest verification endpoints, and composite cursor-based delta pagination.`,
     '2.5.3': `✨ What's New in Release v2.5.3:
 - 🔒 Mandatory JWT Authentication: All private routes (credentials, cloud file indexing, deletion, purge, account deletion, user settings) now strictly enforce Bearer JWT authentication, preventing unauthorized access.
 - 🛡️ Cryptographically Secure Share & Session Engine: Upgraded master secrets to 256-bit cryptographically verified keys and hardened OTP verification with single-use atomic consumption and brute-force rate limits.
@@ -554,6 +560,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.0': 'Major Architecture Overhaul: Direct Bot Streaming, Fluid Compute, Bounded Channels & Load Balancer',
     '2.5.3': 'Full Security & Reliability Overhaul: JWT Auth, Rate Limiting, OOM Cache & Hardened Releases',
     '2.5.2': 'Zero-OOM Video Thumbnails, Large Heap & OutOfMemoryError Absorption',
     '2.5.1': 'Cold-Boot Black Screen Fix, Launcher Sync & Room Migration Resilience',
