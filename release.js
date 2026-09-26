@@ -104,6 +104,13 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.5.0': `✨ What's New in Release v2.5.0:
+- 🛡️ Zero-Crash App Crash Shield: Global application-level crash shield intercepts uncaught coroutine and thread errors, suppresses OEM window manager crashes, and safely recovers the user session.
+- 🖼️ Jetpack Compose Media Viewer Hardening: Resolved slot table memoization glitches in media dialogs, added 256KB safe text reader limits, and removed unsafe manual bitmap recycling.
+- 📁 Literal Substring Folder Renaming: Replaced regex parsing with literal prefix substitution, eliminating PatternSyntaxException and corrupted file paths when renaming folders with brackets or dots.
+- 🗄️ Room DB Multi-Version Migration Resilience: Added explicit database migrations from older schemas (v2, v3, v4, v5 to v12) with safe fallback to guarantee zero startup crashes for updating users.
+- 📦 Scoped Storage Safe ZIP Downloader: Hardened both Monthly and Folder ZIP archivers with guaranteed stream closure in finally blocks and app-private Scoped Storage fallbacks.
+- 🎵 Media Player Concurrency & Slider Guards: Added job cancellation on track switches, safe seekbar range clamping, and lifecycle-aware playback state.`,
     '2.4.8': `✨ What's New in Release v2.4.8:
 - 🛠️ Local Storage Crash Guard: Safe path canonicalization and async directory scanning eliminate crash when opening Local Storage on Android 11+.
 - ⚡ 0ms Instant Browse Navigation: In-memory volatile caching for Starred & Safe Vault preferences removes heavy disk I/O and freezes when entering Browse.
@@ -447,21 +454,34 @@ async function main() {
   // 5. Upload APK Assets with robust Node.js stream
   console.log('5️⃣  Uploading Release Binaries...');
   async function uploadAsset(assetName) {
-    if (existingRelease && Array.isArray(existingRelease.assets)) {
-      const match = existingRelease.assets.find(a => a.name === assetName);
-      if (match) {
-        console.log(`   Removing previous asset ${assetName} (ID: ${match.id})...`);
-        await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/assets/${match.id}`, 'DELETE');
-      }
-    }
     const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
-    console.log(`   Uploading ${assetName} (${apkSizeMB} MB)...`);
-    try {
-      const curlTarget = APK_SRC.replace(/\\/g, '/');
-      execSync(`curl.exe -s -S -w "\\nHTTP_STATUS:%{http_code}\\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`, { stdio: 'inherit' });
-      console.log(`   ✓ ${assetName} uploaded successfully!`);
-    } catch (e) {
-      throw new Error(`Failed to upload ${assetName}: ${e.message}`);
+    const curlTarget = APK_SRC.replace(/\\/g, '/');
+
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const currentAssetsRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets`);
+        if (Array.isArray(currentAssetsRes.data)) {
+          const match = currentAssetsRes.data.find(a => a.name === assetName);
+          if (match) {
+            console.log(`   Removing previous/partial asset ${assetName} (ID: ${match.id})...`);
+            await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/assets/${match.id}`, 'DELETE');
+            await new Promise(r => setTimeout(r, 1500));
+          }
+        }
+
+        console.log(`   Uploading ${assetName} (${apkSizeMB} MB) [Attempt ${attempt}/4]...`);
+        execSync(`curl.exe -s -S --http1.1 --retry 3 --retry-delay 2 -w "\\nHTTP_STATUS:%{http_code}\\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`, { stdio: 'inherit' });
+        console.log(`   ✓ ${assetName} uploaded successfully!`);
+        return;
+      } catch (e) {
+        console.warn(`   ⚠️ Upload attempt ${attempt} for ${assetName} failed: ${e.message}`);
+        if (attempt < 4) {
+          console.log(`   Retrying in 3s...`);
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          throw new Error(`Failed to upload ${assetName} after 4 attempts: ${e.message}`);
+        }
+      }
     }
   }
 
@@ -473,7 +493,7 @@ async function main() {
   console.log('6️⃣  Deploying backend updates to GitHub repository...');
   try {
     execSync('git add .', { cwd: __dirname });
-    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Local Storage Crash Guard, 0ms Browse Lag, ID & Prescription AI Search"`, { cwd: __dirname });
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming"`, { cwd: __dirname });
     execSync('git push origin main', { cwd: __dirname, stdio: 'inherit' });
     console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
   } catch (err) {

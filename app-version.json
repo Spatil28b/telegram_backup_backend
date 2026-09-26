@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 133,
-  "versionName": "2.4.9",
+  "versionCode": 134,
+  "versionName": "2.5.0",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.4.9:\n- 🚀 Performance improvements & memory optimizations\n- ⚡ Faster chunk uploading with multi-bot fleet\n- 🛡️ Stability fixes & enhanced cloud sync"
+  "releaseNotes": "✨ What's New in Release v2.5.0:\n- 🛡️ Zero-Crash App Crash Shield: Global application-level crash shield intercepts uncaught coroutine and thread errors, suppresses OEM window manager crashes, and safely recovers the user session.\n- 🖼️ Jetpack Compose Media Viewer Hardening: Resolved slot table memoization glitches in media dialogs, added 256KB safe text reader limits, and removed unsafe manual bitmap recycling.\n- 📁 Literal Substring Folder Renaming: Replaced regex parsing with literal prefix substitution, eliminating PatternSyntaxException and corrupted file paths when renaming folders with brackets or dots.\n- 🗄️ Room DB Multi-Version Migration Resilience: Added explicit database migrations from older schemas (v2, v3, v4, v5 to v12) with safe fallback to guarantee zero startup crashes for updating users.\n- 📦 Scoped Storage Safe ZIP Downloader: Hardened both Monthly and Folder ZIP archivers with guaranteed stream closure in finally blocks and app-private Scoped Storage fallbacks.\n- 🎵 Media Player Concurrency & Slider Guards: Added job cancellation on track switches, safe seekbar range clamping, and lifecycle-aware playback state."
 }
