@@ -84,8 +84,75 @@ app.use(cors({
   credentials: true
 }));
 
-// Middleware: Parse Incoming JSON Request Payloads with safe 256KB default limit (Fix #48)
+// Middleware: Parse Incoming JSON and Form-Urlencoded Request Payloads with safe 256KB default limit
 app.use(express.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: true, limit: '256kb' }));
+
+/**
+ * Sanitizes bot token to strip secret token parts during indexing, keeping only safe bot identifier.
+ */
+function sanitizeBotIdentifier(token) {
+  if (!token) return '';
+  const clean = String(token).trim();
+  const colonIdx = clean.indexOf(':');
+  if (colonIdx > 0 && /^\d+$/.test(clean.substring(0, colonIdx))) {
+    return clean.substring(0, colonIdx);
+  }
+  return clean;
+}
+
+/**
+ * Sanitizes bot tokens inside chunks_json metadata array before persisting.
+ */
+function sanitizeChunksJson(chunksJsonStr) {
+  try {
+    const list = JSON.parse(chunksJsonStr);
+    if (!Array.isArray(list)) return '[]';
+    for (const item of list) {
+      if (item && item.botTokenUsed) {
+        item.botTokenUsed = sanitizeBotIdentifier(item.botTokenUsed);
+      }
+    }
+    return JSON.stringify(list);
+  } catch (_) {
+    return chunksJsonStr;
+  }
+}
+
+/**
+ * Parses HTTP request cookies into key-value map.
+ */
+function parseCookies(req) {
+  const header = req.headers && req.headers.cookie;
+  if (!header) return {};
+  const list = {};
+  header.split(';').forEach(cookie => {
+    const parts = cookie.split('=');
+    if (parts.length >= 2) {
+      list[parts[0].trim()] = decodeURIComponent(parts.slice(1).join('=').trim());
+    }
+  });
+  return list;
+}
+
+/**
+ * Derives a secure HMAC-SHA256 session token for an unlocked file share.
+ */
+function getShareSessionToken(shareId, pinHash) {
+  return crypto.createHmac('sha256', JWT_SECRET).update(`${shareId}:${pinHash}`).digest('hex');
+}
+
+/**
+ * Validates whether the incoming request has a valid, unexpired share session token via cookie or header.
+ */
+function isShareSessionAuthorized(req, shareId, pinHash) {
+  if (!pinHash) return true;
+  const expected = getShareSessionToken(shareId, pinHash);
+  const cookies = parseCookies(req);
+  if (cookies[`share_auth_${shareId}`] === expected) return true;
+  if (req.headers && req.headers['x-share-session'] === expected) return true;
+  return false;
+}
 
 /**
  * Validates and normalizes email input with strict RFC-compliant regex and length constraints.
@@ -234,7 +301,12 @@ if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL) {
 }
 
 const pool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000, idleTimeoutMillis: 15000 })
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      connectionTimeoutMillis: 8000,
+      idleTimeoutMillis: 15000,
+      statement_timeout: 8000
+    })
   : null;
 
 if (pool) {
@@ -245,8 +317,9 @@ if (pool) {
 }
 
 /**
- * Executes a PostgreSQL query with a resilient timeout (default 8 seconds) and automatic 1x retry
- * strictly on idempotent (SELECT) queries during transient connection reset/wake-up errors.
+ * Executes a PostgreSQL query with an active database statement timeout (default 8 seconds)
+ * and automatic 1x retry strictly on idempotent (SELECT) queries during transient connection reset/wake-up errors.
+ * Ensures PostgreSQL actively aborts timed-out queries at the engine level to prevent orphaned operations.
  */
 async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) {
   if (!pool) throw new Error('Database pool is disabled or null');
@@ -254,17 +327,24 @@ async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) 
   const isIdempotent = typeof text === 'string' && text.trim().toUpperCase().startsWith('SELECT');
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let timerId = null;
     try {
-      return await Promise.race([
-        pool.query(text, params),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Database query timed out after ${timeoutMs}ms`)), timeoutMs)
-        )
-      ]);
+      const queryObj = typeof text === 'string'
+        ? { text, values: params, statement_timeout: timeoutMs }
+        : { ...text, statement_timeout: timeoutMs };
+
+      const queryPromise = pool.query(queryObj);
+      const timeoutPromise = new Promise((_, reject) => {
+        timerId = setTimeout(() => reject(new Error(`Database query timed out after ${timeoutMs}ms`)), timeoutMs);
+      });
+
+      return await Promise.race([queryPromise, timeoutPromise]);
     } catch (err) {
       lastErr = err;
       const isTransient = err.message && (
         err.message.includes('timed out') ||
+        err.message.includes('statement timeout') ||
+        err.message.includes('57014') ||
         err.message.includes('Connection terminated') ||
         err.message.includes('WebSocket') ||
         err.message.includes('ECONNRESET') ||
@@ -276,6 +356,8 @@ async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) 
         continue;
       }
       throw err;
+    } finally {
+      if (timerId) clearTimeout(timerId);
     }
   }
   throw lastErr;
@@ -1107,7 +1189,8 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       finalChunksJson = JSON.stringify(chunks);
     }
     const finalChannelId = String(channelId || channel_id || '').trim();
-    const finalBotToken = String(botTokenUsed || bot_token_used || '').trim();
+    const finalBotToken = sanitizeBotIdentifier(String(botTokenUsed || bot_token_used || '').trim());
+    finalChunksJson = sanitizeChunksJson(finalChunksJson);
     const finalTotalChunks = parseInt(totalChunks || total_chunks || '1', 10) || 1;
     const safeSize = Math.max(0, parseInt(size, 10) || 0);
 
@@ -1221,7 +1304,8 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
               fChunksJson = JSON.stringify(f.chunks);
             }
             const fChannel = String(f.channelId || f.channel_id || '').trim();
-            const fBot = String(f.botTokenUsed || f.bot_token_used || '').trim();
+            const fBot = sanitizeBotIdentifier(String(f.botTokenUsed || f.bot_token_used || '').trim());
+            fChunksJson = sanitizeChunksJson(fChunksJson);
             const fTotal = parseInt(f.totalChunks || f.total_chunks || '1', 10) || 1;
 
             values.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6}, $${pIdx + 7}, $${pIdx + 8}, $${pIdx + 9}, $${pIdx + 10}, $${pIdx + 11})`);
@@ -2131,6 +2215,8 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
     ghRes.on('data', c => body += c);
     ghRes.on('end', () => {
       try {
+        const json = JSON.parse(body);
+        const assets = Array.isArray(json.assets) ? json.assets : [];
         const apkAsset =
           assets.find(a => a.name === 'TelegramBackup-latest.apk') ||
           assets.find(a => a.name === `TelegramBackup-${json.tag_name}.apk`) ||
@@ -2344,7 +2430,8 @@ const inFlightFetches = new Map(); // key: `${botId}:${fileId}`, value: Promise<
 const MAX_CHUNK_CACHE_BYTES = 32 * 1024 * 1024; // 32 MB total RAM ceiling
 let totalChunkCacheBytes = 0;
 
-const MAGIC_HEADER = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]); // "ENC256\x01\x00"
+const MAGIC_HEADER = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]); // "ENC256\x01\x00" (Legacy AES-256-CBC)
+const MAGIC_HEADER_GCM = Buffer.from([0x47, 0x43, 0x4D, 0x32, 0x35, 0x36, 0x01, 0x00]); // "GCM256\x01\x00" (Modern Authenticated AES-256-GCM)
 const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB chunk size matching FileChunker.kt
 
 /**
@@ -2484,20 +2571,21 @@ async function readEncryptedBytesFromChunks(chunkList, shareData, start, end) {
 
 /**
  * Decrypts any plaintext byte range [pStart, pEnd] on-the-fly.
- * Seamlessly handles both AES-256-CBC encrypted multi-chunk files (with ENC256 magic header)
+ * Seamlessly handles authenticated AES-256-GCM (GCM256 header), legacy AES-256-CBC (ENC256 header),
  * and plain unencrypted multi-chunk files.
  */
 async function getDecryptedPlaintextRange(chunkList, shareData, pStart, pEnd) {
   const secretKey = (shareData.encryptionKey || '').trim();
   const totalPlainSize = parseInt(shareData.fileSize) || 0;
 
-  // Check if chunk 1 has the ENC256 magic header
+  // Check if chunk 1 has GCM or ENC256 magic header
   const firstChunkBuf = await fetchChunkBuffer(chunkList[0], shareData);
   if (!firstChunkBuf) throw new Error('Could not fetch initial chunk');
 
+  const hasGcmHeader = firstChunkBuf.length >= 20 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM);
   const hasMagicHeader = firstChunkBuf.length >= 8 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER);
 
-  if (!hasMagicHeader || !secretKey) {
+  if ((!hasGcmHeader && !hasMagicHeader) || !secretKey) {
     // Plain unencrypted file: slice directly from chunks
     const bufs = [];
     for (let idx = 0; idx < chunkList.length; idx++) {
@@ -2516,8 +2604,31 @@ async function getDecryptedPlaintextRange(chunkList, shareData, pStart, pEnd) {
     return Buffer.concat(bufs);
   }
 
-  // Encrypted with AES-256-CBC Zero-Knowledge Encryption
   const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+
+  if (hasGcmHeader) {
+    // Authenticated AES-256-GCM: 8B header + 12B nonce + ciphertext
+    // GCM keystream counter mode starts at block index + 2
+    const nonce = firstChunkBuf.subarray(8, 20);
+    const blockIndex = Math.floor(pStart / 16);
+    const counterVal = 2 + blockIndex;
+    const ctrIv = Buffer.alloc(16);
+    nonce.copy(ctrIv, 0, 0, 12);
+    ctrIv.writeUInt32BE(counterVal, 12);
+
+    const alignedCByteStart = 20 + blockIndex * 16;
+    const alignedCByteEnd = 20 + pEnd;
+    const rawBytes = await readEncryptedBytesFromChunks(chunkList, shareData, alignedCByteStart, alignedCByteEnd);
+
+    const d = crypto.createDecipheriv('aes-256-ctr', key, ctrIv);
+    const decrypted = Buffer.concat([d.update(rawBytes), d.final()]);
+
+    const offsetInBlock = pStart % 16;
+    const len = pEnd - pStart + 1;
+    return decrypted.subarray(offsetInBlock, offsetInBlock + len);
+  }
+
+  // Legacy AES-256-CBC Zero-Knowledge Encryption
   const initialIv = crypto.createHash('md5').update(secretKey, 'utf8').digest();
 
   const bStart = Math.floor(pStart / 16);
@@ -2923,28 +3034,55 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
       transform(chunk, encoding, callback) {
         if (!headerChecked) {
           headerBuf = Buffer.concat([headerBuf, chunk]);
-          if (headerBuf.length >= 8) {
+          if (headerBuf.length < 8) {
+            return callback();
+          }
+
+          const isGcm = headerBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM);
+          const isCbc = headerBuf.subarray(0, 8).equals(MAGIC_HEADER);
+
+          if (isGcm) {
+            if (headerBuf.length < 20) {
+              return callback(); // Need 8B magic header + 12B nonce
+            }
             headerChecked = true;
-            if (headerBuf.subarray(0, 8).equals(MAGIC_HEADER)) {
-              // Modern Verified Magic Header Encrypted Payload
-              const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
-              const iv = crypto.createHash('md5').update(secretKey, 'utf8').digest();
-              decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-              decipher.setAutoPadding(true);
-              decipher.on('error', () => {});
-              try {
-                const dec = decipher.update(headerBuf.subarray(8));
-                if (dec && dec.length > 0) this.push(dec);
-              } catch (_) {
-                this.push(headerBuf.subarray(8));
-              }
-            } else {
-              // Plain unencrypted file -> Pass through untouched without corrupting!
-              this.push(headerBuf);
+            const nonce = headerBuf.subarray(8, 20);
+            const ctrIv = Buffer.alloc(16);
+            nonce.copy(ctrIv, 0, 0, 12);
+            ctrIv.writeUInt32BE(2, 12);
+            const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+            decipher = crypto.createDecipheriv('aes-256-ctr', key, ctrIv);
+            decipher.on('error', () => {});
+            try {
+              const dec = decipher.update(headerBuf.subarray(20));
+              if (dec && dec.length > 0) this.push(dec);
+            } catch (_) {
+              this.push(headerBuf.subarray(20));
             }
             headerBuf = null;
+            return callback();
+          } else if (isCbc) {
+            headerChecked = true;
+            const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+            const iv = crypto.createHash('md5').update(secretKey, 'utf8').digest();
+            decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+            decipher.setAutoPadding(true);
+            decipher.on('error', () => {});
+            try {
+              const dec = decipher.update(headerBuf.subarray(8));
+              if (dec && dec.length > 0) this.push(dec);
+            } catch (_) {
+              this.push(headerBuf.subarray(8));
+            }
+            headerBuf = null;
+            return callback();
+          } else {
+            headerChecked = true;
+            // Plain unencrypted file -> Pass through untouched without corrupting!
+            this.push(headerBuf);
+            headerBuf = null;
+            return callback();
           }
-          return callback();
         }
 
         if (decipher) {
@@ -3183,80 +3321,90 @@ async function handleShare(req, res) {
       `);
     }
 
-    // 3. Timing-Safe PIN Check
-    const userEnteredPin = (req.query?.pin || req.query?.password || req.headers['x-share-pin'] || '').trim();
+    // 3. Timing-Safe PIN Check and Session Authorization
     if (pinHash && pinHash.length > 0) {
-      let isPinValid = false;
-      if (userEnteredPin) {
-        const enteredHash = crypto.createHash('sha256').update(userEnteredPin).digest('hex');
-        try {
-          isPinValid = crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'));
-        } catch (_) {
-          isPinValid = false;
-        }
-        if (!isPinValid && plainPin) {
-          isPinValid = (userEnteredPin === plainPin);
-        }
-      }
+      const isAlreadyAuthorized = isShareSessionAuthorized(req, shareData.shareId, pinHash);
+      const isPost = req.method === 'POST';
+      const userEnteredPin = (req.body?.pin || req.body?.password || req.query?.pin || req.query?.password || req.headers['x-share-pin'] || '').trim();
 
-      if (!isPinValid) {
+      if (!isAlreadyAuthorized) {
+        let isPinValid = false;
         if (userEnteredPin) {
-          recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, false);
+          const enteredHash = crypto.createHash('sha256').update(userEnteredPin).digest('hex');
+          try {
+            isPinValid = crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'));
+          } catch (_) {
+            isPinValid = false;
+          }
+          if (!isPinValid && plainPin) {
+            isPinValid = (userEnteredPin === plainPin);
+          }
         }
 
-        const remainingTries = Math.max(0, 5 - (pinRate.attempts.count || 0));
-        return res.send(`
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Protected File - Enter Access PIN</title>
-            <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
-            <style>
-              :root {
-                --md-sys-color-primary: #9ECAFF;
-                --md-sys-color-on-primary: #003258;
-                --md-sys-color-primary-container: #00497D;
-                --md-sys-color-on-primary-container: #D1E4FF;
-                --md-sys-color-surface: #10131B;
-                --md-sys-color-surface-container: #1D2028;
-                --md-sys-color-surface-container-high: #272A33;
-                --md-sys-color-outline: #8A929E;
-                --md-sys-color-error: #FFB4AB;
-              }
-              * { box-sizing: border-box; }
-              body { background: var(--md-sys-color-surface); color: #E2E2E9; font-family: 'Roboto', -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; }
-              .card { background: var(--md-sys-color-surface-container); border: 1px solid #32353E; border-radius: 28px; padding: 36px 28px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 16px 40px rgba(0,0,0,0.6); }
-              .lock-icon-wrap { width: 68px; height: 68px; border-radius: 50%; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 28px; }
-              h2 { font-size: 22px; font-weight: 700; margin: 0 0 6px; color: #F1F0F7; }
-              .file-sub { color: var(--md-sys-color-primary); font-size: 13px; font-weight: 500; word-break: break-all; margin-bottom: 20px; padding: 6px 12px; background: rgba(158, 202, 255, 0.08); border-radius: 12px; display: inline-block; }
-              .desc { color: var(--md-sys-color-outline); font-size: 14px; margin-bottom: 24px; line-height: 1.4; }
-              input { width: 100%; background: var(--md-sys-color-surface-container-high); border: 1.5px solid #414751; border-radius: 16px; padding: 16px; color: #FFF; font-size: 20px; text-align: center; letter-spacing: 6px; outline: none; transition: all 0.2s; margin-bottom: 12px; }
-              input:focus { border-color: var(--md-sys-color-primary); box-shadow: 0 0 0 3px rgba(158, 202, 255, 0.2); }
-              .error-msg { color: var(--md-sys-color-error); font-size: 13px; margin-bottom: 16px; display: ${userEnteredPin ? 'block' : 'none'}; }
-              .btn-unlock { width: 100%; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); border: none; border-radius: 9999px; padding: 16px; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
-              .btn-unlock:hover { opacity: 0.92; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(158, 202, 255, 0.3); }
-            </style>
-          </head>
-          <body>
-            <div class="card">
-              <div class="lock-icon-wrap">🔒</div>
-              <h2>Protected Cloud File</h2>
-              <div class="file-sub">📦 ${escapeHtml(fileName || 'Cloud File')}</div>
-              <p class="desc">This file requires a security access PIN to view, stream, or download.</p>
-              <form method="GET" action="/share/${escapeHtml(shareData.shareId)}">
-                <input type="hidden" name="id" value="${escapeHtml(identifier)}" />
-                <input type="password" name="pin" placeholder="••••" autofocus required autocomplete="off" />
-                <div class="error-msg">Incorrect access PIN. ${remainingTries > 0 ? `${remainingTries} attempts remaining.` : 'Locking out...'}</div>
-                <button type="submit" class="btn-unlock">Unlock & Access File</button>
-              </form>
-            </div>
-          </body>
-          </html>
-        `);
-      } else {
-        recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
+        if (isPinValid) {
+          recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
+          const sessionToken = getShareSessionToken(shareData.shareId, pinHash);
+          // Set secure session cookie
+          res.setHeader('Set-Cookie', `share_auth_${encodeURIComponent(shareData.shareId)}=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+          if (isPost) {
+            return res.redirect(303, `/share/${encodeURIComponent(shareData.shareId)}`);
+          }
+        } else {
+          if (userEnteredPin) {
+            recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, false);
+          }
+
+          const remainingTries = Math.max(0, 5 - (pinRate.attempts.count || 0));
+          return res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Protected File - Enter Access PIN</title>
+              <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+              <style>
+                :root {
+                  --md-sys-color-primary: #9ECAFF;
+                  --md-sys-color-on-primary: #003258;
+                  --md-sys-color-primary-container: #00497D;
+                  --md-sys-color-on-primary-container: #D1E4FF;
+                  --md-sys-color-surface: #10131B;
+                  --md-sys-color-surface-container: #1D2028;
+                  --md-sys-color-surface-container-high: #272A33;
+                  --md-sys-color-outline: #8A929E;
+                  --md-sys-color-error: #FFB4AB;
+                }
+                * { box-sizing: border-box; }
+                body { background: var(--md-sys-color-surface); color: #E2E2E9; font-family: 'Roboto', -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; }
+                .card { background: var(--md-sys-color-surface-container); border: 1px solid #32353E; border-radius: 28px; padding: 36px 28px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 16px 40px rgba(0,0,0,0.6); }
+                .lock-icon-wrap { width: 68px; height: 68px; border-radius: 50%; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 28px; }
+                h2 { font-size: 22px; font-weight: 700; margin: 0 0 6px; color: #F1F0F7; }
+                .file-sub { color: var(--md-sys-color-primary); font-size: 13px; font-weight: 500; word-break: break-all; margin-bottom: 20px; padding: 6px 12px; background: rgba(158, 202, 255, 0.08); border-radius: 12px; display: inline-block; }
+                .desc { color: var(--md-sys-color-outline); font-size: 14px; margin-bottom: 24px; line-height: 1.4; }
+                input { width: 100%; background: var(--md-sys-color-surface-container-high); border: 1.5px solid #414751; border-radius: 16px; padding: 16px; color: #FFF; font-size: 20px; text-align: center; letter-spacing: 6px; outline: none; transition: all 0.2s; margin-bottom: 12px; }
+                input:focus { border-color: var(--md-sys-color-primary); box-shadow: 0 0 0 3px rgba(158, 202, 255, 0.2); }
+                .error-msg { color: var(--md-sys-color-error); font-size: 13px; margin-bottom: 16px; display: ${userEnteredPin ? 'block' : 'none'}; }
+                .btn-unlock { width: 100%; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); border: none; border-radius: 9999px; padding: 16px; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+                .btn-unlock:hover { opacity: 0.92; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(158, 202, 255, 0.3); }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <div class="lock-icon-wrap">🔒</div>
+                <h2>Protected Cloud File</h2>
+                <div class="file-sub">📦 ${escapeHtml(fileName || 'Cloud File')}</div>
+                <p class="desc">This file requires a security access PIN to view, stream, or download.</p>
+                <form method="POST" action="/share/${escapeHtml(shareData.shareId)}">
+                  <input type="password" name="pin" placeholder="••••" autofocus required autocomplete="off" />
+                  <div class="error-msg">Incorrect access PIN. ${remainingTries > 0 ? `${remainingTries} attempts remaining.` : 'Locking out...'}</div>
+                  <button type="submit" class="btn-unlock">Unlock & Access File</button>
+                </form>
+              </div>
+            </body>
+            </html>
+          `);
+        }
       }
     }
 
@@ -3269,9 +3417,8 @@ async function handleShare(req, res) {
     }
 
     // 5. Render Full Google Material 3 Web Share Portal
-    const pinParam = userEnteredPin ? `&pin=${encodeURIComponent(userEnteredPin)}` : '';
-    const downloadUrl = `/api/share/download/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}${pinParam}`;
-    const streamUrl = `/share/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}${pinParam}&stream=1`;
+    const downloadUrl = `/api/share/download/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}`;
+    const streamUrl = `/share/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}&stream=1`;
 
     const fileSizeBytes = parseInt(fileSize) || 0;
     const humanSize = fileSizeBytes > 0 ? (
@@ -3659,7 +3806,6 @@ async function handleShare(req, res) {
           const targetFileName = "${escapeHtml(fileName)}";
           const targetFileSize = ${parseInt(fileSize) || 0};
           const directStreamUrl = "${downloadUrl}";
-          const sharePin = "${escapeHtml(userEnteredPin || '')}";
 
           async function onDownloadClicked() {
             const btn = document.getElementById('downloadBtn');
@@ -3737,7 +3883,6 @@ async function handleShare(req, res) {
               const downloadedParts = [];
               let receivedBytes = 0;
               const startTime = Date.now();
-              const pinQuery = sharePin ? ('?pin=' + encodeURIComponent(sharePin)) : '';
 
               for (let i = 1; i <= totalChunkCount; i++) {
                 // Update progress with speed and ETA
@@ -3755,14 +3900,14 @@ async function handleShare(req, res) {
                 const mbTotal = targetFileSize > 0 ? (targetFileSize / (1024 * 1024)).toFixed(1) : (totalChunkCount * 4);
                 progDetails.innerText = mbDownloaded + ' MB / ' + mbTotal + ' MB';
 
-                const chunkEndpoint = '/api/share/chunk/' + encodeURIComponent(shareIdentifier) + '/' + i + pinQuery;
+                const chunkEndpoint = '/api/share/chunk/' + encodeURIComponent(shareIdentifier) + '/' + i;
 
                 // Robust retry loop: retries up to 4 times per chunk on network blips
                 let chunkRes = null;
                 let lastError = null;
                 for (let attempt = 1; attempt <= 4; attempt++) {
                   try {
-                    chunkRes = await fetch(chunkEndpoint);
+                    chunkRes = await fetch(chunkEndpoint, { credentials: 'same-origin' });
                     if (chunkRes.ok) break;
                     lastError = new Error('HTTP ' + chunkRes.status);
                   } catch (fetchErr) {
@@ -3770,6 +3915,9 @@ async function handleShare(req, res) {
                   }
                   if (attempt < 4) {
                     progStatus.innerText = '⚠️ Retrying Part ' + i + ' of ' + totalChunkCount + ' (Attempt ' + (attempt + 1) + ')...';
+                    await new Promise(r => setTimeout(r, 1000 * attempt));
+                  }
+                }
                     await new Promise(r => setTimeout(r, 1000 * attempt));
                   }
                 }
@@ -3875,30 +4023,35 @@ async function handleShareChunk(req, res) {
 
     // Check PIN protection if set
     if (shareData.pinHash) {
-      const pinRate = checkSharePinRateLimit(req, shareData.shareId);
-      if (pinRate.locked) {
-        return res.status(429).json({
-          success: false,
-          message: `Too many incorrect PIN attempts. Locked for ${pinRate.waitSeconds} seconds.`
-        });
-      }
-
-      const pinParam = String(req.query?.pin || req.headers['x-share-pin'] || '').trim();
-      let isPinValid = false;
-      if (pinParam) {
-        const pinHash = crypto.createHash('sha256').update(pinParam).digest('hex');
-        try {
-          isPinValid = crypto.timingSafeEqual(Buffer.from(pinHash, 'utf8'), Buffer.from(shareData.pinHash, 'utf8'));
-        } catch (_) {
-          isPinValid = false;
+      if (!isShareSessionAuthorized(req, shareData.shareId, shareData.pinHash)) {
+        const pinRate = checkSharePinRateLimit(req, shareData.shareId);
+        if (pinRate.locked) {
+          return res.status(429).json({
+            success: false,
+            message: `Too many incorrect PIN attempts. Locked for ${pinRate.waitSeconds} seconds.`
+          });
         }
-      }
 
-      if (!isPinValid) {
-        recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, false);
-        return res.status(401).json({ success: false, message: 'Security PIN required to access chunk' });
-      } else {
-        recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
+        const pinParam = String(req.query?.pin || req.headers['x-share-pin'] || '').trim();
+        let isPinValid = false;
+        if (pinParam) {
+          const pinHash = crypto.createHash('sha256').update(pinParam).digest('hex');
+          try {
+            isPinValid = crypto.timingSafeEqual(Buffer.from(pinHash, 'utf8'), Buffer.from(shareData.pinHash, 'utf8'));
+          } catch (_) {
+            isPinValid = false;
+          }
+          if (!isPinValid && shareData.plainPin) {
+            isPinValid = (pinParam === shareData.plainPin);
+          }
+        }
+
+        if (!isPinValid) {
+          recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, false);
+          return res.status(401).json({ success: false, message: 'Security PIN or authorized session required to access chunk' });
+        } else {
+          recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
+        }
       }
     }
 
@@ -3939,12 +4092,17 @@ app.get(['/api/share/download/:id', '/share/download/:id'], (req, res) => {
   req.query.download = '1';
   return handleShare(req, res);
 });
+app.post(['/api/share/download/:id', '/share/download/:id'], (req, res) => {
+  req.query.download = '1';
+  return handleShare(req, res);
+});
 app.get(['/api/share/chunk/:id/:chunkIndex', '/share/chunk/:id/:chunkIndex'], handleShareChunk);
 app.get(['/share', '/api/share', '/share/:token', '/api/share/:token', '/share/:id', '/api/share/:id'], handleShare);
+app.post(['/share', '/api/share', '/share/:token', '/api/share/:token', '/share/:id', '/api/share/:id'], handleShare);
 
 app.use((req, res, next) => {
   const fullUrl = (req.originalUrl || req.url || '').toLowerCase();
-  if (req.method === 'GET' && (fullUrl.includes('/share') || req.query?.data)) {
+  if ((req.method === 'GET' || req.method === 'POST') && (fullUrl.includes('/share') || req.query?.data)) {
     return handleShare(req, res);
   }
   next();

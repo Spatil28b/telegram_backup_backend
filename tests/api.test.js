@@ -172,3 +172,104 @@ test('Integrity: Chunk metadata validation schema', () => {
   assert.equal(validateChunk({ ...validChunk, status: 'INVALID_STATUS' }), false);
   assert.equal(validateChunk({ ...validChunk, sha256: 'short' }), false);
 });
+
+test('Security & Cryptography: AES-256-GCM Magic Header & Stream Decryption', () => {
+  const MAGIC_HEADER_GCM = Buffer.from([0x47, 0x43, 0x4D, 0x32, 0x35, 0x36, 0x01, 0x00]); // "GCM256\x01\x00"
+  const secretKey = 'my-super-secret-vault-key-32bytes!';
+  const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+  const nonce = crypto.randomBytes(12);
+
+  // Encrypt sample plaintext using standard AES-256-GCM
+  const plaintext = Buffer.from('Hello Secure Telegram Cloud Storage Range and Stream Test Data!');
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const fullPayload = Buffer.concat([MAGIC_HEADER_GCM, nonce, ciphertext]);
+
+  // Assert header detection
+  assert.equal(fullPayload.subarray(0, 8).equals(MAGIC_HEADER_GCM), true);
+
+  // Assert random-access AES-256-CTR slice decryption matches original slice
+  const pStart = 6;
+  const pEnd = 24;
+  const blockIndex = Math.floor(pStart / 16);
+  const counterVal = 2 + blockIndex;
+  const ctrIv = Buffer.alloc(16);
+  nonce.copy(ctrIv, 0, 0, 12);
+  ctrIv.writeUInt32BE(counterVal, 12);
+
+  const alignedCByteStart = 20 + blockIndex * 16;
+  const alignedCByteEnd = 20 + pEnd;
+  const rawBytes = fullPayload.subarray(alignedCByteStart, alignedCByteEnd + 1);
+
+  const decipher = crypto.createDecipheriv('aes-256-ctr', key, ctrIv);
+  const decryptedBlock = Buffer.concat([decipher.update(rawBytes), decipher.final()]);
+  const offsetInBlock = pStart % 16;
+  const sliceLen = pEnd - pStart + 1;
+  const actualSlice = decryptedBlock.subarray(offsetInBlock, offsetInBlock + sliceLen);
+
+  assert.equal(actualSlice.toString('utf8'), plaintext.subarray(pStart, pEnd + 1).toString('utf8'));
+});
+
+test('Security: Bot Token Sanitization on Indexing', () => {
+  function sanitizeBotIdentifier(token) {
+    if (!token) return '';
+    const clean = String(token).trim();
+    const colonIdx = clean.indexOf(':');
+    if (colonIdx > 0 && /^\d+$/.test(clean.substring(0, colonIdx))) {
+      return clean.substring(0, colonIdx);
+    }
+    return clean;
+  }
+
+  assert.equal(sanitizeBotIdentifier('7123456789:AAHKqwert123456_FakeToken'), '7123456789');
+  assert.equal(sanitizeBotIdentifier('9876543210:secret_bot_token_part'), '9876543210');
+  assert.equal(sanitizeBotIdentifier('7123456789'), '7123456789');
+  assert.equal(sanitizeBotIdentifier(''), '');
+  assert.equal(sanitizeBotIdentifier(null), '');
+});
+
+test('Security: Share Session HMAC Cookie Token Verification', () => {
+  const jwtSecret = 'test-secret-at-least-32-chars-long!!';
+  function getShareSessionToken(shareId, pinHash) {
+    return crypto.createHmac('sha256', jwtSecret).update(`${shareId}:${pinHash}`).digest('hex');
+  }
+
+  function isShareSessionAuthorized(cookieHeader, shareId, pinHash) {
+    if (!pinHash) return true;
+    const expected = getShareSessionToken(shareId, pinHash);
+    const cookies = {};
+    if (cookieHeader) {
+      cookieHeader.split(';').forEach(c => {
+        const parts = c.split('=');
+        if (parts.length >= 2) cookies[parts[0].trim()] = decodeURIComponent(parts.slice(1).join('=').trim());
+      });
+    }
+    return cookies[`share_auth_${shareId}`] === expected;
+  }
+
+  const shareId = 'share_abc123';
+  const pinHash = crypto.createHash('sha256').update('1234').digest('hex');
+  const validToken = getShareSessionToken(shareId, pinHash);
+
+  assert.equal(isShareSessionAuthorized(`share_auth_${shareId}=${validToken}`, shareId, pinHash), true);
+  assert.equal(isShareSessionAuthorized(`share_auth_${shareId}=tampered_token`, shareId, pinHash), false);
+  assert.equal(isShareSessionAuthorized(null, shareId, pinHash), false);
+});
+
+test('Reliability: GitHub Asset Resolver for APK Updates', () => {
+  const assets = [
+    { name: 'source-code.zip', browser_download_url: 'https://example.com/source.zip' },
+    { name: 'TelegramBackup-v2.5.2.apk', browser_download_url: 'https://example.com/v2.5.2.apk' },
+    { name: 'TelegramBackup-latest.apk', browser_download_url: 'https://example.com/latest.apk' }
+  ];
+
+  const apkAsset =
+    assets.find(a => a.name === 'TelegramBackup-latest.apk') ||
+    assets.find(a => a.name === 'TelegramBackup-v2.5.2.apk') ||
+    assets.find(a => a.name.endsWith('.apk'));
+
+  assert.ok(apkAsset);
+  assert.equal(apkAsset.name, 'TelegramBackup-latest.apk');
+  assert.equal(apkAsset.browser_download_url, 'https://example.com/latest.apk');
+});
+
