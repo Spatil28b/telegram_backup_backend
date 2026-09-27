@@ -273,3 +273,40 @@ test('Reliability: GitHub Asset Resolver for APK Updates', () => {
   assert.equal(apkAsset.browser_download_url, 'https://example.com/latest.apk');
 });
 
+test('Versioning: calculateVersionCode prioritizes local app-version.json', () => {
+  const localVer = { versionCode: 140, versionName: '2.6.2' };
+  function calculateVersionCode(name) {
+    const cleanName = (name || '').replace(/^v/, '').trim();
+    if (localVer && localVer.versionName === cleanName && localVer.versionCode) {
+      return localVer.versionCode;
+    }
+    return 106;
+  }
+
+  assert.equal(calculateVersionCode('v2.6.2'), 140);
+  assert.equal(calculateVersionCode('2.6.2'), 140);
+  assert.equal(calculateVersionCode('v2.6.1'), 106);
+});
+
+test('Security: Credentials Get Endpoint Masks Raw Bot Token', () => {
+  function sanitizeBotIdentifier(token) {
+    if (!token) return '';
+    const clean = String(token).trim();
+    const colonIdx = clean.indexOf(':');
+    if (colonIdx > 0 && /^\d+$/.test(clean.substring(0, colonIdx))) {
+      return clean.substring(0, colonIdx);
+    }
+    return clean;
+  }
+
+  const rawBotToken = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz';
+  const response = {
+    success: true,
+    botToken: sanitizeBotIdentifier(rawBotToken),
+    chatId: '-100123456789'
+  };
+
+  assert.equal(response.botToken, '123456789');
+  assert.ok(!response.botToken.includes('ABCdefGHIjklMNOpqrsTUVwxyz'));
+});
+

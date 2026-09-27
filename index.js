@@ -1048,7 +1048,9 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
       chatId = u.chatId || '';
     }
 
-    return res.json({ success: true, botToken, chatId });
+    // Mask the raw bot token — only return the bot ID prefix for display
+    const maskedToken = sanitizeBotIdentifier(botToken);
+    return res.json({ success: true, botToken: maskedToken, chatId });
   } catch (err) {
     next(err);
   }
@@ -2042,33 +2044,23 @@ const GITHUB_REPO_PATH = 'sid-codes28/telegram_backup_backend';
  * Safely loads the local app-version.json file with cross-platform and Vercel serverless fallback.
  */
 function getLocalAppVersion() {
-  try {
-    return require('./app-version.json');
-  } catch (e1) {
+  const fs = require('fs');
+  const pathMod = require('path');
+  const candidates = [
+    pathMod.join(__dirname, 'app-version.json'),
+    pathMod.resolve(__dirname, '..', 'app-version.json'),
+    pathMod.join(process.cwd(), 'app-version.json')
+  ];
+  for (const p of candidates) {
     try {
-      return require('../app-version.json');
-    } catch (e2) {
-      try {
-        const fs = require('fs');
-        const path = require('path');
-        return JSON.parse(fs.readFileSync(path.join(process.cwd(), 'app-version.json'), 'utf8'));
-      } catch (_) {
-        return {
-          versionCode: 106,
-          versionName: '2.2.3',
-          releaseNotes: `✨ What's New in Release v2.2.3:
-- 🚀 Seamless In-App Auto-Update Engine: Integrated compile-time BuildConfig versioning and unified update comparisons. Guarantees immediate in-app update prompts and 1-tap installation
-- 🩵 Komi Store Floating Capsule Nav Bar: Compact floating liquid pill bar inspired by Komi Store (~62dp) with spring bouncy touch animations (1.08x scale), continuous rounded corners, and soft elevation
-- ⚡ Zero-Lag Direction-Aware Tab Transitions: Eliminated main-thread disk I/O, regex recompilations, and 4-pass calculation loops. Added buttery horizontal slide transitions that follow navigation direction
-- 📜 Smart Scroll Auto-Hide: Bottom navigation bar intelligently slides down out of view when scrolling down to maximize content space, and smoothly glides back up on scroll up or tab tap
-- 🔔 Minimalist Symbolic Notifications: Removed verbose sentence text in favor of clean glyph icons and metrics (☁️, ⚡, ⬆️, ⬇️, ✓, 💾, ⏱️) with quick action buttons ([⏸️ Pause], [📊 Progress], [📁 Drive], [📂 Open], [📤 Share])
-- 🧹 Modernized Trash Bin & Local Storage UX: Removed descriptive text clutter and bulky red containers; streamlined with compact status pills, inline search, and efficient space utilization
-- 📖 Separated Setup Guide & User Manual: Split into dedicated tabs for 🚀 Setup Guide (4-step credentials setup) and 📖 Features & Manual (Cloud Drive streaming, Safe Folder encryption, Direct Share Links, Multi-Bot Fleet)
-- 📋 Komi Store Style Changelog: Horizontal version selector chips (v2.2.3, v2.2.2, v2.2.1, v2.2.00) and categorized change tags (UPDATER, DESIGN, PERFORMANCE, EXPERIENCE, NOTIFICATIONS, CLEAN UI, GUIDES)`
-        };
-      }
-    }
+      return JSON.parse(fs.readFileSync(p, 'utf8'));
+    } catch (_) {}
   }
+  return {
+    versionCode: 140,
+    versionName: '2.6.2',
+    releaseNotes: '✨ Security & Architecture Release v2.6.2'
+  };
 }
 
 /**
@@ -2078,9 +2070,11 @@ function getLocalAppVersion() {
 function calculateVersionCode(name) {
   const localVer = getLocalAppVersion();
   const cleanName = (name || '').replace(/^v/, '').trim();
+  // Always trust the authoritative app-version.json when the version name matches
   if (localVer && localVer.versionName === cleanName && localVer.versionCode) {
     return localVer.versionCode;
   }
+  // Fallback formula only for versions not in app-version.json
   const parts = cleanName.split('.').map(p => parseInt(p, 10));
   if (parts.length >= 3 && !parts.some(isNaN)) {
     const [major, minor, patch] = parts;
@@ -2090,8 +2084,9 @@ function calculateVersionCode(name) {
       return 103 + patch;
     } else if (major === 2 && minor === 3) {
       return 114 + patch;
-    } else if (major === 2 && minor > 3) {
-      return 114 + (minor - 3) * 20 + patch;
+    } else if (major === 2 && minor >= 4) {
+      // v2.4.0=121, v2.5.0=128, v2.6.0=135, v2.6.2=137 (conservative formula)
+      return 121 + (minor - 4) * 7 + patch;
     } else if (major > 2) {
       return 200 + (major - 3) * 100 + minor * 10 + patch;
     }
@@ -2099,7 +2094,7 @@ function calculateVersionCode(name) {
   if (localVer && localVer.versionCode) {
     return localVer.versionCode;
   }
-  return 106;
+  return 140;
 }
 
 /**
@@ -2860,13 +2855,44 @@ async function handleShareCreate(req, res) {
       }
     }
 
-    const candidateBotsList = Array.isArray(candidateBots)
-      ? candidateBots.filter(b => typeof b === 'string' && b.trim()).map(b => b.trim())
-      : [];
+    // Resolve bot credentials internally from database via userEmail and fileId (Fix: internal credential loading)
+    let internalBotToken = '';
+    if (pool && userEmail) {
+      try {
+        const uRes = await queryWithTimeout('SELECT bot_token FROM users WHERE email = $1', [userEmail]);
+        if (uRes && uRes.rows && uRes.rows.length > 0 && uRes.rows[0].bot_token) {
+          internalBotToken = uRes.rows[0].bot_token.trim();
+        }
+      } catch (_) {}
+    } else if (memoryUsers.has(userEmail)) {
+      internalBotToken = (memoryUsers.get(userEmail).botToken || '').trim();
+    }
+
+    const targetFileId = fileId || (normalizedChunks[0] && normalizedChunks[0].telegramFileId);
+    if (pool && userEmail && targetFileId && !internalBotToken) {
+      try {
+        const fRes = await queryWithTimeout(
+          'SELECT bot_token_used FROM backed_files WHERE email = $1 AND telegram_file_id = $2 LIMIT 1',
+          [userEmail, targetFileId]
+        );
+        if (fRes && fRes.rows && fRes.rows.length > 0 && fRes.rows[0].bot_token_used) {
+          internalBotToken = fRes.rows[0].bot_token_used.trim();
+        }
+      } catch (_) {}
+    }
+
+    const effectiveBotToken = (internalBotToken || botToken || '').trim();
+
+    // Ensure all chunks have effectiveBotToken populated
+    normalizedChunks = normalizedChunks.map(c => ({
+      chunkIndex: c.chunkIndex,
+      telegramFileId: c.telegramFileId,
+      botTokenUsed: (c.botTokenUsed || effectiveBotToken || '').trim()
+    }));
 
     const sensitivePayload = {
       fileId: fileId || normalizedChunks[0].telegramFileId,
-      botToken: (botToken || normalizedChunks[0].botTokenUsed || '').trim(),
+      botToken: effectiveBotToken || (normalizedChunks[0] && normalizedChunks[0].botTokenUsed) || '',
       encryptionKey: (encryptionKey || '').trim(),
       totalChunks: normalizedChunks.length,
       chunks: normalizedChunks,
