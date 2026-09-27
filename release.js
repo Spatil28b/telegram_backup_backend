@@ -111,6 +111,14 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.2': `✨ What's New in Security & Architecture Release v2.6.2:
+- 🔐 Hardware-Backed Android Keystore: Sensitive credentials (master key, bot tokens, chat ID, Gemini keys, auth tokens) are now encrypted with hardware-backed AndroidKeyStore, completely eliminating plaintext SharedPreferences exposure.
+- 🛡️ Authenticated AES-256-GCM Stream Decryption: Backend upgraded to support authenticated GCM256 stream slicing with byte-exact CTR decryption for seamless media seeking and zero stream corruption.
+- 🍪 HttpOnly Cookie Share Session Auth: Share link portal now issues secure HttpOnly cookies for authorized media streaming, eliminating plaintext PINs and sensitive parameters from query strings.
+- 🗄️ Non-Destructive Room DB Migrations: Safe schema migrations with structured verification logging, eliminating destructive fallback wipes to guarantee 100% local database preservation.
+- ⚡ Memory-Bounded Dynamic Thumbnail Engine: Removed largeHeap dependency and capped thumbnail caching to 1/8th device RAM with active onTrimMemory() reclamation.
+- 🔍 Safe Server API & Package Verification: In-app updater verifies genuine package signature before prompting installation; sanitized API indexing prevents bot token leakage.
+- 📱 Butter-Smooth LazyColumn Feed: Refactored main home feed to virtualized LazyColumn layout for 120Hz lag-free scrolling.`,
     '2.6.1': `✨ What's New in Security & Stability Release v2.6.1:
 - 🔒 Comprehensive Security & Integrity Overhaul: Remediated full 37-point backend and 32-point client audit findings across the entire platform.
 - 🛡️ Zero-Exposure Master Keys: Upgraded to cryptographically secure Keystore-generated 256-bit AES master keys and mandatory JWT_SECRET / SHARE_SECRET enforcement.
@@ -483,6 +491,19 @@ async function main() {
   // 5. Upload APK Assets with verified HTTP response
   console.log('5️⃣  Uploading Release Binaries...');
   async function uploadAsset(assetName) {
+    const assetPath = path.join(RELEASES_DIR, assetName);
+    try {
+      console.log(`   Uploading ${assetName} via GitHub CLI (gh release upload)...`);
+      execSync(`gh release upload "${tag}" "${assetPath}" --repo "${OWNER}/${REPO}" --clobber`, {
+        env: { ...process.env, GH_TOKEN: TOKEN },
+        stdio: 'inherit'
+      });
+      console.log(`   ✓ ${assetName} uploaded successfully via gh CLI!`);
+      return;
+    } catch (ghErr) {
+      console.log(`   (gh CLI fallback note: ${ghErr.message})`);
+    }
+
     const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
 
     for (let attempt = 1; attempt <= 4; attempt++) {
@@ -567,6 +588,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.2': 'Hardware-Backed Keystore Vault, AES-GCM Stream Slicing, HttpOnly Share Auth & Memory Bounds',
     '2.6.1': 'Full Security & Integrity Overhaul: Keystore Master Keys, 32MB OOM Cache & Concurrency Guard',
     '2.6.0': 'Major Architecture Overhaul: Direct Bot Streaming, Fluid Compute, Bounded Channels & Load Balancer',
     '2.5.3': 'Full Security & Reliability Overhaul: JWT Auth, Rate Limiting, OOM Cache & Hardened Releases',
