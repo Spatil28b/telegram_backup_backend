@@ -2068,8 +2068,16 @@ function getLocalAppVersion() {
  * Supports legacy 2.1.xx series as well as the new single-digit system (2.2.0 = 103, 2.2.1 = 104, 2.2.9 = 112, 2.3.0 = 113).
  */
 function calculateVersionCode(name) {
-  const localVer = getLocalAppVersion();
   const cleanName = (name || '').replace(/^v/, '').trim();
+  if (cleanName === '2.6.2') return 140;
+  if (cleanName === '2.6.1') return 139;
+  if (cleanName === '2.6.0') return 138;
+  if (cleanName === '2.5.3') return 137;
+  if (cleanName === '2.5.2') return 136;
+  if (cleanName === '2.5.1') return 135;
+  if (cleanName === '2.5.0') return 134;
+
+  const localVer = getLocalAppVersion();
   // Always trust the authoritative app-version.json when the version name matches
   if (localVer && localVer.versionName === cleanName && localVer.versionCode) {
     return localVer.versionCode;
@@ -2085,7 +2093,6 @@ function calculateVersionCode(name) {
     } else if (major === 2 && minor === 3) {
       return 114 + patch;
     } else if (major === 2 && minor >= 4) {
-      // v2.4.0=121, v2.5.0=128, v2.6.0=135, v2.6.2=137 (conservative formula)
       return 121 + (minor - 4) * 7 + patch;
     } else if (major > 2) {
       return 200 + (major - 3) * 100 + minor * 10 + patch;
@@ -2143,14 +2150,25 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
       } catch (_) {}
       
       const localVer = getLocalAppVersion() || {};
-      const localCode = localVer.versionCode || 0;
+      const localCode = localVer.versionCode || 140;
+
+      // When version names match (or both indicate v2.6.2), always use the authoritative local metadata
+      if (ghName && (ghName === localVer.versionName || ghName === '2.6.2')) {
+        return res.json({
+          success: true,
+          versionCode: localCode || 140,
+          versionName: localVer.versionName || ghName,
+          downloadUrl: downloadUrl,
+          releaseNotes: localVer.releaseNotes || ghNotes
+        });
+      }
 
       // Always prioritize whichever is higher
       if (localCode > ghCode) {
         return res.json({
           success: true,
           versionCode: localCode,
-          versionName: localVer.versionName || "2.3.0",
+          versionName: localVer.versionName || "2.6.2",
           downloadUrl: downloadUrl,
           releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
         });
