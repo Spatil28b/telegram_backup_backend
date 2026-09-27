@@ -2916,6 +2916,10 @@ async function handleShareCreate(req, res) {
       botTokenUsed: (c.botTokenUsed || effectiveBotToken || '').trim()
     }));
 
+    const candidateBotsList = Array.isArray(candidateBots)
+      ? candidateBots.map(b => String(b).trim()).filter(Boolean)
+      : (candidateBots ? [String(candidateBots).trim()].filter(Boolean) : []);
+
     const sensitivePayload = {
       fileId: fileId || normalizedChunks[0].telegramFileId,
       botToken: effectiveBotToken || (normalizedChunks[0] && normalizedChunks[0].botTokenUsed) || '',

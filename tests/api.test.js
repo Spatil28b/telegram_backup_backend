@@ -310,3 +310,17 @@ test('Security: Credentials Get Endpoint Masks Raw Bot Token', () => {
   assert.ok(!response.botToken.includes('ABCdefGHIjklMNOpqrsTUVwxyz'));
 });
 
+test('Share Creation: candidateBots normalization and payload construction', () => {
+  function normalizeCandidateBots(candidateBots) {
+    return Array.isArray(candidateBots)
+      ? candidateBots.map(b => String(b).trim()).filter(Boolean)
+      : (candidateBots ? [String(candidateBots).trim()].filter(Boolean) : []);
+  }
+
+  assert.deepEqual(normalizeCandidateBots(['123:abc', '456:def', '']), ['123:abc', '456:def']);
+  assert.deepEqual(normalizeCandidateBots('789:ghi'), ['789:ghi']);
+  assert.deepEqual(normalizeCandidateBots(null), []);
+  assert.deepEqual(normalizeCandidateBots(undefined), []);
+});
+
+
