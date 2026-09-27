@@ -2034,26 +2034,29 @@ app.get(['/api/files/:fileId/missing-chunks', '/files/:fileId/missing-chunks', '
   }
 });
 
-const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-if (!GITHUB_RELEASE_TOKEN) {
-  throw new Error('GITHUB_TOKEN is required');
-}
+const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_RELEASE_TOKEN || '';
 const GITHUB_REPO_PATH = 'sid-codes28/telegram_backup_backend';
 
 /**
  * Safely loads the local app-version.json file with cross-platform and Vercel serverless fallback.
  */
 function getLocalAppVersion() {
-  const fs = require('fs');
-  const pathMod = require('path');
-  const candidates = [
-    pathMod.join(__dirname, 'app-version.json'),
-    pathMod.resolve(__dirname, '..', 'app-version.json'),
-    pathMod.join(process.cwd(), 'app-version.json')
-  ];
-  for (const p of candidates) {
+  try {
+    return require('./app-version.json');
+  } catch (_) {
     try {
-      return JSON.parse(fs.readFileSync(p, 'utf8'));
+      const fs = require('fs');
+      const pathMod = require('path');
+      const candidates = [
+        pathMod.join(__dirname, 'app-version.json'),
+        pathMod.resolve(__dirname, '..', 'app-version.json'),
+        pathMod.join(process.cwd(), 'app-version.json')
+      ];
+      for (const p of candidates) {
+        try {
+          return JSON.parse(fs.readFileSync(p, 'utf8'));
+        } catch (_) {}
+      }
     } catch (_) {}
   }
   return {

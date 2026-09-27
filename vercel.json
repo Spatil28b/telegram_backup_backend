@@ -3,8 +3,7 @@
   "fluid": true,
   "functions": {
     "api/index.js": {
-      "maxDuration": 300,
-      "includeFiles": "app-version.json"
+      "maxDuration": 300
     }
   },
   "rewrites": [
