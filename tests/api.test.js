@@ -343,4 +343,19 @@ test('Share Creation: Allows unauthenticated requests if bot token is provided',
   assert.equal(validateShareAuth({ body: {} }).allowed, false);
 });
 
+test('Share Page: Inlined client script has valid JavaScript syntax without errors', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const indexContent = fs.readFileSync(path.join(__dirname, '../index.js'), 'utf8');
+  const sIdx = indexContent.indexOf('<script>');
+  const eIdx = indexContent.indexOf('</script>');
+  assert.ok(sIdx > 0 && eIdx > sIdx, 'Script tag found in index.js');
+  let script = indexContent.substring(sIdx + 8, eIdx);
+  script = script.replace(/"\$\{([^}]+)\}"/g, '"dummy_str"');
+  script = script.replace(/\$\{([^}]+)\}/g, '0');
+  assert.doesNotThrow(() => {
+    new Function(script);
+  }, 'Share page client script must compile without SyntaxError');
+});
+
 

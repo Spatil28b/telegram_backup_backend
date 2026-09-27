@@ -3804,6 +3804,10 @@ async function handleShare(req, res) {
               <span>⬇️</span>
               <span id="dlText">Download File ${humanSize ? '(' + humanSize + ')' : ''}</span>
             </button>
+            <a href="${downloadUrl}" class="btn-tonal" id="directDlBtn" style="text-align: center; text-decoration: none;">
+              <span>⚡</span>
+              <span>Direct Browser Download</span>
+            </a>
             <button class="btn-tonal" onclick="copyLink()">
               <span>🔗</span>
               <span id="copyBtnText">Copy Share Link</span>
@@ -3973,9 +3977,6 @@ async function handleShare(req, res) {
                   }
                   if (attempt < 4) {
                     progStatus.innerText = '⚠️ Retrying Part ' + i + ' of ' + totalChunkCount + ' (Attempt ' + (attempt + 1) + ')...';
-                    await new Promise(r => setTimeout(r, 1000 * attempt));
-                  }
-                }
                     await new Promise(r => setTimeout(r, 1000 * attempt));
                   }
                 }
