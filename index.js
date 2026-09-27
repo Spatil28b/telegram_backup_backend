@@ -2837,10 +2837,10 @@ async function handleShareCreate(req, res) {
     const parsedSize = parseInt(fileSize) || 0;
     const expiresAtVal = parseInt(expiresAt) || 0;
     const nowMs = Date.now();
-    const userEmail = req.authenticatedEmail;
+    const userEmail = (req.authenticatedEmail && isValidEmail(req.authenticatedEmail)) ? req.authenticatedEmail.toLowerCase().trim() : '';
 
-    if (!userEmail || !isValidEmail(userEmail)) {
-      return res.status(401).json({ success: false, message: 'Authentication required to create share links.' });
+    if (!userEmail && !botToken && (!Array.isArray(chunks) || chunks.length === 0 || !chunks[0].botTokenUsed)) {
+      return res.status(400).json({ success: false, message: 'Missing bot token or authentication to create share link.' });
     }
 
     let normalizedChunks = Array.isArray(chunks) && chunks.length > 0
@@ -2852,7 +2852,7 @@ async function handleShareCreate(req, res) {
       : [{ chunkIndex: 1, telegramFileId: fileId, botTokenUsed: (botToken || '').trim() }];
 
     const expectedChunksCount = parsedSize > CHUNK_SIZE ? Math.ceil(parsedSize / CHUNK_SIZE) : 1;
-    if (pool && expectedChunksCount > 1 && normalizedChunks.length < expectedChunksCount) {
+    if (pool && expectedChunksCount > 1 && normalizedChunks.length < expectedChunksCount && userEmail) {
       try {
         const repairRes = await queryWithTimeout(
           `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
@@ -4145,7 +4145,7 @@ async function handleShareChunk(req, res) {
 }
 
 // Register Sharing Engine API Routes
-app.post(['/api/share/create', '/share/create'], requireAuth, handleShareCreate);
+app.post(['/api/share/create', '/share/create'], handleShareCreate);
 app.get(['/api/share/download/:id', '/share/download/:id'], (req, res) => {
   req.query.download = '1';
   return handleShare(req, res);

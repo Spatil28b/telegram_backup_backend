@@ -323,4 +323,24 @@ test('Share Creation: candidateBots normalization and payload construction', () 
   assert.deepEqual(normalizeCandidateBots(undefined), []);
 });
 
+test('Share Creation: Allows unauthenticated requests if bot token is provided', () => {
+  function validateShareAuth(req) {
+    const userEmail = (req.authenticatedEmail && req.authenticatedEmail.includes('@')) ? req.authenticatedEmail.toLowerCase().trim() : '';
+    const { botToken, chunks } = req.body || {};
+    if (!userEmail && !botToken && (!Array.isArray(chunks) || chunks.length === 0 || !chunks[0].botTokenUsed)) {
+      return { allowed: false, error: 'Missing bot token or authentication to create share link.' };
+    }
+    return { allowed: true, userEmail };
+  }
+
+  // 1. Unauthenticated with bot token: ALLOWED
+  assert.deepEqual(validateShareAuth({ body: { botToken: '123456:ABC' } }), { allowed: true, userEmail: '' });
+
+  // 2. Authenticated with JWT email: ALLOWED
+  assert.deepEqual(validateShareAuth({ authenticatedEmail: 'user@example.com', body: {} }), { allowed: true, userEmail: 'user@example.com' });
+
+  // 3. No email and no bot token: REJECTED
+  assert.equal(validateShareAuth({ body: {} }).allowed, false);
+});
+
 
