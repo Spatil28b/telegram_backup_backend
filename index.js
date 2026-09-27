@@ -22,17 +22,29 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('@neondatabase/serverless');
 
 // Cryptographically Secure JWT Secret Key (Minimum 32 characters required)
-const JWT_SECRET = process.env.JWT_SECRET || (process.env.DATABASE_URL ? crypto.createHmac('sha256', 'tspace-jwt-salt-2026').update(process.env.DATABASE_URL).digest('hex') : null);
+const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error('FATAL: JWT_SECRET environment variable is missing or less than 32 characters');
+}
+
+/**
+ * Strict positive integer parser (rejects malformed numbers, floats, and strings with non-digits)
+ */
+function parsePositiveInteger(value) {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+  if (!/^\d+$/.test(str)) return null;
+  const n = Number(str);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 // Initialize Express Application Instance
 const app = express();
 
-// Middleware: Request Correlation ID Tracking (Fix #49)
+// Middleware: Request Correlation ID Tracking with strict validation
 app.use((req, res, next) => {
-  req.id = req.headers['x-request-id'] || crypto.randomUUID();
+  const incoming = String(req.headers['x-request-id'] || '').trim();
+  req.id = /^[A-Za-z0-9._-]{1,64}$/.test(incoming) ? incoming : crypto.randomUUID();
   res.setHeader('X-Request-Id', req.id);
   next();
 });
@@ -214,9 +226,13 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
  * 1. DATABASE CONFIGURATION & INITIALIZATION (NEON POSTGRESQL)
  * -------------------------------------------------------------------------------------
  * Configures connection pool to Neon Serverless PostgreSQL.
- * If DATABASE_URL environment variable is missing or unreachable, the server automatically
- * degrades gracefully to in-memory storage without breaking API calls.
+ * If DATABASE_URL environment variable is missing in production, fails fast.
+ * In development, degrades gracefully to in-memory storage without breaking API calls.
  */
+if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL) {
+  throw new Error('FATAL: DATABASE_URL environment variable is required in production.');
+}
+
 const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000, idleTimeoutMillis: 15000 })
   : null;
@@ -230,11 +246,13 @@ if (pool) {
 
 /**
  * Executes a PostgreSQL query with a resilient timeout (default 8 seconds) and automatic 1x retry
- * on transient connection reset/wake-up errors to handle serverless cold starts seamlessly.
+ * strictly on idempotent (SELECT) queries during transient connection reset/wake-up errors.
  */
 async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) {
   if (!pool) throw new Error('Database pool is disabled or null');
   let lastErr = null;
+  const isIdempotent = typeof text === 'string' && text.trim().toUpperCase().startsWith('SELECT');
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await Promise.race([
@@ -252,7 +270,7 @@ async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) 
         err.message.includes('ECONNRESET') ||
         err.message.includes('ENOTFOUND')
       );
-      if (attempt < maxRetries && isTransient) {
+      if (attempt < maxRetries && isTransient && isIdempotent) {
         console.warn(`[Neon Postgres Retry] Transient DB error (attempt ${attempt + 1}): ${err.message}. Retrying in 400ms...`);
         await new Promise(r => setTimeout(r, 400));
         continue;
@@ -261,123 +279,6 @@ async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) 
     }
   }
   throw lastErr;
-}
-
-
-/**
- * Automatically creates required database tables (users, otps, backed_files) on server boot.
- */
-async function initDb() {
-  if (!pool) {
-    console.log('[Notice] DATABASE_URL environment variable not provided. Operating in-memory mode.');
-    return;
-  }
-  try {
-    await queryWithTimeout(`
-      CREATE TABLE IF NOT EXISTS users (
-        email VARCHAR(255) PRIMARY KEY,
-        password_hash TEXT NOT NULL,
-        bot_token TEXT DEFAULT '',
-        chat_id TEXT DEFAULT '',
-        is_locked BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS otps (
-        email VARCHAR(255) PRIMARY KEY,
-        code VARCHAR(128) NOT NULL,
-        expires_at BIGINT NOT NULL,
-        type VARCHAR(20) DEFAULT 'register'
-      );
-
-      CREATE TABLE IF NOT EXISTS backed_files (
-        id SERIAL PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
-        file_name TEXT NOT NULL,
-        telegram_file_id TEXT NOT NULL,
-        size BIGINT DEFAULT 0,
-        path TEXT DEFAULT '',
-        timestamp BIGINT NOT NULL,
-        message_id BIGINT DEFAULT 0
-      );
-
-      CREATE TABLE IF NOT EXISTS user_settings (
-        email VARCHAR(255) PRIMARY KEY,
-        settings_json TEXT NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS shared_files (
-        share_id VARCHAR(64) PRIMARY KEY,
-        email VARCHAR(255) DEFAULT '',
-        file_path TEXT DEFAULT '',
-        file_name TEXT NOT NULL,
-        file_size BIGINT DEFAULT 0,
-        mime_type VARCHAR(100) DEFAULT 'application/octet-stream',
-        payload_enc TEXT NOT NULL,
-        pin_hash VARCHAR(128) DEFAULT '',
-        expires_at BIGINT DEFAULT 0,
-        download_count INT DEFAULT 0,
-        created_at BIGINT NOT NULL
-      );
-
-      -- Add missing columns before creating indexes that depend on them
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_drive_upload BOOLEAN DEFAULT FALSE;
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS chunks_json TEXT DEFAULT '[]';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS channel_id TEXT DEFAULT '';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS bot_token_used TEXT DEFAULT '';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS total_chunks INT DEFAULT 1;
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS deleted_at BIGINT DEFAULT 0;
-
-      ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT '';
-      ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT '';
-
-      -- Create indexes safely after ensuring all columns exist
-      CREATE INDEX IF NOT EXISTS idx_shared_files_exp ON shared_files(expires_at);
-      -- Drop old unique index if it was created without the partial WHERE clause (Fix #16)
-      DROP INDEX IF EXISTS idx_backed_files_email_path;
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path) WHERE path IS NOT NULL AND path <> '';
-      CREATE INDEX IF NOT EXISTS idx_backed_files_email_ts ON backed_files(email, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_backed_files_email_drive ON backed_files(email, is_drive_upload);
-
-      DELETE FROM otps WHERE expires_at < (EXTRACT(EPOCH FROM NOW()) * 1000);
-    `);
-    console.log('[Neon Postgres] Database schema, indexes and tables initialized successfully!');
-
-    // Migration: Automatically hash any legacy plain-text passwords in PostgreSQL database using bcrypt (10 rounds)
-    try {
-      const plainUsers = await queryWithTimeout(`SELECT email, password_hash FROM users WHERE password_hash NOT LIKE '$2%'`);
-      if (plainUsers.rows.length > 0) {
-        console.log(`[Neon Postgres Migration] Encrypting ${plainUsers.rows.length} legacy plain-text password(s) with bcrypt...`);
-        for (const row of plainUsers.rows) {
-          const hashed = await bcrypt.hash(row.password_hash, 10);
-          await queryWithTimeout(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashed, row.email]);
-        }
-        console.log(`[Neon Postgres Migration SUCCESS] All passwords in database are now 100% encrypted with bcrypt!`);
-      }
-    } catch (migErr) {
-      console.warn('[Neon Postgres Migration Warning]', migErr.message);
-    }
-
-    // Migration: Automatically repair corrupt/0/1970 or legacy July 15, 2026 placeholder timestamps to current timestamp
-    try {
-      const tsUpdateRes = await queryWithTimeout(`UPDATE backed_files SET timestamp = EXTRACT(EPOCH FROM NOW()) * 1000 WHERE timestamp = 1784030400000 OR timestamp < 946684800000`);
-      if (tsUpdateRes && tsUpdateRes.rowCount > 0) {
-        console.log(`[Neon Postgres Migration SUCCESS] Reconciled ${tsUpdateRes.rowCount} legacy/July 2026 timestamp(s) to current era!`);
-      }
-    } catch (tsErr) {
-      console.warn('[Neon Postgres Timestamp Sanitize Warning]', tsErr.message);
-    }
-  } catch (err) {
-    console.error('[Neon Postgres Error] Failed to initialize database tables:', err.message);
-  }
-}
-// Database schema migrations are executed during deployment via migrate.js.
-// In local development or when explicitly requested, initDb runs once on boot.
-if (process.env.RUN_MIGRATIONS === 'true' || (process.env.NODE_ENV !== 'production' && require.main === module)) {
-  initDb().catch(err => console.error('[InitDb Catch]', err.message));
 }
 
 /**
@@ -1089,15 +990,13 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
     const rawVal = manifest !== undefined ? manifest : (settings !== undefined ? settings : data);
     const settingsStr = typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal || {});
 
+    // Guard against oversized settings JSON injection
+    if (settingsStr.length > 100 * 1024) {
+      return res.status(413).json({ success: false, message: 'Settings payload is too large (max 100 KB)' });
+    }
+
     if (pool) {
       try {
-        await queryWithTimeout(
-          `CREATE TABLE IF NOT EXISTS user_settings (
-            email VARCHAR(255) PRIMARY KEY,
-            settings_json TEXT NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          )`
-        );
         await queryWithTimeout(
           `INSERT INTO user_settings (email, settings_json, updated_at)
            VALUES ($1, $2, CURRENT_TIMESTAMP)
@@ -1412,6 +1311,12 @@ app.post(['/api/files/delete', '/files/delete'], requireAuth, async (req, res, n
     if (pool) {
       try {
         await queryWithTimeout(
+          `DELETE FROM file_chunks WHERE file_id IN (
+             SELECT id FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != ''))
+           )`,
+          [lowerEmail, telegramFileId || '', path || '']
+        );
+        await queryWithTimeout(
           `DELETE FROM backed_files WHERE email = $1 AND (telegram_file_id = $2 OR (path = $3 AND path != ''))`,
           [lowerEmail, telegramFileId || '', path || '']
         );
@@ -1496,6 +1401,11 @@ app.post(['/api/files/purge', '/files/purge'], requireAuth, async (req, res, nex
           }
         }
 
+        // Delete associated file_chunks before backed_files
+        await queryWithTimeout(
+          `DELETE FROM file_chunks WHERE file_id IN (SELECT id FROM backed_files ${queryText})`,
+          queryParams
+        );
         // Delete from backed_files
         await queryWithTimeout(`DELETE FROM backed_files ${queryText}`, queryParams);
 
@@ -1602,6 +1512,10 @@ app.post(['/api/user/delete-account', '/user/delete-account'], requireAuth, asyn
 
         // 2. Execute deletion across all tables in a single transaction
         await client.query('BEGIN');
+        await client.query(
+          `DELETE FROM file_chunks WHERE file_id IN (SELECT id FROM backed_files WHERE email = $1)`,
+          [lowerEmail]
+        );
         await client.query(`DELETE FROM backed_files WHERE email = $1`, [lowerEmail]);
         await client.query(`DELETE FROM shared_files WHERE email = $1`, [lowerEmail]);
         await client.query(`DELETE FROM user_settings WHERE email = $1`, [lowerEmail]);
@@ -1685,7 +1599,6 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
         let queryStr = `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, message_id as "messageId", is_drive_upload as "isDriveUpload",
            COALESCE(chunks_json, '[]') as "chunksJson",
            COALESCE(channel_id, '') as "channelId",
-           COALESCE(bot_token_used, '') as "botTokenUsed",
            COALESCE(total_chunks, 1) as "totalChunks"
            FROM backed_files WHERE email = $1`;
         const params = [email];
@@ -1706,13 +1619,14 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
 
         const result = await queryWithTimeout(queryStr, params);
         const sanitizedFiles = result.rows.map(row => {
-          const ts = parseInt(row.timestamp, 10);
+          const rawDbTs = parseInt(row.timestamp, 10);
+          row.rawCursorTimestamp = !isNaN(rawDbTs) ? rawDbTs : 0;
+          const ts = rawDbTs;
           if (isNaN(ts) || ts < 946684800000 || ts === 1784030400000) {
             row.timestamp = Date.now();
           }
           if (!row.chunksJson || row.chunksJson === 'null') row.chunksJson = '[]';
           row.channelId = row.channelId || '';
-          row.botTokenUsed = row.botTokenUsed || '';
           row.totalChunks = parseInt(row.totalChunks, 10) || 1;
           return row;
         });
@@ -1720,7 +1634,11 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
         let nextCursor = null;
         if (sanitizedFiles.length === limit && sanitizedFiles.length > 0) {
           const last = sanitizedFiles[sanitizedFiles.length - 1];
-          nextCursor = Buffer.from(`${last.timestamp}:${last.id}`).toString('base64');
+          nextCursor = Buffer.from(`${last.rawCursorTimestamp}:${last.id}`).toString('base64');
+        }
+
+        for (const f of sanitizedFiles) {
+          delete f.rawCursorTimestamp;
         }
 
         return res.json({ success: true, files: sanitizedFiles, nextCursor, isDelta: since > 0 });
@@ -1742,7 +1660,6 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
         if (!f.timestamp || f.timestamp < 946684800000 || f.timestamp === 1784030400000) f.timestamp = Date.now();
         if (!f.chunksJson) f.chunksJson = '[]';
         f.channelId = f.channelId || '';
-        f.botTokenUsed = f.botTokenUsed || '';
         f.totalChunks = f.totalChunks || 1;
         return f;
       });
@@ -1765,26 +1682,51 @@ app.post(['/api/files/chunk', '/files/chunk', '/api/files/:fileId/chunks'], requ
   try {
     const email = req.authenticatedEmail;
     const body = req.body || {};
-    const fileId = parseInt(req.params.fileId || body.fileId, 10);
-    const chunkIndex = parseInt(body.chunkIndex, 10);
-    const totalChunks = parseInt(body.totalChunks, 10) || 1;
+    const fileId = parsePositiveInteger(req.params.fileId || body.fileId);
+    const chunkIndex = parsePositiveInteger(body.chunkIndex);
+    const totalChunks = parsePositiveInteger(body.totalChunks) || 1;
     const telegramFileId = String(body.telegramFileId || '').trim();
     const messageId = parseInt(body.messageId || '0', 10) || 0;
     const chunkSize = Math.max(0, parseInt(body.chunkSize || '0', 10) || 0);
     const sha256 = String(body.sha256 || '').trim().toLowerCase();
-    const botId = String(body.botId || '').trim();
+    const rawBotId = String(body.botId || '').trim();
+    const botId = rawBotId ? rawBotId.split(':')[0] : '';
     const status = String(body.status || 'COMPLETED').trim().toUpperCase();
 
-    if (isNaN(fileId) || fileId <= 0 || isNaN(chunkIndex) || chunkIndex <= 0 || !telegramFileId) {
-      return res.status(400).json({ success: false, message: 'Valid fileId, chunkIndex (> 0), and telegramFileId are required.' });
+    const allowedStatuses = new Set(['PENDING', 'UPLOADING', 'COMPLETED', 'FAILED']);
+
+    if (!fileId || !chunkIndex || !telegramFileId) {
+      return res.status(400).json({ success: false, message: 'Valid positive fileId, chunkIndex, and telegramFileId are required.' });
+    }
+    if (chunkIndex > totalChunks) {
+      return res.status(400).json({ success: false, message: 'chunkIndex cannot exceed totalChunks.' });
+    }
+    if (!allowedStatuses.has(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid chunk status: must be PENDING, UPLOADING, COMPLETED, or FAILED.' });
+    }
+    if (sha256 && !/^[a-f0-9]{64}$/i.test(sha256)) {
+      return res.status(400).json({ success: false, message: 'Invalid SHA-256 hash format: must be 64-char hex string.' });
+    }
+    if (telegramFileId.length < 5 || telegramFileId.length > 255) {
+      return res.status(400).json({ success: false, message: 'Invalid telegramFileId length (must be between 5 and 255 characters).' });
+    }
+    if (chunkSize > 100 * 1024 * 1024) {
+      return res.status(400).json({ success: false, message: 'chunkSize exceeds 100 MB limit.' });
     }
 
     if (pool) {
       try {
-        // Verify file ownership
-        const ownerCheck = await queryWithTimeout(`SELECT id FROM backed_files WHERE id = $1 AND email = $2`, [fileId, email]);
+        // Verify parent file ownership and boundary
+        const ownerCheck = await queryWithTimeout(
+          `SELECT id, total_chunks as "totalChunks" FROM backed_files WHERE id = $1 AND email = $2`,
+          [fileId, email]
+        );
         if (ownerCheck.rows.length === 0) {
-          return res.status(404).json({ success: false, message: 'File not found or unauthorized.' });
+          return res.status(404).json({ success: false, message: 'Parent file not found or unauthorized.' });
+        }
+        const parentTotal = ownerCheck.rows[0].totalChunks;
+        if (parentTotal && chunkIndex > parentTotal) {
+          return res.status(400).json({ success: false, message: `chunkIndex (${chunkIndex}) exceeds parent file totalChunks (${parentTotal}).` });
         }
 
         await queryWithTimeout(`
@@ -1824,13 +1766,13 @@ app.get(['/api/files/:fileId/manifest', '/files/:fileId/manifest', '/api/files/m
   try {
     const email = req.authenticatedEmail;
     const fileIdParam = req.params.fileId || req.query.fileId || req.query.id;
-    const fileId = parseInt(fileIdParam, 10);
+    const fileId = parsePositiveInteger(fileIdParam);
     const pathParam = req.query.path ? String(req.query.path).trim() : null;
 
     if (pool) {
       try {
         let fileRow = null;
-        if (!isNaN(fileId) && fileId > 0) {
+        if (fileId) {
           const resFile = await queryWithTimeout(
             `SELECT id, file_name as "fileName", telegram_file_id as "telegramFileId", size, path, timestamp, total_chunks as "totalChunks", chunks_json as "chunksJson"
              FROM backed_files WHERE id = $1 AND email = $2`,
@@ -1857,24 +1799,44 @@ app.get(['/api/files/:fileId/manifest', '/files/:fileId/manifest', '/api/files/m
           [fileRow.id]
         );
 
-        let chunks = chunksRes.rows || [];
-        // Fallback to legacy chunks_json if file_chunks table is empty for this file
+        let chunks = (chunksRes.rows || []).map(c => ({
+          chunkIndex: c.chunkIndex,
+          telegramFileId: c.telegramFileId,
+          messageId: c.messageId,
+          botId: c.botId ? String(c.botId).split(':')[0] : '', // never leak raw token
+          chunkSize: c.chunkSize,
+          sha256: c.sha256,
+          status: c.status || 'COMPLETED'
+        }));
+
+        // Fallback to legacy chunks_json only if file_chunks table is empty for this file
         if (chunks.length === 0 && fileRow.chunksJson && fileRow.chunksJson !== '[]') {
           try {
             const parsed = typeof fileRow.chunksJson === 'string' ? JSON.parse(fileRow.chunksJson) : fileRow.chunksJson;
-            if (Array.isArray(parsed)) {
-              chunks = parsed.map(c => ({
-                chunkIndex: c.chunkIndex || c.index || c.part || 1,
-                telegramFileId: c.telegramFileId || c.fileId || '',
-                messageId: c.messageId || c.msgId || 0,
-                botId: c.botToken || c.botId || '',
-                chunkSize: c.size || c.chunkSize || 0,
-                sha256: c.sha256 || '',
-                status: 'COMPLETED'
-              }));
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const seen = new Set();
+              for (const c of parsed) {
+                const idx = parsePositiveInteger(c.chunkIndex || c.index || c.part);
+                const tgId = String(c.telegramFileId || c.fileId || '').trim();
+                if (idx && tgId && !seen.has(idx)) {
+                  seen.add(idx);
+                  chunks.push({
+                    chunkIndex: idx,
+                    telegramFileId: tgId,
+                    messageId: parseInt(c.messageId || c.msgId || 0, 10) || 0,
+                    botId: c.botId ? String(c.botId).split(':')[0] : '',
+                    chunkSize: Math.max(0, parseInt(c.size || c.chunkSize || 0, 10) || 0),
+                    sha256: (c.sha256 && /^[a-f0-9]{64}$/i.test(c.sha256)) ? c.sha256 : '',
+                    status: 'COMPLETED'
+                  });
+                }
+              }
+              chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
             }
           } catch (_) {}
         }
+
+        const completedCount = chunks.filter(c => c.status === 'COMPLETED').length;
 
         return res.json({
           success: true,
@@ -1889,7 +1851,7 @@ app.get(['/api/files/:fileId/manifest', '/files/:fileId/manifest', '/api/files/m
           },
           chunks,
           totalChunks: fileRow.totalChunks || 1,
-          completedCount: chunks.length
+          completedCount
         });
       } catch (dbErr) {
         console.error('[DB Error] File manifest query failed:', dbErr.message);
@@ -1902,6 +1864,7 @@ app.get(['/api/files/:fileId/manifest', '/files/:fileId/manifest', '/api/files/m
     next(err);
   }
 });
+
 
 /**
  * -------------------------------------------------------------------------------------
@@ -1985,7 +1948,10 @@ app.get(['/api/files/:fileId/missing-chunks', '/files/:fileId/missing-chunks', '
   }
 });
 
-const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || '';
+const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+if (!GITHUB_RELEASE_TOKEN) {
+  throw new Error('GITHUB_TOKEN is required');
+}
 const GITHUB_REPO_PATH = 'sid-codes28/telegram_backup_backend';
 
 /**
@@ -2165,11 +2131,12 @@ app.get(['/api/app/download-latest', '/app/download-latest', '/api/app/download-
     ghRes.on('data', c => body += c);
     ghRes.on('end', () => {
       try {
-        const json = JSON.parse(body);
-        const assets = json.assets || [];
-        const apkAsset = assets.find(a => a.name && a.name.endsWith('.apk')) || assets[0];
+        const apkAsset =
+          assets.find(a => a.name === 'TelegramBackup-latest.apk') ||
+          assets.find(a => a.name === `TelegramBackup-${json.tag_name}.apk`) ||
+          assets.find(a => a.name && a.name.endsWith('.apk'));
 
-        if (!apkAsset) {
+        if (!apkAsset || !apkAsset.id) {
           return res.status(404).json({ success: false, message: 'No APK asset found in latest GitHub release.' });
         }
 
@@ -2266,10 +2233,39 @@ function escapeHtml(str) {
 // =====================================================================================
 
 const pinAttemptsMap = new Map();
+
+/**
+ * Unified rate limiter for PIN verification on public share links.
+ * Locks out requests from an IP after 5 consecutive incorrect attempts for 10 minutes.
+ */
+function checkSharePinRateLimit(req, shareId) {
+  const clientIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+  const rateLimitKey = `${clientIp}_${shareId}`;
+  const nowMs = Date.now();
+  const attempts = pinAttemptsMap.get(rateLimitKey) || { count: 0, lockUntil: 0 };
+  if (attempts.lockUntil > nowMs) {
+    const waitSeconds = Math.ceil((attempts.lockUntil - nowMs) / 1000);
+    return { locked: true, waitSeconds, rateLimitKey, attempts };
+  }
+  return { locked: false, waitSeconds: 0, rateLimitKey, attempts };
+}
+
+function recordPinAttempt(rateLimitKey, attempts, success) {
+  if (success) {
+    pinAttemptsMap.delete(rateLimitKey);
+  } else {
+    attempts.count = (attempts.count || 0) + 1;
+    if (attempts.count >= 5) {
+      attempts.lockUntil = Date.now() + (10 * 60 * 1000); // 10 min lockout
+    }
+    pinAttemptsMap.set(rateLimitKey, attempts);
+  }
+}
+
 const memoryShareCache = new Map();
 
-// 256-bit cryptographically secure server secret for encrypting sensitive share metadata (Fix #20)
-const rawShareSecret = process.env.SHARE_SECRET || (process.env.DATABASE_URL ? crypto.createHmac('sha256', 'tspace-share-salt-2026').update(process.env.DATABASE_URL).digest('hex') : (process.env.JWT_SECRET ? crypto.createHmac('sha256', 'tspace-share-salt-2026').update(process.env.JWT_SECRET).digest('hex') : null));
+// 256-bit cryptographically secure server secret for encrypting sensitive share metadata
+const rawShareSecret = process.env.SHARE_SECRET;
 if (!rawShareSecret || rawShareSecret.length < 32) {
   throw new Error('FATAL: SHARE_SECRET environment variable is missing or less than 32 characters');
 }
@@ -2343,7 +2339,8 @@ async function getFreshTelegramUrl(botToken, fileId, retries = 3) {
 const telegramCdnUrlCache = new Map(); // key: fileId, value: { url, expiresAt }
 
 // Byte-metered LRU chunk buffer cache (prevents duplicate network downloads & serverless OOM crashes, Fix #24)
-const chunkBufferCache = new Map(); // key: fileId, value: { buffer, byteLength, accessedAt }
+const chunkBufferCache = new Map(); // key: `${botId}:${fileId}`, value: { buffer, byteLength, accessedAt }
+const inFlightFetches = new Map(); // key: `${botId}:${fileId}`, value: Promise<Buffer|null>
 const MAX_CHUNK_CACHE_BYTES = 32 * 1024 * 1024; // 32 MB total RAM ceiling
 let totalChunkCacheBytes = 0;
 
@@ -2397,47 +2394,71 @@ async function resolveChunkUrl(chunk, shareData) {
 
 /**
  * Fetches and caches a chunk's raw buffer from Telegram CDN.
+ * Uses botId:fileId namespaced cache keys, deduplicates concurrent in-flight requests,
+ * and guards against serverless OOMs when chunks exceed MAX_CHUNK_CACHE_BYTES.
  */
 async function fetchChunkBuffer(chunk, shareData) {
   const fileId = (chunk.telegramFileId || chunk.fileId || '').trim();
-  if (chunkBufferCache.has(fileId)) {
-    const entry = chunkBufferCache.get(fileId);
+  if (!fileId) return null;
+  const botId = (chunk.botTokenUsed || chunk.botToken || shareData?.botToken || '').split(':')[0] || 'default';
+  const cacheKey = `${botId}:${fileId}`;
+
+  if (chunkBufferCache.has(cacheKey)) {
+    const entry = chunkBufferCache.get(cacheKey);
     entry.accessedAt = Date.now();
     return entry.buffer;
   }
 
-  const freshUrl = await resolveChunkUrl(chunk, shareData);
-  if (!freshUrl) return null;
-
-  const res = await fetch(freshUrl);
-  if (!res.ok) return null;
-
-  const arrayBuf = await res.arrayBuffer();
-  const buffer = Buffer.from(arrayBuf);
-  const entryBytes = buffer.length;
-
-  // Evict LRU entries until new buffer fits within 32MB ceiling
-  while (totalChunkCacheBytes + entryBytes > MAX_CHUNK_CACHE_BYTES && chunkBufferCache.size > 0) {
-    let oldestKey = null;
-    let oldestTime = Infinity;
-    for (const [k, v] of chunkBufferCache.entries()) {
-      if (v.accessedAt < oldestTime) {
-        oldestTime = v.accessedAt;
-        oldestKey = k;
-      }
-    }
-    if (oldestKey) {
-      const evicted = chunkBufferCache.get(oldestKey);
-      totalChunkCacheBytes -= (evicted?.byteLength || 0);
-      chunkBufferCache.delete(oldestKey);
-    } else {
-      break;
-    }
+  if (inFlightFetches.has(cacheKey)) {
+    return await inFlightFetches.get(cacheKey);
   }
 
-  chunkBufferCache.set(fileId, { buffer, byteLength: entryBytes, accessedAt: Date.now() });
-  totalChunkCacheBytes += entryBytes;
-  return buffer;
+  const fetchPromise = (async () => {
+    const freshUrl = await resolveChunkUrl(chunk, shareData);
+    if (!freshUrl) return null;
+
+    const res = await fetch(freshUrl);
+    if (!res.ok) return null;
+
+    const arrayBuf = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+    const entryBytes = buffer.length;
+
+    // If chunk exceeds max cache size, bypass cache entirely to prevent OOM
+    if (entryBytes > MAX_CHUNK_CACHE_BYTES) {
+      return buffer;
+    }
+
+    // Evict LRU entries until new buffer fits within 32MB ceiling
+    while (totalChunkCacheBytes + entryBytes > MAX_CHUNK_CACHE_BYTES && chunkBufferCache.size > 0) {
+      let oldestKey = null;
+      let oldestTime = Infinity;
+      for (const [k, v] of chunkBufferCache.entries()) {
+        if (v.accessedAt < oldestTime) {
+          oldestTime = v.accessedAt;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey) {
+        const evicted = chunkBufferCache.get(oldestKey);
+        totalChunkCacheBytes -= (evicted?.byteLength || 0);
+        chunkBufferCache.delete(oldestKey);
+      } else {
+        break;
+      }
+    }
+
+    chunkBufferCache.set(cacheKey, { buffer, byteLength: entryBytes, accessedAt: Date.now() });
+    totalChunkCacheBytes += entryBytes;
+    return buffer;
+  })();
+
+  inFlightFetches.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    inFlightFetches.delete(cacheKey);
+  }
 }
 
 /**
@@ -2570,7 +2591,7 @@ async function resolveShareData(identifier) {
   if (pool && cleanId.startsWith('s_')) {
     try {
       const dbRes = await queryWithTimeout(
-        `SELECT share_id, file_name, file_size, mime_type, payload_enc, pin_hash, expires_at 
+        `SELECT share_id, file_name, file_size, mime_type, payload_enc, pin_hash, expires_at, email 
          FROM shared_files WHERE share_id = $1 LIMIT 1`,
         [cleanId]
       );
@@ -2584,6 +2605,7 @@ async function resolveShareData(identifier) {
           mimeType: row.mime_type || getMimeType(row.file_name),
           pinHash: row.pin_hash || '',
           expiresAt: parseInt(row.expires_at) || 0,
+          email: row.email || '',
           botToken: sensitive.botToken || '',
           fileId: sensitive.fileId || '',
           encryptionKey: sensitive.encryptionKey || '',
@@ -2596,17 +2618,28 @@ async function resolveShareData(identifier) {
         const expectedChunksCount = resolved.fileSize > CHUNK_SIZE ? Math.ceil(resolved.fileSize / CHUNK_SIZE) : 1;
         if (pool && expectedChunksCount > 1 && resolved.chunks.length < expectedChunksCount) {
           try {
-            const repairRes = await queryWithTimeout(
-              `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
-               FROM backed_files
-               WHERE (file_name = $1 OR path LIKE '%' || $1)
-                 AND (size = $2 OR (size >= $2 * 0.90 AND size <= $2 * 1.10) OR total_chunks >= $3)
-                 AND total_chunks >= 2
-                 AND chunks_json IS NOT NULL
-                 AND chunks_json != '[]'
-               ORDER BY total_chunks DESC, size DESC LIMIT 1`,
-              [resolved.fileName, resolved.fileSize, expectedChunksCount]
-            );
+            const repairQuery = row.email
+              ? `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
+                 FROM backed_files
+                 WHERE email = $4
+                   AND (file_name = $1 OR path LIKE '%' || $1)
+                   AND (size = $2 OR (size >= $2 * 0.90 AND size <= $2 * 1.10) OR total_chunks >= $3)
+                   AND total_chunks >= 2
+                   AND chunks_json IS NOT NULL
+                   AND chunks_json != '[]'
+                 ORDER BY total_chunks DESC, size DESC LIMIT 1`
+              : `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
+                 FROM backed_files
+                 WHERE (file_name = $1 OR path LIKE '%' || $1)
+                   AND (size = $2 OR (size >= $2 * 0.90 AND size <= $2 * 1.10) OR total_chunks >= $3)
+                   AND total_chunks >= 2
+                   AND chunks_json IS NOT NULL
+                   AND chunks_json != '[]'
+                 ORDER BY total_chunks DESC, size DESC LIMIT 1`;
+            const repairParams = row.email
+              ? [resolved.fileName, resolved.fileSize, expectedChunksCount, row.email]
+              : [resolved.fileName, resolved.fileSize, expectedChunksCount];
+            const repairRes = await queryWithTimeout(repairQuery, repairParams);
             if (repairRes && repairRes.rows && repairRes.rows.length > 0) {
               const rRow = repairRes.rows[0];
               const pChunks = JSON.parse(rRow.chunks_json);
@@ -2690,13 +2723,14 @@ async function handleShareCreate(req, res) {
         const repairRes = await queryWithTimeout(
           `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
            FROM backed_files
-           WHERE (file_name = $1 OR path LIKE '%' || $1)
+           WHERE email = $4
+             AND (file_name = $1 OR path LIKE '%' || $1)
              AND (size = $2 OR (size >= $2 * 0.90 AND size <= $2 * 1.10) OR total_chunks >= $3)
              AND total_chunks >= 2
              AND chunks_json IS NOT NULL
              AND chunks_json != '[]'
            ORDER BY total_chunks DESC, size DESC LIMIT 1`,
-          [safeFileName, parsedSize, expectedChunksCount]
+          [safeFileName, parsedSize, expectedChunksCount, userEmail]
         );
         if (repairRes && repairRes.rows && repairRes.rows.length > 0) {
           const row = repairRes.rows[0];
@@ -2828,8 +2862,13 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
 
     if (!isNaN(start) && start >= 0 && end >= start && start < totalSize) {
       const clampedEnd = Math.min(end, totalSize - 1);
+      const expectedLength = clampedEnd - start + 1;
       try {
         const decryptedRange = await getDecryptedPlaintextRange(chunkList, shareData, start, clampedEnd);
+        if (!decryptedRange || decryptedRange.length !== expectedLength) {
+          console.error(`[Universal Range Request Error] Range length mismatch: got ${decryptedRange?.length || 0}, expected ${expectedLength}`);
+          return res.status(502).json({ success: false, message: 'Stream range integrity failure: chunk mismatch or decryption error' });
+        }
 
         res.status(206);
         res.setHeader('Content-Range', `bytes ${start}-${clampedEnd}/${totalSize}`);
@@ -2847,7 +2886,8 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         return res.end(decryptedRange);
       } catch (rangeErr) {
-        console.warn('[Universal Range Request Fallback]', rangeErr.message);
+        console.error('[Universal Range Request Failure]', rangeErr.message);
+        return res.status(502).json({ success: false, message: `Failed to decrypt range: ${rangeErr.message}` });
       }
     }
   }
@@ -2927,7 +2967,9 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
           try {
             const finalBytes = decipher.final();
             if (finalBytes && finalBytes.length > 0) this.push(finalBytes);
-          } catch (_) {}
+          } catch (err) {
+            return callback(err);
+          }
         }
         callback();
       }
@@ -3113,13 +3155,8 @@ async function handleShare(req, res) {
     }
 
     // 2. Anti-Brute-Force Rate Limiting on PIN
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-    const rateLimitKey = `${clientIp}_${shareData.shareId}`;
-    const nowMs = Date.now();
-    const attempts = pinAttemptsMap.get(rateLimitKey) || { count: 0, lockUntil: 0 };
-
-    if (attempts.lockUntil > nowMs) {
-      const waitSeconds = Math.ceil((attempts.lockUntil - nowMs) / 1000);
+    const pinRate = checkSharePinRateLimit(req, shareData.shareId);
+    if (pinRate.locked) {
       return res.status(429).send(`
         <!DOCTYPE html>
         <html lang="en">
@@ -3139,7 +3176,7 @@ async function handleShare(req, res) {
             <div style="font-size: 52px;">🛡️</div>
             <h2>Too Many Incorrect Attempts</h2>
             <p>Access to this protected file is temporarily locked to prevent unauthorized access.</p>
-            <p style="color: #9ECAFF; font-weight: 500;">Please wait ${waitSeconds} seconds before trying again.</p>
+            <p style="color: #9ECAFF; font-weight: 500;">Please wait ${pinRate.waitSeconds} seconds before trying again.</p>
           </div>
         </body>
         </html>
@@ -3164,14 +3201,10 @@ async function handleShare(req, res) {
 
       if (!isPinValid) {
         if (userEnteredPin) {
-          attempts.count += 1;
-          if (attempts.count >= 5) {
-            attempts.lockUntil = nowMs + (10 * 60 * 1000); // 10 min lockout
-          }
-          pinAttemptsMap.set(rateLimitKey, attempts);
+          recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, false);
         }
 
-        const remainingTries = Math.max(0, 5 - attempts.count);
+        const remainingTries = Math.max(0, 5 - (pinRate.attempts.count || 0));
         return res.send(`
           <!DOCTYPE html>
           <html lang="en">
@@ -3223,7 +3256,7 @@ async function handleShare(req, res) {
           </html>
         `);
       } else {
-        pinAttemptsMap.delete(rateLimitKey);
+        recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
       }
     }
 
@@ -3786,14 +3819,12 @@ async function handleShare(req, res) {
               }, 4000);
 
             } catch (err) {
-              console.warn('[Progressive chunk assembly notice, switching to direct stream]', err);
-              progStatus.innerText = '⚠️ Direct stream fallback...';
-              setTimeout(() => {
-                window.location.href = directStreamUrl;
-                btn.disabled = false;
-                btn.style.opacity = '1';
-                txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
-              }, 1200);
+              console.error('[Download Error]', err);
+              progStatus.innerText = '❌ Download interrupted: ' + (err.message || 'Network error');
+              progBar.style.backgroundColor = '#FFB4AB';
+              btn.disabled = false;
+              btn.style.opacity = '1';
+              txt.innerText = 'Retry Download';
             }
           }
 
@@ -3844,14 +3875,30 @@ async function handleShareChunk(req, res) {
 
     // Check PIN protection if set
     if (shareData.pinHash) {
-      const pinParam = req.query?.pin || req.headers['x-share-pin'] || '';
-      const pinHash = crypto.createHash('sha256').update(String(pinParam).trim()).digest('hex');
-      try {
-        if (!crypto.timingSafeEqual(Buffer.from(pinHash, 'utf8'), Buffer.from(shareData.pinHash, 'utf8'))) {
-          return res.status(401).json({ success: false, message: 'Security PIN required to access chunk' });
+      const pinRate = checkSharePinRateLimit(req, shareData.shareId);
+      if (pinRate.locked) {
+        return res.status(429).json({
+          success: false,
+          message: `Too many incorrect PIN attempts. Locked for ${pinRate.waitSeconds} seconds.`
+        });
+      }
+
+      const pinParam = String(req.query?.pin || req.headers['x-share-pin'] || '').trim();
+      let isPinValid = false;
+      if (pinParam) {
+        const pinHash = crypto.createHash('sha256').update(pinParam).digest('hex');
+        try {
+          isPinValid = crypto.timingSafeEqual(Buffer.from(pinHash, 'utf8'), Buffer.from(shareData.pinHash, 'utf8'));
+        } catch (_) {
+          isPinValid = false;
         }
-      } catch (_) {
+      }
+
+      if (!isPinValid) {
+        recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, false);
         return res.status(401).json({ success: false, message: 'Security PIN required to access chunk' });
+      } else {
+        recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
       }
     }
 

@@ -2,7 +2,7 @@
  * =====================================================================================
  * NEON POSTGRESQL DATABASE SCHEMA MIGRATION & MAINTENANCE SCRIPT
  * =====================================================================================
- * Executes database migrations outside of serverless request execution path.
+ * Executes versioned database migrations outside of serverless request execution path.
  * Run during deployment or locally via: node migrate.js
  * =====================================================================================
  */
@@ -26,126 +26,189 @@ const pool = new Pool({
 async function runMigrations() {
   console.log('🚀 [Neon Postgres Migration] Starting database schema migration...');
   const client = await pool.connect();
+  const ADVISORY_LOCK_ID = 88471295;
+
   try {
-    console.log('1️⃣  Creating core tables if not exist...');
+    // Acquire PostgreSQL advisory lock to ensure single-execution during concurrent deploys
+    await client.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_ID]);
+
+    // 0. Ensure schema_migrations tracking table exists
     await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        email VARCHAR(255) PRIMARY KEY,
-        password_hash TEXT NOT NULL,
-        bot_token TEXT DEFAULT '',
-        chat_id TEXT DEFAULT '',
-        is_locked BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS otps (
-        email VARCHAR(255) PRIMARY KEY,
-        code VARCHAR(128) NOT NULL,
-        expires_at BIGINT NOT NULL,
-        type VARCHAR(20) DEFAULT 'register'
-      );
-
-      CREATE TABLE IF NOT EXISTS backed_files (
-        id SERIAL PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
-        file_name TEXT NOT NULL,
-        telegram_file_id TEXT NOT NULL,
-        size BIGINT DEFAULT 0,
-        path TEXT DEFAULT '',
-        timestamp BIGINT NOT NULL,
-        message_id BIGINT DEFAULT 0
-      );
-
-      CREATE TABLE IF NOT EXISTS user_settings (
-        email VARCHAR(255) PRIMARY KEY,
-        settings_json TEXT NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS shared_files (
-        share_id VARCHAR(64) PRIMARY KEY,
-        email VARCHAR(255) DEFAULT '',
-        file_path TEXT DEFAULT '',
-        file_name TEXT NOT NULL,
-        file_size BIGINT DEFAULT 0,
-        mime_type VARCHAR(100) DEFAULT 'application/octet-stream',
-        payload_enc TEXT NOT NULL,
-        pin_hash VARCHAR(128) DEFAULT '',
-        expires_at BIGINT DEFAULT 0,
-        download_count INT DEFAULT 0,
-        created_at BIGINT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS file_chunks (
-        file_id BIGINT NOT NULL,
-        chunk_index INT NOT NULL,
-        telegram_file_id TEXT NOT NULL,
-        message_id BIGINT DEFAULT 0,
-        bot_id TEXT DEFAULT '',
-        chunk_size BIGINT DEFAULT 0,
-        sha256 TEXT DEFAULT '',
-        PRIMARY KEY (file_id, chunk_index)
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version VARCHAR(50) PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    console.log('   ✓ Core tables verified.');
 
-    console.log('2️⃣  Adding schema evolution columns safely...');
-    await client.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_drive_upload BOOLEAN DEFAULT FALSE;
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS chunks_json TEXT DEFAULT '[]';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS channel_id TEXT DEFAULT '';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS bot_token_used TEXT DEFAULT '';
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS total_chunks INT DEFAULT 1;
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
-      ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS deleted_at BIGINT DEFAULT 0;
+    const appliedRes = await client.query('SELECT version FROM schema_migrations');
+    const appliedVersions = new Set(appliedRes.rows.map(r => r.version));
 
-      ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT '';
-      ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT '';
-
-      ALTER TABLE file_chunks ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'COMPLETED';
-      ALTER TABLE file_chunks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-    `);
-    console.log('   ✓ Columns verified.');
-
-    console.log('3️⃣  Configuring high-performance indexes...');
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_shared_files_exp ON shared_files(expires_at);
-      DROP INDEX IF EXISTS idx_backed_files_email_path;
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path) WHERE path IS NOT NULL AND path <> '';
-      CREATE INDEX IF NOT EXISTS idx_backed_files_email_ts ON backed_files(email, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_backed_files_email_drive ON backed_files(email, is_drive_upload);
-      CREATE INDEX IF NOT EXISTS idx_chunks_file ON file_chunks(file_id, chunk_index);
-      DELETE FROM otps WHERE expires_at < (EXTRACT(EPOCH FROM NOW()) * 1000);
-    `);
-    console.log('   ✓ Indexes configured and expired OTPs cleaned.');
-
-    console.log('4️⃣  Checking legacy password hashes...');
-    const plainUsers = await client.query(`SELECT email, password_hash FROM users WHERE password_hash NOT LIKE '$2%'`);
-    if (plainUsers.rows.length > 0) {
-      console.log(`   Encrypting ${plainUsers.rows.length} legacy plain-text password(s) with bcrypt...`);
-      for (const row of plainUsers.rows) {
-        const hashed = await bcrypt.hash(row.password_hash, 10);
-        await client.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashed, row.email]);
+    // Helper to execute migration if not already applied
+    async function applyMigration(version, description, migrationFn) {
+      if (appliedVersions.has(version)) {
+        console.log(`   ⏭️  [${version}] ${description} (already applied)`);
+        return;
       }
-      console.log(`   ✓ All legacy passwords encrypted with bcrypt.`);
-    } else {
-      console.log('   ✓ All passwords properly hashed.');
+      console.log(`   ⏳ [${version}] Applying: ${description}...`);
+      await client.query('BEGIN');
+      try {
+        await migrationFn(client);
+        await client.query(
+          'INSERT INTO schema_migrations (version, applied_at) VALUES ($1, NOW())',
+          [version]
+        );
+        await client.query('COMMIT');
+        appliedVersions.add(version);
+        console.log(`   ✓ [${version}] ${description} completed.`);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(`   ❌ [${version}] Migration failed:`, err.message);
+        throw err;
+      }
     }
 
-    console.log('5️⃣  Checking legacy timestamp sanitization...');
-    const tsRes = await client.query(`UPDATE backed_files SET timestamp = EXTRACT(EPOCH FROM NOW()) * 1000 WHERE timestamp = 1784030400000 OR timestamp < 946684800000`);
-    if (tsRes.rowCount > 0) {
-      console.log(`   ✓ Reconciled ${tsRes.rowCount} legacy timestamp(s) to current era.`);
-    } else {
-      console.log('   ✓ All timestamps valid.');
-    }
+    // 1. Initial Core Tables
+    await applyMigration('v1_core_tables', 'Create core tables (users, otps, backed_files, user_settings, shared_files, file_chunks)', async (db) => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          email VARCHAR(255) PRIMARY KEY,
+          password_hash TEXT NOT NULL,
+          bot_token TEXT DEFAULT '',
+          chat_id TEXT DEFAULT '',
+          is_locked BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
 
-    console.log('\n🎉 [Neon Postgres Migration] Database schema is 100% UP TO DATE!\n');
+        CREATE TABLE IF NOT EXISTS otps (
+          email VARCHAR(255) PRIMARY KEY,
+          code VARCHAR(128) NOT NULL,
+          expires_at BIGINT NOT NULL,
+          type VARCHAR(20) DEFAULT 'register'
+        );
+
+        CREATE TABLE IF NOT EXISTS backed_files (
+          id SERIAL PRIMARY KEY,
+          email VARCHAR(255) NOT NULL,
+          file_name TEXT NOT NULL,
+          telegram_file_id TEXT NOT NULL,
+          size BIGINT DEFAULT 0,
+          path TEXT DEFAULT '',
+          timestamp BIGINT NOT NULL,
+          message_id BIGINT DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS user_settings (
+          email VARCHAR(255) PRIMARY KEY,
+          settings_json TEXT NOT NULL,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS shared_files (
+          share_id VARCHAR(64) PRIMARY KEY,
+          email VARCHAR(255) DEFAULT '',
+          file_path TEXT DEFAULT '',
+          file_name TEXT NOT NULL,
+          file_size BIGINT DEFAULT 0,
+          mime_type VARCHAR(100) DEFAULT 'application/octet-stream',
+          payload_enc TEXT NOT NULL,
+          pin_hash VARCHAR(128) DEFAULT '',
+          expires_at BIGINT DEFAULT 0,
+          download_count INT DEFAULT 0,
+          created_at BIGINT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS file_chunks (
+          file_id BIGINT NOT NULL,
+          chunk_index INT NOT NULL,
+          telegram_file_id TEXT NOT NULL,
+          message_id BIGINT DEFAULT 0,
+          bot_id TEXT DEFAULT '',
+          chunk_size BIGINT DEFAULT 0,
+          sha256 TEXT DEFAULT '',
+          PRIMARY KEY (file_id, chunk_index)
+        );
+      `);
+    });
+
+    // 2. Schema Evolution Columns
+    await applyMigration('v2_schema_evolution', 'Add optional and evolution columns to tables', async (db) => {
+      await db.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json TEXT DEFAULT '{}';
+        ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_drive_upload BOOLEAN DEFAULT FALSE;
+        ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS chunks_json TEXT DEFAULT '[]';
+        ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS channel_id TEXT DEFAULT '';
+        ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS bot_token_used TEXT DEFAULT '';
+        ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS total_chunks INT DEFAULT 1;
+        ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+        ALTER TABLE backed_files ADD COLUMN IF NOT EXISTS deleted_at BIGINT DEFAULT 0;
+
+        ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT '';
+        ALTER TABLE shared_files ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT '';
+
+        ALTER TABLE file_chunks ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'COMPLETED';
+        ALTER TABLE file_chunks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+      `);
+    });
+
+    // 3. Foreign Key on file_chunks with ON DELETE CASCADE
+    await applyMigration('v3_file_chunks_foreign_key', 'Clean orphan chunks and establish foreign key constraint', async (db) => {
+      // Clean up any orphan chunks before applying foreign key constraint
+      const orphanCleanup = await db.query(`
+        DELETE FROM file_chunks
+        WHERE file_id NOT IN (SELECT id FROM backed_files)
+      `);
+      if (orphanCleanup.rowCount > 0) {
+        console.log(`     Removed ${orphanCleanup.rowCount} orphan file_chunks records.`);
+      }
+
+      await db.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'file_chunks_file_fk'
+          ) THEN
+            ALTER TABLE file_chunks
+            ADD CONSTRAINT file_chunks_file_fk
+            FOREIGN KEY (file_id)
+            REFERENCES backed_files(id)
+            ON DELETE CASCADE;
+          END IF;
+        END $$;
+      `);
+    });
+
+    // 4. Indexes Configuration (non-destructive)
+    await applyMigration('v4_indexes_setup', 'Create high-performance indexes without repeated drops', async (db) => {
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_shared_files_exp ON shared_files(expires_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_backed_files_email_path ON backed_files(email, path) WHERE path IS NOT NULL AND path <> '';
+        CREATE INDEX IF NOT EXISTS idx_backed_files_email_ts ON backed_files(email, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_backed_files_email_drive ON backed_files(email, is_drive_upload);
+        CREATE INDEX IF NOT EXISTS idx_chunks_file ON file_chunks(file_id, chunk_index);
+        DELETE FROM otps WHERE expires_at < (EXTRACT(EPOCH FROM NOW()) * 1000);
+      `);
+    });
+
+    // 5. Password Migration (one-time idempotent)
+    await applyMigration('v5_password_bcrypt', 'Ensure all passwords are hashed with bcrypt', async (db) => {
+      const plainUsers = await db.query(`SELECT email, password_hash FROM users WHERE password_hash NOT LIKE '$2%'`);
+      if (plainUsers.rows.length > 0) {
+        console.log(`     Encrypting ${plainUsers.rows.length} legacy plain-text password(s) with bcrypt...`);
+        for (const row of plainUsers.rows) {
+          const hashed = await bcrypt.hash(row.password_hash, 10);
+          await db.query(`UPDATE users SET password_hash = $1 WHERE email = $2`, [hashed, row.email]);
+        }
+      }
+    });
+
+    console.log('\n🎉 [Neon Postgres Migration] All versioned migrations applied successfully!\n');
   } catch (err) {
     console.error('❌ [Migration Error]:', err.message);
     throw err;
   } finally {
+    try {
+      await client.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_ID]);
+    } catch (_) {}
     client.release();
     await pool.end();
   }
