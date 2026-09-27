@@ -274,7 +274,7 @@ test('Reliability: GitHub Asset Resolver for APK Updates', () => {
 });
 
 test('Versioning: calculateVersionCode prioritizes local app-version.json', () => {
-  const localVer = { versionCode: 140, versionName: '2.6.2' };
+  const localVer = { versionCode: 141, versionName: '2.6.3' };
   function calculateVersionCode(name) {
     const cleanName = (name || '').replace(/^v/, '').trim();
     if (localVer && localVer.versionName === cleanName && localVer.versionCode) {
@@ -283,9 +283,9 @@ test('Versioning: calculateVersionCode prioritizes local app-version.json', () =
     return 106;
   }
 
-  assert.equal(calculateVersionCode('v2.6.2'), 140);
-  assert.equal(calculateVersionCode('2.6.2'), 140);
-  assert.equal(calculateVersionCode('v2.6.1'), 106);
+  assert.equal(calculateVersionCode('v2.6.3'), 141);
+  assert.equal(calculateVersionCode('2.6.3'), 141);
+  assert.equal(calculateVersionCode('v2.6.2'), 106);
 });
 
 test('Security: Credentials Get Endpoint Masks Raw Bot Token', () => {

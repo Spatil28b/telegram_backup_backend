@@ -2064,9 +2064,9 @@ function getLocalAppVersion() {
     } catch (_) {}
   }
   return {
-    versionCode: 140,
-    versionName: '2.6.2',
-    releaseNotes: '✨ Security & Architecture Release v2.6.2'
+    versionCode: 141,
+    versionName: '2.6.3',
+    releaseNotes: '✨ Security & Architecture Release v2.6.3'
   };
 }
 
@@ -2076,6 +2076,7 @@ function getLocalAppVersion() {
  */
 function calculateVersionCode(name) {
   const cleanName = (name || '').replace(/^v/, '').trim();
+  if (cleanName === '2.6.3') return 141;
   if (cleanName === '2.6.2') return 140;
   if (cleanName === '2.6.1') return 139;
   if (cleanName === '2.6.0') return 138;
@@ -2108,7 +2109,7 @@ function calculateVersionCode(name) {
   if (localVer && localVer.versionCode) {
     return localVer.versionCode;
   }
-  return 140;
+  return 141;
 }
 
 /**
@@ -2157,13 +2158,13 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
       } catch (_) {}
       
       const localVer = getLocalAppVersion() || {};
-      const localCode = localVer.versionCode || 140;
+      const localCode = localVer.versionCode || 141;
 
-      // When version names match (or both indicate v2.6.2), always use the authoritative local metadata
-      if (ghName && (ghName === localVer.versionName || ghName === '2.6.2')) {
+      // When version names match (or both indicate v2.6.3), always use the authoritative local metadata
+      if (ghName && (ghName === localVer.versionName || ghName === '2.6.3')) {
         return res.json({
           success: true,
-          versionCode: localCode || 140,
+          versionCode: localCode || 141,
           versionName: localVer.versionName || ghName,
           downloadUrl: downloadUrl,
           releaseNotes: localVer.releaseNotes || ghNotes
@@ -2175,7 +2176,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
         return res.json({
           success: true,
           versionCode: localCode,
-          versionName: localVer.versionName || "2.6.2",
+          versionName: localVer.versionName || "2.6.3",
           downloadUrl: downloadUrl,
           releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
         });
