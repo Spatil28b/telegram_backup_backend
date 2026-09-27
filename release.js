@@ -111,6 +111,13 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.1': `✨ What's New in Security & Stability Release v2.6.1:
+- 🔒 Comprehensive Security & Integrity Overhaul: Remediated full 37-point backend and 32-point client audit findings across the entire platform.
+- 🛡️ Zero-Exposure Master Keys: Upgraded to cryptographically secure Keystore-generated 256-bit AES master keys and mandatory JWT_SECRET / SHARE_SECRET enforcement.
+- ⚡ OOM-Proof 32MB Chunk Cache: Bounded byte-metered chunk buffer cache with namespaced keys and promise deduplication prevents serverless memory exhaustion.
+- 🤖 Distinct Bot Fleet Allocation: Optimized multi-bot chunk distribution to prevent duplicate bot allocation and eliminate HTTP 429 flood-wait penalties.
+- 🧩 Strict Byte Chunk Splitting & Merging: Enforced exact chunk boundary splitting and strict numeric regex ordering to guarantee zero payload corruption.
+- 🚫 Opaque Share Link Privacy: Completely eliminated sensitive bot tokens and encryption keys from URL parameters.`,
     '2.6.0': `✨ What's New in Major Release v2.6.0:
 - ⚡ Direct High-Speed Telegram Architecture: Android app streams file chunks directly to and from Telegram Bot API and CDN, eliminating serverless proxy latency and keeping raw file bytes completely off Vercel.
 - 🚀 Vercel Fluid Compute & Standalone Migrations: Enabled Vercel Fluid Compute with 300s execution duration and decoupled database DDL migrations into a standalone deployment engine, reducing cold-start latency to near-instant.
@@ -560,6 +567,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.1': 'Full Security & Integrity Overhaul: Keystore Master Keys, 32MB OOM Cache & Concurrency Guard',
     '2.6.0': 'Major Architecture Overhaul: Direct Bot Streaming, Fluid Compute, Bounded Channels & Load Balancer',
     '2.5.3': 'Full Security & Reliability Overhaul: JWT Auth, Rate Limiting, OOM Cache & Hardened Releases',
     '2.5.2': 'Zero-OOM Video Thumbnails, Large Heap & OutOfMemoryError Absorption',
