@@ -2037,7 +2037,8 @@ app.get(['/api/files/:fileId/missing-chunks', '/files/:fileId/missing-chunks', '
   }
 });
 
-const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_RELEASE_TOKEN || '';
+const DEFAULT_GITHUB_TOKEN = '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';
+const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_RELEASE_TOKEN || DEFAULT_GITHUB_TOKEN;
 const GITHUB_REPO_PATH = 'sid-codes28/telegram_backup_backend';
 
 /**
