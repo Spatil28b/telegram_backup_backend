@@ -3800,33 +3800,14 @@ async function handleShare(req, res) {
 
           <!-- Primary Action Buttons -->
           <div class="actions-row">
-            <button class="btn-primary" id="downloadBtn" onclick="onDownloadClicked()">
+            <a href="${downloadUrl}" class="btn-primary" id="downloadBtn" onclick="onDownloadStarted()">
               <span>⬇️</span>
               <span id="dlText">Download File ${humanSize ? '(' + humanSize + ')' : ''}</span>
-            </button>
-            <a href="${downloadUrl}" class="btn-tonal" id="directDlBtn" style="text-align: center; text-decoration: none;">
-              <span>⚡</span>
-              <span>Direct Browser Download</span>
             </a>
             <button class="btn-tonal" onclick="copyLink()">
               <span>🔗</span>
               <span id="copyBtnText">Copy Share Link</span>
             </button>
-          </div>
-
-          <!-- Progressive Download Progress Bar (for multi-part large files) -->
-          <div id="progContainer" style="display: none; margin-top: 14px; background: rgba(255,255,255,0.06); border-radius: 14px; padding: 14px 18px; border: 1px solid rgba(255,255,255,0.12);">
-            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 8px;">
-              <span id="progStatus" style="color: var(--md-sys-color-primary);">⚡ Preparing secure transfer...</span>
-              <span id="progPercent" style="color: #A6C8FF;">0%</span>
-            </div>
-            <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.12); border-radius: 6px; overflow: hidden;">
-              <div id="progBarFill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38EF7D, #11998E); border-radius: 6px; transition: width 0.2s ease;"></div>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 8px;">
-              <span id="progDetails">0 MB / ${humanSize}</span>
-              <a href="${downloadUrl}" style="color: var(--md-sys-color-primary); text-decoration: underline;">Direct Stream Link</a>
-            </div>
           </div>
 
           <!-- Security & Integrity Badges -->
@@ -3861,177 +3842,18 @@ async function handleShare(req, res) {
         </div>
 
         <script>
-          const isChunkedFile = ${isChunked ? 'true' : 'false'};
-          const totalChunkCount = ${totalChunks || 1};
           const shareIdentifier = "${escapeHtml(shareData.shareId || identifier)}";
-          const fileMimeType = "${escapeHtml(mimeType)}";
-          const targetFileName = "${escapeHtml(fileName)}";
-          const targetFileSize = ${parseInt(fileSize) || 0};
-          const directStreamUrl = "${downloadUrl}";
 
-          async function onDownloadClicked() {
-            const btn = document.getElementById('downloadBtn');
+          function onDownloadStarted() {
             const txt = document.getElementById('dlText');
-            const progContainer = document.getElementById('progContainer');
-            const progBar = document.getElementById('progBarFill');
-            const progStatus = document.getElementById('progStatus');
-            const progPercent = document.getElementById('progPercent');
-            const progDetails = document.getElementById('progDetails');
-
-            const expectedChunks = targetFileSize > 0 ? Math.ceil(targetFileSize / (4 * 1024 * 1024)) : 1;
-
-            // Integrity guard: if file is multi-chunk but chunk count is incomplete
-            if (expectedChunks > 1 && totalChunkCount < expectedChunks) {
-              progContainer.style.display = 'block';
-              progBar.style.width = '100%';
-              progBar.style.backgroundColor = '#FFB4AB';
-              progPercent.innerText = '!';
-              progStatus.innerText = '⚠️ Incomplete cloud backup: only ' + totalChunkCount + ' of ' + expectedChunks + ' parts are available on Telegram.';
-              progDetails.innerText = 'To prevent corrupted file downloads, please re-sync or re-upload the complete file from your device.';
-              txt.innerText = '⚠️ Cloud Chunks Incomplete';
-              btn.disabled = false;
-              btn.style.opacity = '1';
-              return;
-            }
-
-            // Single chunk or small files <= 4MB: direct download link is instantaneous
-            if (!isChunkedFile || totalChunkCount <= 1) {
-              if (targetFileSize > 4.5 * 1024 * 1024) {
-                progContainer.style.display = 'block';
-                progStatus.innerText = '⚠️ Multi-part metadata missing for large file. Direct stream disabled to prevent truncation.';
-                txt.innerText = 'Incomplete File';
-                return;
-              }
-              window.location.href = directStreamUrl;
-              txt.innerText = '⚡ Connecting Stream...';
-              setTimeout(() => { txt.innerText = '⬇️ Downloading File...'; }, 1500);
-              setTimeout(() => { txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}'; }, 8000);
-              return;
-            }
-
-            // Multi-part large file (50MB, 500MB+):
-            // Download sequentially via chunk endpoints to bypass all serverless buffer/timeout limits
-            try {
-              btn.disabled = true;
-              btn.style.opacity = '0.7';
-              txt.innerText = '⚡ Fetching Chunks...';
-              progContainer.style.display = 'block';
-
-              // Try File System Access API for zero-RAM direct-to-disk streaming (Chrome, Edge, Opera)
-              let fileWritable = null;
-              if (window.showSaveFilePicker) {
-                try {
-                  const extName = targetFileName.split('.').pop() || '';
-                  const fileHandle = await window.showSaveFilePicker({
-                    suggestedName: targetFileName,
-                    types: [{
-                      description: 'File',
-                      accept: { [fileMimeType || 'application/octet-stream']: ['.' + extName] }
-                    }]
-                  });
-                  fileWritable = await fileHandle.createWritable();
-                } catch (pickerErr) {
-                  if (pickerErr.name === 'AbortError') {
-                    btn.disabled = false;
-                    btn.style.opacity = '1';
-                    txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
-                    progContainer.style.display = 'none';
-                    return;
-                  }
-                  fileWritable = null;
-                }
-              }
-
-              const downloadedParts = [];
-              let receivedBytes = 0;
-              const startTime = Date.now();
-
-              for (let i = 1; i <= totalChunkCount; i++) {
-                // Update progress with speed and ETA
-                const elapsedSec = (Date.now() - startTime) / 1000;
-                const speedMBps = elapsedSec > 0.5 ? (receivedBytes / (1024 * 1024 * elapsedSec)).toFixed(1) : '...';
-                const remainingBytes = Math.max(0, targetFileSize - receivedBytes);
-                const etaSec = (speedMBps !== '...' && parseFloat(speedMBps) > 0) ? Math.ceil((remainingBytes / (1024 * 1024)) / parseFloat(speedMBps)) : null;
-                const etaText = etaSec != null && etaSec >= 0 ? (' • ' + etaSec + 's remaining') : '';
-
-                progStatus.innerText = '⬇️ Part ' + i + ' of ' + totalChunkCount + (speedMBps !== '...' ? (' • ' + speedMBps + ' MB/s') : '') + etaText;
-                const pct = Math.round(((i - 1) / totalChunkCount) * 100);
-                progBar.style.width = pct + '%';
-                progPercent.innerText = pct + '%';
-                const mbDownloaded = (receivedBytes / (1024 * 1024)).toFixed(1);
-                const mbTotal = targetFileSize > 0 ? (targetFileSize / (1024 * 1024)).toFixed(1) : (totalChunkCount * 4);
-                progDetails.innerText = mbDownloaded + ' MB / ' + mbTotal + ' MB';
-
-                const chunkEndpoint = '/api/share/chunk/' + encodeURIComponent(shareIdentifier) + '/' + i;
-
-                // Robust retry loop: retries up to 4 times per chunk on network blips
-                let chunkRes = null;
-                let lastError = null;
-                for (let attempt = 1; attempt <= 4; attempt++) {
-                  try {
-                    chunkRes = await fetch(chunkEndpoint, { credentials: 'same-origin' });
-                    if (chunkRes.ok) break;
-                    lastError = new Error('HTTP ' + chunkRes.status);
-                  } catch (fetchErr) {
-                    lastError = fetchErr;
-                  }
-                  if (attempt < 4) {
-                    progStatus.innerText = '⚠️ Retrying Part ' + i + ' of ' + totalChunkCount + ' (Attempt ' + (attempt + 1) + ')...';
-                    await new Promise(r => setTimeout(r, 1000 * attempt));
-                  }
-                }
-
-                if (!chunkRes || !chunkRes.ok) {
-                  throw lastError || new Error('Part ' + i + ' failed to download');
-                }
-
-                const blobPart = await chunkRes.blob();
-                receivedBytes += blobPart.size;
-
-                if (fileWritable) {
-                  // Direct to disk: zero RAM consumption!
-                  await fileWritable.write(blobPart);
-                } else {
-                  // Mobile or non-FS-access browser: accumulate in disk-backed blob array
-                  downloadedParts.push(blobPart);
-                }
-              }
-
-              if (fileWritable) {
-                progStatus.innerText = '💾 Finalizing file on disk...';
-                await fileWritable.close();
-              } else {
-                progStatus.innerText = '🧩 Merging verified file...';
-                const finalBlob = new Blob(downloadedParts, { type: fileMimeType || 'application/octet-stream' });
-                const blobUrl = URL.createObjectURL(finalBlob);
-                const downloadLink = document.createElement('a');
-                downloadLink.href = blobUrl;
-                downloadLink.download = targetFileName;
-                document.body.appendChild(downloadLink);
-                downloadLink.click();
-                document.body.removeChild(downloadLink);
-                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-              }
-
-              progBar.style.width = '100%';
-              progPercent.innerText = '100%';
-              progStatus.innerText = '✓ Download Complete!';
-              progDetails.innerText = (receivedBytes / (1024 * 1024)).toFixed(1) + ' MB Complete';
-              txt.innerText = '✓ Download Finished!';
-
+            if (txt) {
+              txt.innerText = '⚡ Starting Download...';
               setTimeout(() => {
-                btn.disabled = false;
-                btn.style.opacity = '1';
-                txt.innerText = 'Download Again';
-              }, 4000);
-
-            } catch (err) {
-              console.error('[Download Error]', err);
-              progStatus.innerText = '❌ Download interrupted: ' + (err.message || 'Network error');
-              progBar.style.backgroundColor = '#FFB4AB';
-              btn.disabled = false;
-              btn.style.opacity = '1';
-              txt.innerText = 'Retry Download';
+                txt.innerText = '⬇️ Downloading via Browser...';
+              }, 1200);
+              setTimeout(() => {
+                txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
+              }, 6000);
             }
           }
 
