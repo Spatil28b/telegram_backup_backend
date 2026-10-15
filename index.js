@@ -2076,6 +2076,7 @@ function getLocalAppVersion() {
  */
 function calculateVersionCode(name) {
   const cleanName = (name || '').replace(/^v/, '').trim();
+  if (cleanName === '2.6.4') return 142;
   if (cleanName === '2.6.3') return 141;
   if (cleanName === '2.6.2') return 140;
   if (cleanName === '2.6.1') return 139;

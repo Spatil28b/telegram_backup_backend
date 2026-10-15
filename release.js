@@ -111,6 +111,20 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.4': `✨ What's New in High-Speed Share & Security Release v2.6.4:
+- ⚡ Fast Direct Stream Download Default: Web share portal upgraded to direct native streaming downloads by default, bypassing sequential chunk stitching for maximum download throughput.
+- 🚀 Zero-Overhead Browser Performance: Completely eliminated heavy client-side chunk loops, memory blob accumulation, and browser progress bars, preventing mobile tab freezing and memory leaks.
+- 📱 Native Browser & OS Download Manager: Direct stream downloads hook seamlessly into Android notification tray and desktop browser download managers with native pause, resume, and speed tracking.
+- 🔒 Strict Bot Token Masking: Credentials API strictly masks raw Telegram bot tokens in all query and indexing responses, exposing only sanitized bot identifiers.
+- 🛡️ Autonomous Server-Side Share Link Creation: Web share links resolve chunk credentials and bot tokens directly from PostgreSQL on the backend, removing the requirement for client devices to transmit raw bot tokens.
+- 🧩 Bit-Exact Parallel CDN Pre-Resolution: Backend pre-resolves Telegram CDN chunk paths in parallel batches of 6, delivering continuous decrypted byte streams on-the-fly with zero buffer stalls.
+- 🔐 KeystoreVault Passphrase Hardening: Android client migrated zeroKnowledgePassphrase into hardware-backed KeystoreVault with automated legacy plaintext purge from SharedPreferences.
+- ✍️ Explicit Release Signing Enforcement: Android build pipeline throws explicit, actionable errors if keystore credentials or signing environment variables are missing.`,
+    '2.6.3': `✨ What's New in Security & Architecture Release v2.6.3:
+- 🔐 Hardware-Backed Android Keystore: Sensitive credentials (master key, zero-knowledge passphrase, bot tokens, chat ID, Gemini keys, auth tokens) are now encrypted with hardware-backed AndroidKeyStore, completely eliminating plaintext SharedPreferences exposure.
+- 🛡️ Authenticated AES-256-GCM Stream Decryption: Upgraded to support authenticated GCM256 stream slicing with byte-exact CTR decryption for seamless media seeking and zero stream corruption.
+- 🍪 HttpOnly Cookie Share Session Auth: Share link portal now issues secure HttpOnly cookies for authorized media streaming, eliminating plaintext PINs and sensitive parameters from query strings.
+- ⚡ Resilient Serverless Backend: Zero-downtime startup fallbacks, high-speed direct CDN redirect for in-app updates, and reliable Neon PostgreSQL connection pooling.`,
     '2.6.2': `✨ What's New in Security & Architecture Release v2.6.2:
 - 🔐 Hardware-Backed Android Keystore: Sensitive credentials (master key, bot tokens, chat ID, Gemini keys, auth tokens) are now encrypted with hardware-backed AndroidKeyStore, completely eliminating plaintext SharedPreferences exposure.
 - 🛡️ Authenticated AES-256-GCM Stream Decryption: Backend upgraded to support authenticated GCM256 stream slicing with byte-exact CTR decryption for seamless media seeking and zero stream corruption.
@@ -588,6 +602,8 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.4': 'Fast Direct Stream Downloads, Zero-Memory Browser Streaming, Strict Bot Token Sanitization & Server Share Creation',
+    '2.6.3': 'Hardware-Backed Keystore Vault, AES-GCM Stream Slicing, Resilient Endpoints & Opaque Sharing',
     '2.6.2': 'Hardware-Backed Keystore Vault, AES-GCM Stream Slicing, HttpOnly Share Auth & Memory Bounds',
     '2.6.1': 'Full Security & Integrity Overhaul: Keystore Master Keys, 32MB OOM Cache & Concurrency Guard',
     '2.6.0': 'Major Architecture Overhaul: Direct Bot Streaming, Fluid Compute, Bounded Channels & Load Balancer',
