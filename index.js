@@ -2076,6 +2076,7 @@ function getLocalAppVersion() {
  */
 function calculateVersionCode(name) {
   const cleanName = (name || '').replace(/^v/, '').trim();
+  if (cleanName === '2.6.5') return 143;
   if (cleanName === '2.6.4') return 142;
   if (cleanName === '2.6.3') return 141;
   if (cleanName === '2.6.2') return 140;
@@ -2110,7 +2111,7 @@ function calculateVersionCode(name) {
   if (localVer && localVer.versionCode) {
     return localVer.versionCode;
   }
-  return 141;
+  return 143;
 }
 
 /**
@@ -2159,13 +2160,13 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
       } catch (_) {}
       
       const localVer = getLocalAppVersion() || {};
-      const localCode = localVer.versionCode || 141;
+      const localCode = localVer.versionCode || 143;
 
-      // When version names match (or both indicate v2.6.3), always use the authoritative local metadata
-      if (ghName && (ghName === localVer.versionName || ghName === '2.6.3')) {
+      // When version names match (or both indicate current release), always use the authoritative local metadata
+      if (ghName && (ghName === localVer.versionName || ghName === '2.6.5')) {
         return res.json({
           success: true,
-          versionCode: localCode || 141,
+          versionCode: localCode || 143,
           versionName: localVer.versionName || ghName,
           downloadUrl: downloadUrl,
           releaseNotes: localVer.releaseNotes || ghNotes
@@ -2177,7 +2178,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
         return res.json({
           success: true,
           versionCode: localCode,
-          versionName: localVer.versionName || "2.6.3",
+          versionName: localVer.versionName || "2.6.5",
           downloadUrl: downloadUrl,
           releaseNotes: localVer.releaseNotes || "✨ New performance improvements & multi-bot stability updates."
         });
