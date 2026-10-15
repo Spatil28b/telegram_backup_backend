@@ -111,6 +111,15 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.5': `✨ What's New in Liquid Glass & Direct Streaming Release v2.6.5:
+- 🎨 Liquid Glass Design System: Introduced full-fidelity iOS 26 & VisionOS inspired Liquid Glass theme with deep obsidian crystal, translucent frosted glass cards, dynamic specular refraction highlights, and illuminated capsule navigation bars.
+- ⚡ Fast Direct Stream Downloads Default: Web share portal upgraded to direct native streaming downloads by default, bypassing sequential chunk stitching for maximum download throughput.
+- 🚀 Zero-Overhead Browser Performance: Completely eliminated heavy client-side chunk loops, memory blob accumulation, and browser progress bars, preventing mobile tab freezing and memory leaks.
+- 📱 Native Browser & OS Download Manager: Direct stream downloads hook seamlessly into Android notification tray and desktop browser download managers with native pause, resume, and speed tracking.
+- 🔒 Strict Bot Token Masking: Credentials API strictly masks raw Telegram bot tokens in all query and indexing responses, exposing only sanitized bot identifiers.
+- 🛡️ Autonomous Server-Side Share Link Creation: Web share links resolve chunk credentials and bot tokens directly from PostgreSQL on the backend, removing the requirement for client devices to transmit raw bot tokens.
+- 🔐 KeystoreVault Passphrase Hardening: Android client migrated zeroKnowledgePassphrase into hardware-backed KeystoreVault with automated legacy plaintext purge from SharedPreferences.
+- ✍️ Explicit Release Signing Enforcement: Android build pipeline throws explicit, actionable errors if keystore credentials or signing environment variables are missing.`,
     '2.6.4': `✨ What's New in High-Speed Share & Security Release v2.6.4:
 - ⚡ Fast Direct Stream Download Default: Web share portal upgraded to direct native streaming downloads by default, bypassing sequential chunk stitching for maximum download throughput.
 - 🚀 Zero-Overhead Browser Performance: Completely eliminated heavy client-side chunk loops, memory blob accumulation, and browser progress bars, preventing mobile tab freezing and memory leaks.
@@ -602,6 +611,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.5': 'Liquid Glass Design System, Fast Direct Stream Downloads & Hardware Cryptography',
     '2.6.4': 'Fast Direct Stream Downloads, Zero-Memory Browser Streaming, Strict Bot Token Sanitization & Server Share Creation',
     '2.6.3': 'Hardware-Backed Keystore Vault, AES-GCM Stream Slicing, Resilient Endpoints & Opaque Sharing',
     '2.6.2': 'Hardware-Backed Keystore Vault, AES-GCM Stream Slicing, HttpOnly Share Auth & Memory Bounds',
