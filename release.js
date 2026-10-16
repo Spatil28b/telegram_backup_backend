@@ -112,11 +112,11 @@ async function main() {
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
     '2.6.6': `✨ What's New in Liquid Glass & Aesthetics Release v2.6.6:
-- 💎 Liquid Glass Design System v2: Completely overhauled Liquid Glass theme with 5-tier dynamic fluid spatial illumination, rich indigo-black obsidian crystal depth, and authentic translucent frosted glass surfaces.
-- 🌌 Zero-Occlusion Ambient Canvas: Fixed layout occlusion where Scaffold and container surfaces blocked ambient caustics, allowing animated cyan, violet, azure, and rose orbs to shine directly through glass cards.
-- 🪟 Full Spatial Theming for Settings & Drive: Brought full liquid glass styling to Settings group cards, Drive Explorer storage overview, file cards, search pills, and breadcrumbs.
-- 🩵 Refined Specular Light Refraction: Replaced harsh neon cyan edges with delicate specular silver-to-white beveled light gradients and soft ambient indigo drop shadows.
-- 🧭 Polished Capsule Navigation: Harmonized Komi & Mac Dock floating navigation bars with subtler elevation and glassmorphic pill selection highlights.`,
+- 🚀 120 FPS GPU Fluid Engine: Re-engineered ambient liquid canvas using RenderNode graphicsLayer transforms with memoized gradient shaders, eliminating per-frame allocations for buttery-smooth 120 FPS scrolling with zero lag.
+- 🌫️ Native Hardware Gaussian Blur: Applied Android 12+ (API 31+) RenderEffect Gaussian blur on ambient fluid pools, melting caustics into a seamless, organic glowing liquid plasma.
+- 👁️ Crystal-Clear Visibility & Text Contrast: Tuned frosted glass surface opacity to 68-78% with pure white typography, eliminating orb bleaching and ensuring WCAG AAA readability across all cards and dialogs.
+- 🩵 Crisp Metadata & Directional Specular Bevels: Restored 100% opacity to file size labels, search icons, and options chevrons with cool slate-silver outlines and directional silver-to-white beveled borders.
+- 🧭 Harmonized Capsule Navigation: Refined Komi & Mac Dock floating navigation bars with glassmorphic pill selection sheens and soft indigo drop shadows.`,
     '2.6.5': `✨ What's New in Liquid Glass & Direct Streaming Release v2.6.5:
 - 🎨 Liquid Glass Design System: Introduced full-fidelity iOS 26 & VisionOS inspired Liquid Glass theme with deep obsidian crystal, translucent frosted glass cards, dynamic specular refraction highlights, and illuminated capsule navigation bars.
 - ⚡ Fast Direct Stream Downloads Default: Web share portal upgraded to direct native streaming downloads by default, bypassing sequential chunk stitching for maximum download throughput.
