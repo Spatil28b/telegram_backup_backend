@@ -111,6 +111,13 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.7': `✨ What's New in Liquid Glass & Performance Release v2.6.7:
+- 🚀 120 FPS GPU Fluid Engine: Re-engineered ambient liquid canvas using RenderNode graphicsLayer transforms with memoized gradient shaders, eliminating per-frame allocations for buttery-smooth 120 FPS scrolling with zero lag.
+- 🌫️ Native Hardware Gaussian Blur: Applied Android 12+ (API 31+) RenderEffect Gaussian blur on ambient fluid pools, melting caustics into a seamless, organic glowing liquid plasma.
+- 👁️ Crystal-Clear Visibility & Text Contrast: Tuned frosted glass surface opacity to 68-78% with pure white typography, eliminating orb bleaching and ensuring WCAG AAA readability across all cards and dialogs.
+- 🩵 Crisp Metadata & Directional Specular Bevels: Restored 100% opacity to file size labels, search icons, and options chevrons with cool slate-silver outlines and directional silver-to-white beveled borders.
+- 🧭 Harmonized Capsule Navigation: Refined Komi & Mac Dock floating navigation bars with glassmorphic pill selection sheens and soft indigo drop shadows.
+- 🔄 In-App Updater Live Sync: Instant in-app update prompt delivery and one-click download verification.`,
     '2.6.6': `✨ What's New in Liquid Glass & Aesthetics Release v2.6.6:
 - 🚀 120 FPS GPU Fluid Engine: Re-engineered ambient liquid canvas using RenderNode graphicsLayer transforms with memoized gradient shaders, eliminating per-frame allocations for buttery-smooth 120 FPS scrolling with zero lag.
 - 🌫️ Native Hardware Gaussian Blur: Applied Android 12+ (API 31+) RenderEffect Gaussian blur on ambient fluid pools, melting caustics into a seamless, organic glowing liquid plasma.
@@ -617,6 +624,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.7': 'Liquid Glass 120 FPS Fluid Engine, Hardware Blur, WCAG Contrast & Updater Sync',
     '2.6.6': 'Liquid Glass Design System v2 & Spatial Aesthetics Overhaul',
     '2.6.5': 'Liquid Glass Design System, Fast Direct Stream Downloads & Hardware Cryptography',
     '2.6.4': 'Fast Direct Stream Downloads, Zero-Memory Browser Streaming, Strict Bot Token Sanitization & Server Share Creation',
