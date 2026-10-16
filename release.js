@@ -111,6 +111,12 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.6': `✨ What's New in Liquid Glass & Aesthetics Release v2.6.6:
+- 💎 Liquid Glass Design System v2: Completely overhauled Liquid Glass theme with 5-tier dynamic fluid spatial illumination, rich indigo-black obsidian crystal depth, and authentic translucent frosted glass surfaces.
+- 🌌 Zero-Occlusion Ambient Canvas: Fixed layout occlusion where Scaffold and container surfaces blocked ambient caustics, allowing animated cyan, violet, azure, and rose orbs to shine directly through glass cards.
+- 🪟 Full Spatial Theming for Settings & Drive: Brought full liquid glass styling to Settings group cards, Drive Explorer storage overview, file cards, search pills, and breadcrumbs.
+- 🩵 Refined Specular Light Refraction: Replaced harsh neon cyan edges with delicate specular silver-to-white beveled light gradients and soft ambient indigo drop shadows.
+- 🧭 Polished Capsule Navigation: Harmonized Komi & Mac Dock floating navigation bars with subtler elevation and glassmorphic pill selection highlights.`,
     '2.6.5': `✨ What's New in Liquid Glass & Direct Streaming Release v2.6.5:
 - 🎨 Liquid Glass Design System: Introduced full-fidelity iOS 26 & VisionOS inspired Liquid Glass theme with deep obsidian crystal, translucent frosted glass cards, dynamic specular refraction highlights, and illuminated capsule navigation bars.
 - ⚡ Fast Direct Stream Downloads Default: Web share portal upgraded to direct native streaming downloads by default, bypassing sequential chunk stitching for maximum download throughput.
@@ -611,6 +617,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.6': 'Liquid Glass Design System v2 & Spatial Aesthetics Overhaul',
     '2.6.5': 'Liquid Glass Design System, Fast Direct Stream Downloads & Hardware Cryptography',
     '2.6.4': 'Fast Direct Stream Downloads, Zero-Memory Browser Streaming, Strict Bot Token Sanitization & Server Share Creation',
     '2.6.3': 'Hardware-Backed Keystore Vault, AES-GCM Stream Slicing, Resilient Endpoints & Opaque Sharing',
