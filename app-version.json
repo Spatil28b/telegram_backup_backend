@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 147,
-  "versionName": "2.6.9",
+  "versionCode": 148,
+  "versionName": "2.7.0",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.6.9 (High-Performance Architecture & Security Upgrade):\n- 🔐 Zero-Disk Streaming Encryption (P0): Eliminates intermediate multi-gigabyte .enc file duplication by streaming encrypted 4MB AES-GCM chunks on the fly directly from source files into multi-part Telegram cloud uploads.\n- ⚡ Room FTS4 & On-Device ML Kit OCR (P1): Full-text search engine with background text extraction and auto-tagging, delivering 0ms sub-millisecond document and photo search.\n- 🛡️ Hardware Keystore Safe Vault & Decoy PIN (P2): Hardware-backed TEE storage and fail-closed biometrics. Introduces duress Decoy PIN mode for plausible deniability against forced unlocks.\n- 🎬 Hardware HEVC Video Compression (P3): On-device MediaCodec H.265/HEVC hardware compression shrinks video sizes by 70-80% before upload, maximizing backup speed and storage efficiency."
+  "releaseNotes": "✨ What's New in v2.7.0 (Hardened Verifier, Live Speed/ETA, Decoy Vault & Folder Tree Restore):\n- 🛡️ Hardened Circular File Verifier (P0): Circular rolling cursor window verifies 100% of files across backup cycles without getting stuck on first 100 files; multi-chunk integrity checks for multi-part files, and eliminated destructive deletes in legacy callers.\n- ⚡ Live Transfer Speed & Countdown ETA (P1): Real-time byte-rate throughput and live countdown ETA in foreground backup notifications, keeping users informed of transfer velocity and remaining time.\n- 🎭 Plausible Deniability Decoy Vault (P2): Auto-populates realistic benign receipts and notes when setting up a Decoy PIN, protecting sensitive personal data under duress without raising suspicion.\n- 📁 Selective Cloud Folder Tree Restore (P3): Seamlessly reconstructs cloud folder hierarchies locally into Downloads/TelegramBackup/<Folder>/ with byte-level diff sync to skip uncorrupted existing files and save bandwidth."
 }

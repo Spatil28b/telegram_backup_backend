@@ -111,6 +111,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.0': `✨ What's New in v2.7.0 (Hardened Verifier, Live Speed/ETA, Decoy Vault & Folder Tree Restore):
+- 🛡️ Hardened Circular File Verifier (P0): Circular rolling cursor window verifies 100% of files across backup cycles without getting stuck on first 100 files; multi-chunk integrity checks for multi-part files, and eliminated destructive deletes in legacy callers.
+- ⚡ Live Transfer Speed & Countdown ETA (P1): Real-time byte-rate throughput and live countdown ETA in foreground backup notifications, keeping users informed of transfer velocity and remaining time.
+- 🎭 Plausible Deniability Decoy Vault (P2): Auto-populates realistic benign receipts and notes when setting up a Decoy PIN, protecting sensitive personal data under duress without raising suspicion.
+- 📁 Selective Cloud Folder Tree Restore (P3): Seamlessly reconstructs cloud folder hierarchies locally into Downloads/TelegramBackup/<Folder>/ with byte-level diff sync to skip uncorrupted existing files and save bandwidth.`,
     '2.6.9': `✨ What's New in v2.6.9 (High-Performance Architecture & Security Upgrade):
 - 🔐 Zero-Disk Streaming Encryption (P0): Eliminates intermediate multi-gigabyte .enc file duplication by streaming encrypted 4MB AES-GCM chunks on the fly directly from source files into multi-part Telegram cloud uploads.
 - ⚡ Room FTS4 & On-Device ML Kit OCR (P1): Full-text search engine with background text extraction and auto-tagging, delivering 0ms sub-millisecond document and photo search.
