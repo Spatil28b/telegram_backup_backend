@@ -111,6 +111,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.7': `✨ What's New in v2.7.7 (Liquid Glass Design System v2.2 Overhaul):
+- 💎 Authentic Apple VisionOS Dark Obsidian Frosted Glass: Eliminated murky navy plastic tint; introduced neutral dark frosted obsidian slate surfaces (Slate-800 to Slate-900) ensuring 100% crisp text readability, zero wash-out, and realistic glass refraction.
+- 🌌 Feathered Celestial Ambient Caustics: Replaced clashing saturated rainbow blobs with 3 organic ethereal celestial light fields (Sapphire, Indigo, Azure) featuring multi-stop radial gradient decay for zero hard disc edges across all Android versions.
+- 📐 Precision Specular Crystalline Bevels: Calibrated 0.28f specular rim highlights replace harsh white chalk outlines for an authentic milled spatial glass aesthetic.
+- 🌑 Soft Ambient Occlusion: Natural soft shadow map eliminates GPU overdraw and darkens edges.`,
     '2.7.6': `✨ What's New in v2.7.6 (Spatial Spring Page Transitions & Liquid Brand Reveal Animation):
 - 🌐 Direction-Aware Spatial Spring Page Navigation (P0 UI/UX): Tactile VisionOS/Liquid Glass transitions across all screens with direction-aware horizontal spring glide, scale-depth recede/ascend (0.95x - 1.0x), and smooth cross-fade with zero flicker.
 - 💎 Kinetic Brand Reveal App Opening Animation (P0): Cold-start illuminated glass capsule reveal with glowing ambient aura, kinetic spring shield entrance, zero-knowledge security badge, and smooth dissolve into the main dashboard.

@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 154,
-  "versionName": "2.7.6",
+  "versionCode": 155,
+  "versionName": "2.7.7",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.7.6 (Spatial Spring Page Transitions & Liquid Brand Reveal Animation):\n- 🌐 Direction-Aware Spatial Spring Page Navigation (P0 UI/UX): Tactile VisionOS/Liquid Glass transitions across all screens with direction-aware horizontal spring glide, scale-depth recede/ascend (0.95x - 1.0x), and smooth cross-fade with zero flicker.\n- 💎 Kinetic Brand Reveal App Opening Animation (P0): Cold-start illuminated glass capsule reveal with glowing ambient aura, kinetic spring shield entrance, zero-knowledge security badge, and smooth dissolve into the main dashboard.\n- 📊 Animated Storage & Micro-Interactions (P1): Fluid spring-animated segmented storage bar on dashboard entry, tactile bouncy tab switching, and elevated M3 Expressive card polish."
+  "releaseNotes": "✨ What's New in v2.7.7 (Liquid Glass Design System v2.2 Overhaul):\n- 💎 Authentic Apple VisionOS Dark Obsidian Frosted Glass: Eliminated murky navy plastic tint; introduced neutral dark frosted obsidian slate surfaces (Slate-800 to Slate-900) ensuring 100% crisp text readability, zero wash-out, and realistic glass refraction.\n- 🌌 Feathered Celestial Ambient Caustics: Replaced clashing saturated rainbow blobs with 3 organic ethereal celestial light fields (Sapphire, Indigo, Azure) featuring multi-stop radial gradient decay for zero hard disc edges across all Android versions.\n- 📐 Precision Specular Crystalline Bevels: Calibrated 0.28f specular rim highlights replace harsh white chalk outlines for an authentic milled spatial glass aesthetic.\n- 🌑 Soft Ambient Occlusion: Natural soft shadow map eliminates GPU overdraw and darkens edges."
 }
