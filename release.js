@@ -111,6 +111,10 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.5': `✨ What's New in v2.7.5 (100% Multi-Chunk Verification, HEVC Stride Hardening & Resumable Video Compression):
+- 🛡️ Strict 100% Multi-Chunk Cloud Verification (P0): Eliminates false-positive verification by individually verifying every chunk in multi-part files across the bot fleet. Damaged or partially deleted cloud files are purged for automatic clean re-upload.
+- 🎬 HEVC Stride Alignment & Green Artifact Fix (P0): Direct byte-buffer video transcoding preserves native source geometry, eliminating planar YUV stride mismatches and green screen corruption while delivering 70-80% file size reduction.
+- ⚡ Resumable Video Compression Cache (P1): Deterministic hash-based video cache allows interrupted video uploads to resume seamlessly across worker restarts without re-encoding, auto-purging upon successful backup.`,
     '2.7.4': `✨ What's New in v2.7.4 (Restored Ultra-Fast In-Built Browser Downloads, Lookahead CDN Prefetching & Universal Content-Length):
 - ⚡ Native 1-Click Browser Downloads (P0): Restored ultra-fast native in-built browser download as primary action, eliminating slow client JS fetch loops and dialogs for maximum wire-speed downloads.
 - 🚀 Pipelined Lookahead CDN Prefetching (P0): Pipelined chunk streaming fetches subsequent chunks in background while currently streaming to browser, eliminating dead-air latency between chunks and saturating client bandwidth.
@@ -661,6 +665,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.7.5': '100% Multi-Chunk Cloud Verification, HEVC Stride Hardening & Resumable Video Compression',
     '2.7.4': 'Restored Ultra-Fast In-Built Browser Downloads, Lookahead CDN Prefetching & Universal Content-Length',
     '2.7.3': 'Turbo Browser Downloader, O(1) Chunk Slicing, Universal PIN Auth & Download Integrity',
     '2.7.2': 'Bot Fleet Auto-Quarantine & Failover, Active Wi-Fi Sentinel, FTS4 Deep Search & Web Portal Burst Clamping',
