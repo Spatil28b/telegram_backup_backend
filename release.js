@@ -111,6 +111,12 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.1': `✨ What's New in v2.7.1 (True Hash Deduplication, Telegram Ghost Purge, Video Gestures & Audio Lockscreen):
+- 🛡️ True Content-Hash Deduplication (P0): Upgraded duplicate scanner with fast first/last byte-level MD5 fingerprinting and normalized filename matching, catching identical files even when renamed or copied across folders.
+- 🗑️ Telegram Cloud Ghost Purge (P0): Cascades duplicate cleanup directly to Telegram channels via multi-bot batch message deletion, permanently freeing cloud storage and preventing phantom orphan chunks.
+- 🎬 Modern Video Player Gestures & Audio Lockscreen (P1): Added vertical drag gestures for brightness and volume, double-tap +/-10s seek with HUD overlays, 0.5x-2.0x playback speed selector, and background audio lockscreen notification controls.
+- 🧹 Background Trash Retention Daemon (P2): Enforces 7, 14, and 30-day trash auto-retention policies automatically during background backup worker runs without requiring manual user visits to the trash screen.
+- 📦 Multi-Select Batch ZIP Archive Exporter (P3): Floating Bulk Action Bar now features a dedicated 'ZIP' action to bundle arbitrary multi-selected files into a clean compressed archive on the fly.`,
     '2.7.0': `✨ What's New in v2.7.0 (Hardened Verifier, Live Speed/ETA, Decoy Vault & Folder Tree Restore):
 - 🛡️ Hardened Circular File Verifier (P0): Circular rolling cursor window verifies 100% of files across backup cycles without getting stuck on first 100 files; multi-chunk integrity checks for multi-part files, and eliminated destructive deletes in legacy callers.
 - ⚡ Live Transfer Speed & Countdown ETA (P1): Real-time byte-rate throughput and live countdown ETA in foreground backup notifications, keeping users informed of transfer velocity and remaining time.
