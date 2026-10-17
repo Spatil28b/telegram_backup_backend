@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 146,
-  "versionName": "2.6.8",
+  "versionCode": 147,
+  "versionName": "2.6.9",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Core Reliability & Accuracy Release v2.6.8:\n- 🛡️ Multi-Bot Fleet Cloud Verification: Eliminated false-ghost deletions by verifying cloud files against the exact bot token that uploaded them, with automatic candidate fallback across all fleet bots.\n- 📸 MediaStore ContentObserver Live Watcher: Added Android MediaStore image and video observers with IS_PENDING write completion checks, ensuring 100% reliable instant camera backup across Android 11 to 15.\n- 💾 Leak-Proof Storage & Headroom Guard: Added usableSpace disk checks before large file encryption and wrapped uploads in atomic finally blocks, preventing cache leakage and out-of-storage crashes.\n- 🗑️ Cloud Trash Retention Purge: Synchronized auto-clean retention expiry with Telegram channel message deletion, preventing ghost messages from building up in backup channels.\n- ⚡ Debounced AI Search Tag Cache: Replaced synchronous JSON disk writes with debounced background serialization, eliminating micro-stutters during batch OCR image searches.\n- 🏥 Custom Bot API System Health Diagnostics: Added TelegramApiConfig endpoint resolution for custom/local Bot API servers in diagnostics and health tests."
+  "releaseNotes": "✨ What's New in v2.6.9 (High-Performance Architecture & Security Upgrade):\n- 🔐 Zero-Disk Streaming Encryption (P0): Eliminates intermediate multi-gigabyte .enc file duplication by streaming encrypted 4MB AES-GCM chunks on the fly directly from source files into multi-part Telegram cloud uploads.\n- ⚡ Room FTS4 & On-Device ML Kit OCR (P1): Full-text search engine with background text extraction and auto-tagging, delivering 0ms sub-millisecond document and photo search.\n- 🛡️ Hardware Keystore Safe Vault & Decoy PIN (P2): Hardware-backed TEE storage and fail-closed biometrics. Introduces duress Decoy PIN mode for plausible deniability against forced unlocks.\n- 🎬 Hardware HEVC Video Compression (P3): On-device MediaCodec H.265/HEVC hardware compression shrinks video sizes by 70-80% before upload, maximizing backup speed and storage efficiency."
 }
