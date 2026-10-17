@@ -111,6 +111,13 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.6.8': `✨ What's New in Core Reliability & Accuracy Release v2.6.8:
+- 🛡️ Multi-Bot Fleet Cloud Verification: Eliminated false-ghost deletions by verifying cloud files against the exact bot token that uploaded them, with automatic candidate fallback across all fleet bots.
+- 📸 MediaStore ContentObserver Live Watcher: Added Android MediaStore image and video observers with IS_PENDING write completion checks, ensuring 100% reliable instant camera backup across Android 11 to 15.
+- 💾 Leak-Proof Storage & Headroom Guard: Added usableSpace disk checks before large file encryption and wrapped uploads in atomic finally blocks, preventing cache leakage and out-of-storage crashes.
+- 🗑️ Cloud Trash Retention Purge: Synchronized auto-clean retention expiry with Telegram channel message deletion, preventing ghost messages from building up in backup channels.
+- ⚡ Debounced AI Search Tag Cache: Replaced synchronous JSON disk writes with debounced background serialization, eliminating micro-stutters during batch OCR image searches.
+- 🏥 Custom Bot API System Health Diagnostics: Added TelegramApiConfig endpoint resolution for custom/local Bot API servers in diagnostics and health tests.`,
     '2.6.7': `✨ What's New in Liquid Glass & Performance Release v2.6.7:
 - 🚀 120 FPS GPU Fluid Engine: Re-engineered ambient liquid canvas using RenderNode graphicsLayer transforms with memoized gradient shaders, eliminating per-frame allocations for buttery-smooth 120 FPS scrolling with zero lag.
 - 🌫️ Native Hardware Gaussian Blur: Applied Android 12+ (API 31+) RenderEffect Gaussian blur on ambient fluid pools, melting caustics into a seamless, organic glowing liquid plasma.
@@ -624,6 +631,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.6.8': 'Multi-Bot Verification Safeguards, MediaStore Live Sync, Leak-Proof Storage & Cloud Trash Purge',
     '2.6.7': 'Liquid Glass 120 FPS Fluid Engine, Hardware Blur, WCAG Contrast & Updater Sync',
     '2.6.6': 'Liquid Glass Design System v2 & Spatial Aesthetics Overhaul',
     '2.6.5': 'Liquid Glass Design System, Fast Direct Stream Downloads & Hardware Cryptography',
