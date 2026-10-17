@@ -111,6 +111,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.3': `✨ What's New in v2.7.3 (Turbo Browser Downloader, O(1) Chunk Slicing, Universal PIN Auth & Download Integrity):
+- 🚀 Turbo In-Browser Parallel Downloader (P0): Streams large multi-part cloud files directly to local storage using the File System Access API or multi-worker Blob streamer with concurrent 4MB chunk fetching, live MB/s speedometer, ETA countdown, and progress HUD.
+- ⚡ Targeted O(1) Bounded Slicing (P0): Eliminates sequential Telegram CDN chunk floods by calculating exact bounding chunk indices [firstIdx, lastIdx] and concurrently retrieving only required byte ranges, eliminating Vercel 504 timeouts.
+- 🔐 Universal Cookie-Free PIN & Session Auth (P1): Validates authenticated PIN sessions across cookies, custom headers, and direct ?auth=<token> query parameters, eliminating lockouts in video players, Safari, and external download managers.
+- 🛡️ Android Corrupt Chunk Reuse Guard (P2): Validates intermediate chunk file sizes against FileChunker.CHUNK_SIZE and purges partial downloads upon cancellation or failure, ensuring 100% byte integrity during multi-chunk assembly.`,
     '2.7.2': `✨ What's New in v2.7.2 (Bot Fleet Auto-Quarantine & Failover, Active Wi-Fi Sentinel, FTS4 Deep Search & Web Portal Burst Clamping):
 - 🛡️ Bot Fleet Auto-Quarantine & Failover (P0): Automatically detects revoked bot tokens (HTTP 401/403), isolates compromised bots in Room database, notifies user, and transparently shifts in-flight chunks to healthy bots in the fleet.
 - 📶 Active Wi-Fi Sentinel & Handover Guard (P1): Monitors Wi-Fi connectivity via NetworkCallback during backups. When Wi-Fi is dropped under Wi-Fi Only mode, gracefully suspends chunk uploads without burning cellular data, auto-resuming upon reconnect.
