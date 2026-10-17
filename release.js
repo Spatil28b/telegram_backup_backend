@@ -111,6 +111,10 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.4': `✨ What's New in v2.7.4 (Restored Ultra-Fast In-Built Browser Downloads, Lookahead CDN Prefetching & Universal Content-Length):
+- ⚡ Native 1-Click Browser Downloads (P0): Restored ultra-fast native in-built browser download as primary action, eliminating slow client JS fetch loops and dialogs for maximum wire-speed downloads.
+- 🚀 Pipelined Lookahead CDN Prefetching (P0): Pipelined chunk streaming fetches subsequent chunks in background while currently streaming to browser, eliminating dead-air latency between chunks and saturating client bandwidth.
+- 🛡️ Universal Content-Length & Range Safety (P1): Always sends exact Content-Length headers for encrypted and plaintext downloads, enabling browser progress bars and ETAs. Range requests are safely streamed chunk-by-chunk with zero memory exhaustion.`,
     '2.7.3': `✨ What's New in v2.7.3 (Turbo Browser Downloader, O(1) Chunk Slicing, Universal PIN Auth & Download Integrity):
 - 🚀 Turbo In-Browser Parallel Downloader (P0): Streams large multi-part cloud files directly to local storage using the File System Access API or multi-worker Blob streamer with concurrent 4MB chunk fetching, live MB/s speedometer, ETA countdown, and progress HUD.
 - ⚡ Targeted O(1) Bounded Slicing (P0): Eliminates sequential Telegram CDN chunk floods by calculating exact bounding chunk indices [firstIdx, lastIdx] and concurrently retrieving only required byte ranges, eliminating Vercel 504 timeouts.
@@ -657,6 +661,11 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.7.4': 'Restored Ultra-Fast In-Built Browser Downloads, Lookahead CDN Prefetching & Universal Content-Length',
+    '2.7.3': 'Turbo Browser Downloader, O(1) Chunk Slicing, Universal PIN Auth & Download Integrity',
+    '2.7.2': 'Bot Fleet Auto-Quarantine & Failover, Active Wi-Fi Sentinel, FTS4 Deep Search & Web Portal Burst Clamping',
+    '2.7.1': 'True Hash Deduplication, Telegram Ghost Purge, Video Gestures & Audio Lockscreen',
+    '2.7.0': 'Hardened Verifier, Live Speed/ETA, Decoy Vault & Folder Tree Restore',
     '2.6.9': 'Zero-Disk Streaming Encryption, Room FTS4 ML Kit OCR, Hardware Safe Vault & Decoy PIN, HEVC Video Compression',
     '2.6.8': 'Multi-Bot Verification Safeguards, MediaStore Live Sync, Leak-Proof Storage & Cloud Trash Purge',
     '2.6.7': 'Liquid Glass 120 FPS Fluid Engine, Hardware Blur, WCAG Contrast & Updater Sync',

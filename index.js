@@ -3124,38 +3124,38 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
     }
 
     if (!isNaN(start) && start >= 0 && end >= start && start < totalSize) {
-      // Clamped burst limit: Prevent Vercel Serverless OOM & 504 timeouts on open-ended ranges (e.g. 'bytes=0-')
-      const MAX_STREAM_BURST = 4 * 1024 * 1024; // 4MB per partial stream burst
-      const isBurstClampingNeeded = (end === totalSize - 1) && (end - start + 1 > MAX_STREAM_BURST) && !isDownload;
-      const targetEnd = isBurstClampingNeeded ? (start + MAX_STREAM_BURST - 1) : end;
-      const clampedEnd = Math.min(targetEnd, totalSize - 1);
-      const expectedLength = clampedEnd - start + 1;
-      try {
-        const decryptedRange = await getDecryptedPlaintextRange(chunkList, shareData, start, clampedEnd);
-        if (!decryptedRange || decryptedRange.length !== expectedLength) {
-          console.error(`[Universal Range Request Error] Range length mismatch: got ${decryptedRange?.length || 0}, expected ${expectedLength}`);
-          return res.status(502).json({ success: false, message: 'Stream range integrity failure: chunk mismatch or decryption error' });
-        }
+      const isFullFileRange = (start === 0 && (end === totalSize - 1 || isNaN(end)));
+      const requestedLength = end - start + 1;
 
-        res.status(206);
-        res.setHeader('Content-Range', `bytes ${start}-${clampedEnd}/${totalSize}`);
-        res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Length', decryptedRange.length);
-        res.setHeader('Content-Type', mimeType || 'application/octet-stream');
-        if (isDownload) {
-          res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
-        } else {
+      // Small byte-range request (e.g. video scrub, seek, or small probe <= 8MB) and not a full file download:
+      if (!isFullFileRange && requestedLength <= 8 * 1024 * 1024 && !isDownload) {
+        try {
+          const decryptedRange = await getDecryptedPlaintextRange(chunkList, shareData, start, end);
+          if (!decryptedRange || decryptedRange.length !== requestedLength) {
+            console.error(`[Universal Range Request Error] Range length mismatch: got ${decryptedRange?.length || 0}, expected ${requestedLength}`);
+            return res.status(502).json({ success: false, message: 'Stream range integrity failure: chunk mismatch or decryption error' });
+          }
+
+          res.status(206);
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.setHeader('Content-Length', decryptedRange.length);
+          res.setHeader('Content-Type', mimeType || 'application/octet-stream');
           res.setHeader('Content-Disposition', `inline; filename="${safeAscii}"`);
+          res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          return res.end(decryptedRange);
+        } catch (rangeErr) {
+          console.error('[Universal Range Request Failure]', rangeErr.message);
+          return res.status(502).json({ success: false, message: `Failed to decrypt range: ${rangeErr.message}` });
         }
-        res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        return res.end(decryptedRange);
-      } catch (rangeErr) {
-        console.error('[Universal Range Request Failure]', rangeErr.message);
-        return res.status(502).json({ success: false, message: `Failed to decrypt range: ${rangeErr.message}` });
       }
+
+      // If it's a full-file download (Range: bytes=0-) or large range, set 206 Partial Content headers and stream!
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${totalSize - 1}/${totalSize}`);
     }
   }
 
@@ -3173,7 +3173,7 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Connection', 'keep-alive');
 
-  if (totalSize > 0 && !secretKey) {
+  if (totalSize > 0) {
     res.setHeader('Content-Length', totalSize);
   }
 
@@ -3285,47 +3285,49 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
     try { outPass.destroy(); } catch (_) {}
   });
 
-  // Fast Parallel CDN URL Pre-Resolution in Batches (Eliminates multi-second sequential roundtrips)
-  const resolvedUrls = new Map();
-  const batchSize = 6;
-  for (let i = 0; i < chunkList.length; i += batchSize) {
-    if (isAborted) break;
-    const batch = chunkList.slice(i, i + batchSize);
-    await Promise.all(batch.map(async (c) => {
-      let freshUrl = await resolveChunkUrl(c, shareData);
-      if (!freshUrl && c.directUrl) freshUrl = c.directUrl;
-      if (!freshUrl && shareData.directUrl) freshUrl = shareData.directUrl;
-      if (freshUrl) resolvedUrls.set(c.chunkIndex || 1, freshUrl);
-    }));
-  }
-
-  // Stream each sequential chunk into the pipeline
+  // Stream each sequential chunk with lookahead pre-fetch pipeline for maximum throughput
   try {
-    for (const chunk of chunkList) {
-      if (isAborted) break;
-
-      const idx = chunk.chunkIndex || 1;
-      let freshUrl = resolvedUrls.get(idx);
-      if (!freshUrl) {
-        freshUrl = await resolveChunkUrl(chunk, shareData);
-      }
-
-      if (!freshUrl) {
-        console.error(`[Stream Error] Unable to resolve fresh CDN URL for chunk ${idx}`);
-        outPass.destroy(new Error(`Unable to resolve fresh CDN URL for chunk ${idx}`));
-        return;
-      }
-
-      if (isAborted) break;
-
+    const fetchChunkStream = async (chunk) => {
+      let freshUrl = chunk.directUrl || (await resolveChunkUrl(chunk, shareData));
+      if (!freshUrl && shareData.directUrl) freshUrl = shareData.directUrl;
+      if (!freshUrl) throw new Error(`Unable to resolve fresh CDN URL for chunk ${chunk.chunkIndex || 1}`);
       const chunkRes = await fetch(freshUrl);
       if (!chunkRes.ok || !chunkRes.body) {
-        console.error(`[Stream Error] Telegram CDN returned HTTP ${chunkRes.status} for chunk ${idx}`);
-        outPass.destroy(new Error(`Telegram CDN returned HTTP ${chunkRes.status} for chunk ${idx}`));
+        throw new Error(`Telegram CDN returned HTTP ${chunkRes.status} for chunk ${chunk.chunkIndex || 1}`);
+      }
+      return Readable.fromWeb(chunkRes.body);
+    };
+
+    let currentStreamPromise = chunkList.length > 0 ? fetchChunkStream(chunkList[0]) : null;
+
+    for (let i = 0; i < chunkList.length; i++) {
+      if (isAborted) break;
+      const chunk = chunkList[i];
+      const idx = chunk.chunkIndex || (i + 1);
+
+      // Lookahead: Pre-fetch next chunk concurrently in background while currently piping chunk i!
+      let nextStreamPromise = null;
+      if (i + 1 < chunkList.length && !isAborted) {
+        nextStreamPromise = fetchChunkStream(chunkList[i + 1]).catch(() => null);
+      }
+
+      let nodeChunkStream = null;
+      try {
+        nodeChunkStream = await currentStreamPromise;
+        if (!nodeChunkStream) {
+          nodeChunkStream = await fetchChunkStream(chunk);
+        }
+      } catch (fErr) {
+        console.error(`[Stream Error] Unable to resolve or fetch chunk ${idx}:`, fErr.message);
+        outPass.destroy(fErr);
         return;
       }
 
-      const nodeChunkStream = Readable.fromWeb(chunkRes.body);
+      if (isAborted) {
+        try { nodeChunkStream.destroy(); } catch (_) {}
+        break;
+      }
+
       activeNodeStream = nodeChunkStream;
 
       await new Promise((resolve, reject) => {
@@ -3340,6 +3342,9 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
           reject(err);
         });
       });
+
+      // Advance lookahead promise for seamless zero-gap streaming
+      currentStreamPromise = nextStreamPromise;
     }
   } catch (streamErr) {
     if (!isAborted) {
@@ -3860,91 +3865,6 @@ async function handleShare(req, res) {
             transition: all 0.2s;
           }
           .btn-tonal:hover { background: rgba(255,255,255,0.12); }
-          
-          /* Turbo Download HUD Component */
-          .turbo-hud {
-            background: var(--md-sys-color-surface-container-high);
-            border: 1px solid rgba(158, 202, 255, 0.25);
-            border-radius: 20px;
-            padding: 18px 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-          }
-          .turbo-hud-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-          }
-          .turbo-hud-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            color: #E2E2E9;
-          }
-          .turbo-pulse {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--md-sys-color-primary);
-            box-shadow: 0 0 10px var(--md-sys-color-primary);
-            animation: turboGlow 1.5s infinite;
-          }
-          @keyframes turboGlow {
-            0% { transform: scale(0.95); opacity: 0.7; }
-            50% { transform: scale(1.25); opacity: 1; }
-            100% { transform: scale(0.95); opacity: 0.7; }
-          }
-          .turbo-percent {
-            font-size: 15px;
-            font-weight: 700;
-            color: var(--md-sys-color-primary);
-            font-variant-numeric: tabular-nums;
-          }
-          .turbo-progress-track {
-            width: 100%;
-            height: 8px;
-            background: rgba(255,255,255,0.08);
-            border-radius: 9999px;
-            overflow: hidden;
-          }
-          .turbo-progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #0061A4, #9ECAFF);
-            border-radius: 9999px;
-            transition: width 0.2s ease;
-          }
-          .turbo-metrics {
-            display: flex;
-            justify-content: space-between;
-            font-size: 12px;
-            color: var(--md-sys-color-outline);
-            font-variant-numeric: tabular-nums;
-          }
-          .turbo-error-banner {
-            background: rgba(255, 180, 171, 0.12);
-            border: 1px solid #FFB4AB;
-            color: #FFB4AB;
-            font-size: 12px;
-            padding: 8px 12px;
-            border-radius: 10px;
-          }
-          .direct-fallback-link {
-            font-size: 12px;
-            color: var(--md-sys-color-outline);
-            text-align: center;
-            text-decoration: none;
-            display: inline-block;
-            margin-top: 4px;
-            transition: color 0.2s;
-          }
-          .direct-fallback-link:hover {
-            color: var(--md-sys-color-primary);
-            text-decoration: underline;
-          }
-
           .security-badges {
             display: flex;
             flex-direction: column;
@@ -3995,39 +3915,16 @@ async function handleShare(req, res) {
             ${previewHtml}
           </div>
 
-          <!-- Turbo Download Progress HUD (Initially hidden, revealed on download click) -->
-          <div id="turboHud" class="turbo-hud" style="display: none;">
-            <div class="turbo-hud-header">
-              <div class="turbo-hud-title">
-                <span class="turbo-pulse"></span>
-                <span id="turboStatus">Initializing Turbo Stream...</span>
-              </div>
-              <span id="turboPercent" class="turbo-percent">0%</span>
-            </div>
-            <div class="turbo-progress-track">
-              <div id="turboProgressBar" class="turbo-progress-fill" style="width: 0%;"></div>
-            </div>
-            <div class="turbo-metrics">
-              <span id="turboSizeMetrics">0 MB / ${humanSize}</span>
-              <span id="turboSpeedMetrics">0.0 MB/s</span>
-              <span id="turboEtaMetrics">Estimating...</span>
-            </div>
-            <div id="turboErrorBanner" class="turbo-error-banner" style="display: none;"></div>
-          </div>
-
-          <!-- Primary Action Buttons -->
+          <!-- Primary Action Buttons (Fast In-Built Native Browser Download) -->
           <div class="actions-row">
-            <button class="btn-primary" id="downloadBtn" onclick="handleDownloadClick()">
+            <a href="${downloadUrl}" class="btn-primary" id="downloadBtn" onclick="onDownloadStarted()">
               <span>⚡</span>
               <span id="dlText">Download File ${humanSize ? '(' + humanSize + ')' : ''}</span>
-            </button>
+            </a>
             <button class="btn-tonal" onclick="copyLink()">
               <span>🔗</span>
               <span id="copyBtnText">Copy Share Link</span>
             </button>
-            <a href="${downloadUrl}" class="direct-fallback-link" id="directLink">
-              Direct Server Download (Alternative)
-            </a>
           </div>
 
           <!-- Security & Integrity Badges -->
@@ -4045,8 +3942,8 @@ async function handleShare(req, res) {
             `}
             ${isChunked ? `
               <div class="sec-item">
-                <span>🧩</span>
-                <span><strong>Multi-Part High-Speed:</strong> ${resolvedChunkCount} sequential 4MB chunks with resilient resume</span>
+                <span>⚡</span>
+                <span><strong>Pipelined Multi-Part Streaming:</strong> ${resolvedChunkCount} chunks streamed at native browser wire speed</span>
               </div>
             ` : ''}
             <div class="sec-item">
@@ -4062,209 +3959,23 @@ async function handleShare(req, res) {
         </div>
 
         <script>
-          const CONFIG = ${shareConfigJson};
-          let isDownloading = false;
+          const shareIdentifier = "${escapeHtml(shareData.shareId || identifier)}";
 
-          function handleDownloadClick() {
-            if (isDownloading) return;
-            // For files with 1 chunk and smaller than 16MB, browser standard download is instantaneous:
-            if (CONFIG.totalChunks <= 1 && CONFIG.fileSize < 16 * 1024 * 1024) {
-              const dlText = document.getElementById('dlText');
-              if (dlText) dlText.innerText = '⚡ Starting Download...';
-              window.location.href = CONFIG.downloadUrl;
+          function onDownloadStarted() {
+            const txt = document.getElementById('dlText');
+            if (txt) {
+              txt.innerText = '⚡ Starting In-Built Browser Download...';
               setTimeout(() => {
-                if (dlText) dlText.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
-              }, 4000);
-              return;
-            }
-
-            // For multi-part files or files >= 16MB, run resilient parallel chunk streamer
-            startTurboDownload();
-          }
-
-          async function startTurboDownload() {
-            isDownloading = true;
-            const hud = document.getElementById('turboHud');
-            const statusEl = document.getElementById('turboStatus');
-            const percentEl = document.getElementById('turboPercent');
-            const barEl = document.getElementById('turboProgressBar');
-            const sizeEl = document.getElementById('turboSizeMetrics');
-            const speedEl = document.getElementById('turboSpeedMetrics');
-            const etaEl = document.getElementById('turboEtaMetrics');
-            const errorEl = document.getElementById('turboErrorBanner');
-            const dlBtn = document.getElementById('downloadBtn');
-            const dlText = document.getElementById('dlText');
-
-            hud.style.display = 'flex';
-            errorEl.style.display = 'none';
-            dlBtn.style.opacity = '0.7';
-            dlBtn.style.pointerEvents = 'none';
-            dlText.innerText = '⚡ Downloading...';
-
-            const totalChunks = CONFIG.totalChunks;
-            const totalBytes = CONFIG.fileSize;
-            let downloadedBytes = 0;
-            const startTime = Date.now();
-
-            // Step 1: Check File System Access API
-            let fileWritable = null;
-            let supportsSavePicker = false;
-            if (typeof window.showSaveFilePicker === 'function') {
-              try {
-                const handle = await window.showSaveFilePicker({
-                  suggestedName: CONFIG.fileName,
-                  types: [{
-                    description: 'Cloud File',
-                    accept: { [CONFIG.mimeType || 'application/octet-stream']: ['.' + (CONFIG.fileName.split('.').pop() || '')] }
-                  }]
-                });
-                fileWritable = await handle.createWritable();
-                supportsSavePicker = true;
-              } catch (pickerErr) {
-                if (pickerErr.name === 'AbortError') {
-                  // User cancelled the save dialog
-                  hud.style.display = 'none';
-                  dlBtn.style.opacity = '1';
-                  dlBtn.style.pointerEvents = 'auto';
-                  dlText.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
-                  isDownloading = false;
-                  return;
-                }
-                supportsSavePicker = false;
-              }
-            }
-
-            statusEl.innerText = supportsSavePicker ? 'Streaming directly to disk...' : 'Downloading chunks in parallel...';
-
-            async function fetchChunkWithRetry(chunkIdx, maxRetries = 4) {
-              const url = '/api/share/chunk/' + encodeURIComponent(CONFIG.shareId) + '/' + chunkIdx +
-                          (CONFIG.sessionToken ? '?auth=' + encodeURIComponent(CONFIG.sessionToken) : '');
-              for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                try {
-                  const res = await fetch(url);
-                  if (!res.ok) {
-                    throw new Error('HTTP ' + res.status + ' ' + res.statusText);
-                  }
-                  const buf = await res.arrayBuffer();
-                  return buf;
-                } catch (err) {
-                  if (attempt === maxRetries) throw err;
-                  await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, attempt - 1), 5000)));
-                }
-              }
-            }
-
-            try {
-              if (supportsSavePicker) {
-                for (let idx = 1; idx <= totalChunks; idx++) {
-                  statusEl.innerText = 'Downloading part ' + idx + ' of ' + totalChunks + '...';
-                  const chunkBuf = await fetchChunkWithRetry(idx);
-                  await fileWritable.write(chunkBuf);
-                  downloadedBytes += chunkBuf.byteLength;
-                  updateProgress();
-                }
-                await fileWritable.close();
-              } else {
-                const concurrency = Math.min(3, totalChunks);
-                const chunkQueue = [];
-                for (let i = 1; i <= totalChunks; i++) {
-                  chunkQueue.push(i);
-                }
-                const chunkBuffers = new Array(totalChunks);
-                let hasError = false;
-                let errorMessage = '';
-
-                const workers = Array.from({ length: concurrency }, async () => {
-                  while (chunkQueue.length > 0 && !hasError) {
-                    const idx = chunkQueue.shift();
-                    try {
-                      const buf = await fetchChunkWithRetry(idx);
-                      chunkBuffers[idx - 1] = buf;
-                      downloadedBytes += buf.byteLength;
-                      updateProgress();
-                    } catch (err) {
-                      hasError = true;
-                      errorMessage = 'Part ' + idx + ' failed: ' + err.message;
-                      break;
-                    }
-                  }
-                });
-                await Promise.all(workers);
-
-                if (hasError) throw new Error(errorMessage);
-
-                statusEl.innerText = 'Assembling final file...';
-                const finalBlob = new Blob(chunkBuffers, { type: CONFIG.mimeType || 'application/octet-stream' });
-                const blobUrl = URL.createObjectURL(finalBlob);
-                const a = document.createElement('a');
-                a.href = blobUrl;
-                a.download = CONFIG.fileName;
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(() => {
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(blobUrl);
-                }, 10000);
-              }
-
-              // Completed successfully!
-              statusEl.innerText = '✓ Download Complete!';
-              percentEl.innerText = '100%';
-              barEl.style.width = '100%';
-              speedEl.innerText = 'Finished';
-              etaEl.innerText = 'Saved to Downloads';
-              dlBtn.style.opacity = '1';
-              dlBtn.style.pointerEvents = 'auto';
-              dlText.innerText = '✓ Downloaded';
+                txt.innerText = '⬇️ Downloading via Browser...';
+              }, 1200);
               setTimeout(() => {
-                dlText.innerText = 'Download Again';
-                isDownloading = false;
-              }, 4000);
-            } catch (err) {
-              console.error('Turbo download error:', err);
-              if (fileWritable) {
-                try { await fileWritable.abort(); } catch (_) {}
-              }
-              errorEl.innerText = 'Download stalled: ' + (err.message || 'Network interruption') + '. Switching to direct download...';
-              errorEl.style.display = 'block';
-              statusEl.innerText = 'Resorting to server stream...';
-              setTimeout(() => {
-                window.location.href = CONFIG.downloadUrl;
-              }, 1500);
-              dlBtn.style.opacity = '1';
-              dlBtn.style.pointerEvents = 'auto';
-              dlText.innerText = 'Download File';
-              isDownloading = false;
-            }
-
-            function updateProgress() {
-              const now = Date.now();
-              const pct = totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0;
-              percentEl.innerText = pct + '%';
-              barEl.style.width = pct + '%';
-
-              const mbDownloaded = (downloadedBytes / (1024 * 1024)).toFixed(1);
-              const mbTotal = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) : '?';
-              sizeEl.innerText = mbDownloaded + ' MB / ' + mbTotal + ' MB';
-
-              const elapsedSec = (now - startTime) / 1000;
-              if (elapsedSec > 0.5) {
-                const speedBytesPerSec = downloadedBytes / elapsedSec;
-                const speedMbPerSec = (speedBytesPerSec / (1024 * 1024)).toFixed(1);
-                speedEl.innerText = speedMbPerSec + ' MB/s';
-
-                if (speedBytesPerSec > 0 && totalBytes > downloadedBytes) {
-                  const remainingSec = Math.round((totalBytes - downloadedBytes) / speedBytesPerSec);
-                  etaEl.innerText = remainingSec > 60
-                    ? Math.round(remainingSec / 60) + ' min left'
-                    : remainingSec + 's left';
-                }
-              }
+                txt.innerText = 'Download File ${humanSize ? '(' + humanSize + ')' : ''}';
+              }, 8000);
             }
           }
 
           function copyLink() {
-            const url = window.location.origin + '/share/' + encodeURIComponent(CONFIG.shareId);
+            const url = window.location.origin + '/share/' + encodeURIComponent(shareIdentifier);
             navigator.clipboard.writeText(url).then(() => {
               const btnTxt = document.getElementById('copyBtnText');
               if (btnTxt) {

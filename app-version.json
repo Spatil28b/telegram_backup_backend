@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 151,
-  "versionName": "2.7.3",
+  "versionCode": 152,
+  "versionName": "2.7.4",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.7.3 (Turbo Browser Downloader, O(1) Chunk Slicing, Universal PIN Auth & Download Integrity):\n- 🚀 Turbo In-Browser Parallel Downloader (P0): Streams large multi-part cloud files directly to local storage using the File System Access API or multi-worker Blob streamer with concurrent 4MB chunk fetching, live MB/s speedometer, ETA countdown, and progress HUD.\n- ⚡ Targeted O(1) Bounded Slicing (P0): Eliminates sequential Telegram CDN chunk floods by calculating exact bounding chunk indices [firstIdx, lastIdx] and concurrently retrieving only required byte ranges, eliminating Vercel 504 timeouts.\n- 🔐 Universal Cookie-Free PIN & Session Auth (P1): Validates authenticated PIN sessions across cookies, custom headers, and direct ?auth=<token> query parameters, eliminating lockouts in video players, Safari, and external download managers.\n- 🛡️ Android Corrupt Chunk Reuse Guard (P2): Validates intermediate chunk file sizes against FileChunker.CHUNK_SIZE and purges partial downloads upon cancellation or failure, ensuring 100% byte integrity during multi-chunk assembly."
+  "releaseNotes": "✨ What's New in v2.7.4 (Restored Ultra-Fast In-Built Browser Downloads, Lookahead CDN Prefetching & Universal Content-Length):\n- ⚡ Native 1-Click Browser Downloads (P0): Restored ultra-fast native in-built browser download as primary action, eliminating slow client JS fetch loops and dialogs for maximum wire-speed downloads.\n- 🚀 Pipelined Lookahead CDN Prefetching (P0): Pipelined chunk streaming fetches subsequent chunks in background while currently streaming to browser, eliminating dead-air latency between chunks and saturating client bandwidth.\n- 🛡️ Universal Content-Length & Range Safety (P1): Always sends exact Content-Length headers for encrypted and plaintext downloads, enabling browser progress bars and ETAs. Range requests are safely streamed chunk-by-chunk with zero memory exhaustion."
 }
