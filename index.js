@@ -3032,7 +3032,11 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
     }
 
     if (!isNaN(start) && start >= 0 && end >= start && start < totalSize) {
-      const clampedEnd = Math.min(end, totalSize - 1);
+      // Clamped burst limit: Prevent Vercel Serverless OOM & 504 timeouts on open-ended ranges (e.g. 'bytes=0-')
+      const MAX_STREAM_BURST = 4 * 1024 * 1024; // 4MB per partial stream burst
+      const isBurstClampingNeeded = (end === totalSize - 1) && (end - start + 1 > MAX_STREAM_BURST) && !isDownload;
+      const targetEnd = isBurstClampingNeeded ? (start + MAX_STREAM_BURST - 1) : end;
+      const clampedEnd = Math.min(targetEnd, totalSize - 1);
       const expectedLength = clampedEnd - start + 1;
       try {
         const decryptedRange = await getDecryptedPlaintextRange(chunkList, shareData, start, clampedEnd);

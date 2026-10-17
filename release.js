@@ -111,6 +111,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.2': `✨ What's New in v2.7.2 (Bot Fleet Auto-Quarantine & Failover, Active Wi-Fi Sentinel, FTS4 Deep Search & Web Portal Burst Clamping):
+- 🛡️ Bot Fleet Auto-Quarantine & Failover (P0): Automatically detects revoked bot tokens (HTTP 401/403), isolates compromised bots in Room database, notifies user, and transparently shifts in-flight chunks to healthy bots in the fleet.
+- 📶 Active Wi-Fi Sentinel & Handover Guard (P1): Monitors Wi-Fi connectivity via NetworkCallback during backups. When Wi-Fi is dropped under Wi-Fi Only mode, gracefully suspends chunk uploads without burning cellular data, auto-resuming upon reconnect.
+- 🔍 FTS4 OCR Deep Search & Highlighting (P2): Explorer search now leverages Room FTS4 full-text index on scanned image text and document contents, with visual query keyword highlighting in AI image result cards.
+- ⚡ Web Portal 4MB Byte-Range Clamping (P3): Clamps open-ended HTTP 206 byte-range streaming requests on the web share portal to 4MB chunks, preventing serverless memory exhaustion and 504 timeouts on massive video files.`,
     '2.7.1': `✨ What's New in v2.7.1 (True Hash Deduplication, Telegram Ghost Purge, Video Gestures & Audio Lockscreen):
 - 🛡️ True Content-Hash Deduplication (P0): Upgraded duplicate scanner with fast first/last byte-level MD5 fingerprinting and normalized filename matching, catching identical files even when renamed or copied across folders.
 - 🗑️ Telegram Cloud Ghost Purge (P0): Cascades duplicate cleanup directly to Telegram channels via multi-bot batch message deletion, permanently freeing cloud storage and preventing phantom orphan chunks.
