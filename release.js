@@ -111,6 +111,10 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.6': `✨ What's New in v2.7.6 (Spatial Spring Page Transitions & Liquid Brand Reveal Animation):
+- 🌐 Direction-Aware Spatial Spring Page Navigation (P0 UI/UX): Tactile VisionOS/Liquid Glass transitions across all screens with direction-aware horizontal spring glide, scale-depth recede/ascend (0.95x - 1.0x), and smooth cross-fade with zero flicker.
+- 💎 Kinetic Brand Reveal App Opening Animation (P0): Cold-start illuminated glass capsule reveal with glowing ambient aura, kinetic spring shield entrance, zero-knowledge security badge, and smooth dissolve into the main dashboard.
+- 📊 Animated Storage & Micro-Interactions (P1): Fluid spring-animated segmented storage bar on dashboard entry, tactile bouncy tab switching, and elevated M3 Expressive card polish.`,
     '2.7.5': `✨ What's New in v2.7.5 (100% Multi-Chunk Verification, HEVC Stride Hardening & Resumable Video Compression):
 - 🛡️ Strict 100% Multi-Chunk Cloud Verification (P0): Eliminates false-positive verification by individually verifying every chunk in multi-part files across the bot fleet. Damaged or partially deleted cloud files are purged for automatic clean re-upload.
 - 🎬 HEVC Stride Alignment & Green Artifact Fix (P0): Direct byte-buffer video transcoding preserves native source geometry, eliminating planar YUV stride mismatches and green screen corruption while delivering 70-80% file size reduction.
