@@ -111,6 +111,10 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.8': `✨ What's New in v2.7.8 (Zero-Stutter Navigation Engine & Instant Settings Arbitration):
+- ⚡ Zero-Stutter Navigation Engine (P0): Eliminated navigation bar stutter and 1-second lag by replacing heavy full-screen matrix scale recalculations with hardware-accelerated 130ms crossfade transitions and snappy Spring.StiffnessMedium tab physics.
+- 🛡️ Multi-Tier Settings Arbitration (P0): Established timestamp-based arbitration across SharedPreferences, Room DB, Local Config Vault, and Cloud Profiles, permanently stopping themes and navigation bars from resetting on restart or reinstall.
+- 🧭 Instant M3 Navigation Customization (P1): Custom tabs, density, labels, and indicator shapes write immediately to storage on touch with dynamic live preview feedback.`,
     '2.7.7': `✨ What's New in v2.7.7 (Liquid Glass Design System v2.2 Overhaul):
 - 💎 Authentic Apple VisionOS Dark Obsidian Frosted Glass: Eliminated murky navy plastic tint; introduced neutral dark frosted obsidian slate surfaces (Slate-800 to Slate-900) ensuring 100% crisp text readability, zero wash-out, and realistic glass refraction.
 - 🌌 Feathered Celestial Ambient Caustics: Replaced clashing saturated rainbow blobs with 3 organic ethereal celestial light fields (Sapphire, Indigo, Azure) featuring multi-stop radial gradient decay for zero hard disc edges across all Android versions.
@@ -674,6 +678,9 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.7.8': 'Zero-Stutter Navigation Engine & Instant Settings Arbitration',
+    '2.7.7': 'Liquid Glass Design System v2.2 Overhaul',
+    '2.7.6': 'Spatial Spring Page Transitions & Liquid Brand Reveal Animation',
     '2.7.5': '100% Multi-Chunk Cloud Verification, HEVC Stride Hardening & Resumable Video Compression',
     '2.7.4': 'Restored Ultra-Fast In-Built Browser Downloads, Lookahead CDN Prefetching & Universal Content-Length',
     '2.7.3': 'Turbo Browser Downloader, O(1) Chunk Slicing, Universal PIN Auth & Download Integrity',
