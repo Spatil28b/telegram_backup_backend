@@ -21,10 +21,10 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('@neondatabase/serverless');
 
-// Cryptographically Secure JWT Secret Key (derived from environment or DATABASE_URL)
-const JWT_SECRET = process.env.JWT_SECRET || (process.env.DATABASE_URL ? crypto.createHmac('sha256', 'tspace-jwt-salt-2026').update(process.env.DATABASE_URL).digest('hex') : '');
+// Cryptographically Secure JWT Secret Key (strictly from environment, minimum 32 chars)
+const JWT_SECRET = (process.env.JWT_SECRET || '').trim();
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
-  throw new Error('FATAL: JWT_SECRET environment variable is missing or less than 32 characters');
+  throw new Error('FATAL: JWT_SECRET environment variable is required and must be at least 32 characters');
 }
 
 
@@ -153,13 +153,14 @@ function getShareSessionToken(shareId, pinHash) {
 }
 
 /**
- * Validates whether the incoming request has a valid, unexpired share session token via cookie, header, query, or direct PIN.
+ * Validates whether the incoming request has a valid, unexpired share session token via HttpOnly cookie or header.
+ * Authentication via URL query parameters is strictly forbidden to prevent credential leakage (OWASP & Finding #5).
  */
 function isShareSessionAuthorized(req, shareId, pinHash) {
   if (!pinHash) return true;
   const expected = getShareSessionToken(shareId, pinHash);
   
-  // 1. Check Session Cookie
+  // 1. Check Session Cookie (Strict, HttpOnly)
   const cookies = parseCookies(req);
   if (cookies[`share_auth_${shareId}`] === expected) return true;
 
@@ -168,35 +169,6 @@ function isShareSessionAuthorized(req, shareId, pinHash) {
     if (req.headers['x-share-session'] === expected) return true;
     const authHeader = (req.headers['authorization'] || '').trim();
     if (authHeader === expected || authHeader === `Bearer ${expected}`) return true;
-  }
-
-  // 3. Check Query Parameters (Critical for HTML5 <video>, <img>, <a> downloads, and external download managers)
-  if (req.query) {
-    if (req.query.auth === expected || req.query.session === expected || req.query.token === expected) {
-      return true;
-    }
-    const pinParam = String(req.query.pin || req.query.password || '').trim();
-    if (pinParam) {
-      const enteredHash = crypto.createHash('sha256').update(pinParam).digest('hex');
-      try {
-        if (crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'))) {
-          return true;
-        }
-      } catch (_) {}
-    }
-  }
-
-  // 4. Check Direct PIN Header
-  if (req.headers && req.headers['x-share-pin']) {
-    const pinHeader = String(req.headers['x-share-pin']).trim();
-    if (pinHeader) {
-      const enteredHash = crypto.createHash('sha256').update(pinHeader).digest('hex');
-      try {
-        if (crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'))) {
-          return true;
-        }
-      } catch (_) {}
-    }
   }
 
   return false;
@@ -1130,24 +1102,54 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
       return res.status(413).json({ success: false, message: 'Settings payload is too large (max 100 KB)' });
     }
 
+    // Sanitize: Eradicate master encryption keys and raw bot fleet credentials from remote storage (Findings #3, #10)
+    let sanitizedSettingsStr = settingsStr;
+    try {
+      const parsed = JSON.parse(settingsStr);
+      let modified = false;
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.security && typeof parsed.security === 'object' && parsed.security.encryption_key) {
+          delete parsed.security.encryption_key;
+          modified = true;
+        }
+        if (parsed.encryption_key) {
+          delete parsed.encryption_key;
+          modified = true;
+        }
+        if (parsed.master_key) {
+          delete parsed.master_key;
+          modified = true;
+        }
+        if (Array.isArray(parsed.bots)) {
+          parsed.bots = parsed.bots.map(b => {
+            const copy = { ...b };
+            delete copy.bot_token;
+            return copy;
+          });
+          modified = true;
+        }
+        if (modified) {
+          sanitizedSettingsStr = JSON.stringify(parsed);
+        }
+      }
+    } catch (_) {}
+
     if (pool) {
       try {
         await queryWithTimeout(
           `INSERT INTO user_settings (email, settings_json, updated_at)
            VALUES ($1, $2, CURRENT_TIMESTAMP)
            ON CONFLICT (email) DO UPDATE SET settings_json = $2, updated_at = CURRENT_TIMESTAMP`,
-          [lowerEmail, settingsStr]
+          [lowerEmail, sanitizedSettingsStr]
         );
         // Also best-effort update users table if user exists
-        await queryWithTimeout(`UPDATE users SET settings_json = $1 WHERE email = $2`, [settingsStr, lowerEmail]).catch(() => {});
+        await queryWithTimeout(`UPDATE users SET settings_json = $1 WHERE email = $2`, [sanitizedSettingsStr, lowerEmail]).catch(() => {});
       } catch (dbErr) {
         console.error('[DB Error] Save settings query failed:', dbErr.message);
         return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
       }
     } else {
-      const u = memoryUsers.get(lowerEmail) || {};
-      u.settingsJson = settingsStr;
-      memoryUsers.set(lowerEmail, u);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Database required for persistent settings.' });
     }
 
     return res.json({ success: true, message: 'Settings saved successfully.' });
@@ -1191,7 +1193,29 @@ app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings
       settings = u.settingsJson || null;
     }
 
-    const finalSettings = settings || '{}';
+    let finalSettings = settings || '{}';
+    try {
+      const parsed = JSON.parse(finalSettings);
+      if (parsed && typeof parsed === 'object') {
+        let stripped = false;
+        if (parsed.security && parsed.security.encryption_key) {
+          delete parsed.security.encryption_key;
+          stripped = true;
+        }
+        if (parsed.encryption_key) {
+          delete parsed.encryption_key;
+          stripped = true;
+        }
+        if (parsed.master_key) {
+          delete parsed.master_key;
+          stripped = true;
+        }
+        if (stripped) {
+          finalSettings = JSON.stringify(parsed);
+        }
+      }
+    } catch (_) {}
+
     return res.json({ success: true, settings: finalSettings, manifest: finalSettings });
   } catch (err) {
     next(err);
@@ -2421,9 +2445,9 @@ function recordPinAttempt(rateLimitKey, attempts, success) {
 const memoryShareCache = new Map();
 
 // 256-bit cryptographically secure server secret for encrypting sensitive share metadata
-const rawShareSecret = process.env.SHARE_SECRET || (process.env.DATABASE_URL ? crypto.createHmac('sha256', 'tspace-share-salt-2026').update(process.env.DATABASE_URL).digest('hex') : (JWT_SECRET ? crypto.createHmac('sha256', 'tspace-share-salt-2026').update(JWT_SECRET).digest('hex') : ''));
+const rawShareSecret = (process.env.SHARE_SECRET || '').trim();
 if (!rawShareSecret || rawShareSecret.length < 32) {
-  throw new Error('FATAL: SHARE_SECRET environment variable is missing or less than 32 characters');
+  throw new Error('FATAL: SHARE_SECRET environment variable is required and must be at least 32 characters');
 }
 const SERVER_SHARE_SECRET = crypto.createHash('sha256').update(rawShareSecret).digest();
 
@@ -2953,35 +2977,42 @@ async function handleShareCreate(req, res) {
         }))
       : [{ chunkIndex: 1, telegramFileId: fileId, botTokenUsed: (botToken || '').trim() }];
 
-    const expectedChunksCount = parsedSize > CHUNK_SIZE ? Math.ceil(parsedSize / CHUNK_SIZE) : 1;
-    if (pool && expectedChunksCount > 1 && normalizedChunks.length < expectedChunksCount && userEmail) {
+    const targetFileId = fileId || (Array.isArray(chunks) && chunks[0] && (chunks[0].telegramFileId || chunks[0].fileId));
+    let dbFile = null;
+    if (pool && userEmail) {
       try {
-        const repairRes = await queryWithTimeout(
-          `SELECT chunks_json, total_chunks, bot_token_used, telegram_file_id
+        const fileCheck = await queryWithTimeout(
+          `SELECT id, file_name, size, telegram_file_id, chunks_json, bot_token_used, total_chunks, path
            FROM backed_files
-           WHERE email = $4
-             AND (file_name = $1 OR path LIKE '%' || $1)
-             AND (size = $2 OR (size >= $2 * 0.90 AND size <= $2 * 1.10) OR total_chunks >= $3)
-             AND total_chunks >= 2
-             AND chunks_json IS NOT NULL
-             AND chunks_json != '[]'
+           WHERE email = $1
+             AND (telegram_file_id = $2 OR file_name = $3 OR path = $3)
            ORDER BY total_chunks DESC, size DESC LIMIT 1`,
-          [safeFileName, parsedSize, expectedChunksCount, userEmail]
+          [userEmail, targetFileId || '', safeFileName]
         );
-        if (repairRes && repairRes.rows && repairRes.rows.length > 0) {
-          const row = repairRes.rows[0];
-          const parsedChunks = JSON.parse(row.chunks_json);
-          if (Array.isArray(parsedChunks) && parsedChunks.length >= 2) {
-            normalizedChunks = parsedChunks.map((c, i) => ({
+        if (fileCheck && fileCheck.rows && fileCheck.rows.length > 0) {
+          dbFile = fileCheck.rows[0];
+        }
+      } catch (err) {
+        console.warn('[Share Create DB File Check Warn]', err.message);
+      }
+    }
+
+    // Authoritative adoption of database chunks & telegram file id
+    if (dbFile) {
+      if (dbFile.chunks_json && dbFile.chunks_json !== '[]') {
+        try {
+          const parsedDbChunks = JSON.parse(dbFile.chunks_json);
+          if (Array.isArray(parsedDbChunks) && parsedDbChunks.length > 0) {
+            normalizedChunks = parsedDbChunks.map((c, i) => ({
               chunkIndex: c.chunkIndex || (i + 1),
               telegramFileId: c.telegramFileId || c.fileId,
-              botTokenUsed: (c.botTokenUsed || c.botToken || row.bot_token_used || botToken || '').trim()
+              botTokenUsed: (c.botTokenUsed || c.botToken || dbFile.bot_token_used || '').trim()
             }));
-            console.log(`[Share Create Auto-Heal] Successfully restored all ${normalizedChunks.length} chunks for ${safeFileName} from backed_files`);
           }
-        }
-      } catch (healErr) {
-        console.warn('[Share Create Auto-Heal Error]', healErr.message);
+        } catch (_) {}
+      }
+      if (dbFile.telegram_file_id && normalizedChunks.length > 0 && !normalizedChunks[0].telegramFileId) {
+        normalizedChunks[0].telegramFileId = dbFile.telegram_file_id;
       }
     }
 
@@ -2998,7 +3029,6 @@ async function handleShareCreate(req, res) {
       internalBotToken = (memoryUsers.get(userEmail).botToken || '').trim();
     }
 
-    const targetFileId = fileId || (normalizedChunks[0] && normalizedChunks[0].telegramFileId);
     if (pool && userEmail && targetFileId && !internalBotToken) {
       try {
         const fRes = await queryWithTimeout(
@@ -3036,7 +3066,7 @@ async function handleShareCreate(req, res) {
     const payloadEnc = encryptServerPayload(sensitivePayload);
     const pinStr = (pin && String(pin).trim()) || '';
     const pinHash = pinStr.length > 0
-      ? crypto.createHash('sha256').update(pinStr).digest('hex')
+      ? await bcrypt.hash(pinStr, 10)
       : '';
 
     // Persist to Neon Postgres
@@ -3494,16 +3524,25 @@ async function handleShare(req, res) {
     if (pinHash && pinHash.length > 0) {
       const isAlreadyAuthorized = isShareSessionAuthorized(req, shareData.shareId, pinHash);
       const isPost = req.method === 'POST';
-      const userEnteredPin = (req.body?.pin || req.body?.password || req.query?.pin || req.query?.password || req.headers['x-share-pin'] || '').trim();
+      const userEnteredPin = (req.body?.pin || req.body?.password || req.headers['x-share-pin'] || '').trim();
 
       if (!isAlreadyAuthorized) {
         let isPinValid = false;
         if (userEnteredPin) {
-          const enteredHash = crypto.createHash('sha256').update(userEnteredPin).digest('hex');
-          try {
-            isPinValid = crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'));
-          } catch (_) {
-            isPinValid = false;
+          if (pinHash.startsWith('$2a$') || pinHash.startsWith('$2b$')) {
+            try {
+              isPinValid = await bcrypt.compare(userEnteredPin, pinHash);
+            } catch (_) {
+              isPinValid = false;
+            }
+          } else if (pinHash.length === 64) {
+            // Backward-compatible timing-safe verification for legacy SHA-256 hashes
+            const enteredHash = crypto.createHash('sha256').update(userEnteredPin).digest('hex');
+            try {
+              isPinValid = crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'));
+            } catch (_) {
+              isPinValid = false;
+            }
           }
           if (!isPinValid && plainPin) {
             isPinValid = (userEnteredPin === plainPin);
@@ -3513,8 +3552,12 @@ async function handleShare(req, res) {
         if (isPinValid) {
           recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
           const sessionToken = getShareSessionToken(shareData.shareId, pinHash);
-          // Set secure session cookie
-          res.setHeader('Set-Cookie', `share_auth_${encodeURIComponent(shareData.shareId)}=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+          // Set secure session cookie (HttpOnly, Secure, SameSite=Strict, 15 min expiry)
+          res.setHeader(
+            'Set-Cookie',
+            `share_auth_${encodeURIComponent(shareData.shareId)}=${encodeURIComponent(sessionToken)}; ` +
+            `Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=900`
+          );
           if (isPost) {
             return res.redirect(303, `/share/${encodeURIComponent(shareData.shareId)}`);
           }
@@ -4038,14 +4081,22 @@ async function handleShareChunk(req, res) {
           });
         }
 
-        const pinParam = String(req.query?.pin || req.headers['x-share-pin'] || '').trim();
+        const pinParam = String(req.headers['x-share-pin'] || '').trim();
         let isPinValid = false;
         if (pinParam) {
-          const pinHash = crypto.createHash('sha256').update(pinParam).digest('hex');
-          try {
-            isPinValid = crypto.timingSafeEqual(Buffer.from(pinHash, 'utf8'), Buffer.from(shareData.pinHash, 'utf8'));
-          } catch (_) {
-            isPinValid = false;
+          if (shareData.pinHash.startsWith('$2a$') || shareData.pinHash.startsWith('$2b$')) {
+            try {
+              isPinValid = await bcrypt.compare(pinParam, shareData.pinHash);
+            } catch (_) {
+              isPinValid = false;
+            }
+          } else if (shareData.pinHash.length === 64) {
+            const enteredHash = crypto.createHash('sha256').update(pinParam).digest('hex');
+            try {
+              isPinValid = crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(shareData.pinHash, 'utf8'));
+            } catch (_) {
+              isPinValid = false;
+            }
           }
           if (!isPinValid && shareData.plainPin) {
             isPinValid = (pinParam === shareData.plainPin);

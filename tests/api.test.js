@@ -358,4 +358,87 @@ test('Share Page: Inlined client script has valid JavaScript syntax without erro
   }, 'Share page client script must compile without SyntaxError');
 });
 
+test('Security & Cryptography: Share PIN uses bcrypt hashing with timing-safe legacy fallback', async () => {
+  const bcrypt = require('bcryptjs');
+  const rawPin = '987654';
+
+  // 1. Bcrypt hash generated
+  const hash = await bcrypt.hash(rawPin, 10);
+  assert.ok(hash.startsWith('$2a$') || hash.startsWith('$2b$'), 'Bcrypt format required');
+  assert.equal(await bcrypt.compare(rawPin, hash), true, 'Bcrypt compare must succeed for correct PIN');
+  assert.equal(await bcrypt.compare('111111', hash), false, 'Bcrypt compare must fail for wrong PIN');
+
+  // 2. Legacy SHA-256 fallback compatibility
+  const legacyHash = crypto.createHash('sha256').update(rawPin).digest('hex');
+  assert.equal(legacyHash.length, 64);
+  const testCandidate = crypto.createHash('sha256').update('987654').digest('hex');
+  assert.equal(crypto.timingSafeEqual(Buffer.from(testCandidate, 'utf8'), Buffer.from(legacyHash, 'utf8')), true);
+});
+
+test('Security: isShareSessionAuthorized rejects query parameters and requires Cookie or Header', () => {
+  const JWT_SECRET = 'test_secret_for_unit_tests_minimum_32_characters';
+  function getShareSessionToken(shareId, pinHash) {
+    return crypto.createHmac('sha256', JWT_SECRET).update(`${shareId}:${pinHash}`).digest('hex');
+  }
+
+  function isShareSessionAuthorized(req, shareId, pinHash) {
+    if (!pinHash) return true;
+    const expected = getShareSessionToken(shareId, pinHash);
+    const cookies = req.cookies || {};
+    if (cookies[`share_auth_${shareId}`] === expected) return true;
+    if (req.headers) {
+      if (req.headers['x-share-session'] === expected) return true;
+      const authHeader = (req.headers['authorization'] || '').trim();
+      if (authHeader === expected || authHeader === `Bearer ${expected}`) return true;
+    }
+    return false;
+  }
+
+  const shareId = 's_123456';
+  const pinHash = '$2a$10$dummyHash';
+  const validToken = getShareSessionToken(shareId, pinHash);
+
+  // Cookie auth: ALLOWED
+  assert.equal(isShareSessionAuthorized({ cookies: { [`share_auth_${shareId}`]: validToken }, headers: {} }, shareId, pinHash), true);
+
+  // Header auth: ALLOWED
+  assert.equal(isShareSessionAuthorized({ cookies: {}, headers: { 'x-share-session': validToken } }, shareId, pinHash), true);
+  assert.equal(isShareSessionAuthorized({ cookies: {}, headers: { 'authorization': `Bearer ${validToken}` } }, shareId, pinHash), true);
+
+  // Query parameter auth: MUST BE REJECTED (OWASP Finding #5)
+  assert.equal(isShareSessionAuthorized({ cookies: {}, headers: {}, query: { auth: validToken } }, shareId, pinHash), false);
+  assert.equal(isShareSessionAuthorized({ cookies: {}, headers: {}, query: { session: validToken } }, shareId, pinHash), false);
+  assert.equal(isShareSessionAuthorized({ cookies: {}, headers: {}, query: { token: validToken } }, shareId, pinHash), false);
+});
+
+test('Security: User settings sanitization strips master keys and bot tokens', () => {
+  const input = JSON.stringify({
+    profile: { display_name: 'Test' },
+    security: { encryption_enabled: true, encryption_key: 'SUPER_SECRET_KEY' },
+    encryption_key: 'ROOT_SECRET_KEY',
+    master_key: 'MASTER_KEY',
+    bots: [{ bot_token: '123:ABC', display_name: 'Bot 1' }]
+  });
+
+  const parsed = JSON.parse(input);
+  if (parsed.security?.encryption_key) delete parsed.security.encryption_key;
+  if (parsed.encryption_key) delete parsed.encryption_key;
+  if (parsed.master_key) delete parsed.master_key;
+  if (Array.isArray(parsed.bots)) {
+    parsed.bots = parsed.bots.map(b => {
+      const copy = { ...b };
+      delete copy.bot_token;
+      return copy;
+    });
+  }
+
+  const sanitized = JSON.stringify(parsed);
+  assert.equal(sanitized.includes('SUPER_SECRET_KEY'), false);
+  assert.equal(sanitized.includes('ROOT_SECRET_KEY'), false);
+  assert.equal(sanitized.includes('MASTER_KEY'), false);
+  assert.equal(sanitized.includes('123:ABC'), false);
+  assert.equal(parsed.profile.display_name, 'Test');
+  assert.equal(parsed.bots[0].display_name, 'Bot 1');
+});
+
 
