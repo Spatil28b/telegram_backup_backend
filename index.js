@@ -42,6 +42,15 @@ function parsePositiveInteger(value) {
 // Initialize Express Application Instance
 const app = express();
 
+// Middleware: Strict Security Headers (OWASP Hardening)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+
 // Middleware: Request Correlation ID Tracking with strict validation
 app.use((req, res, next) => {
   const incoming = String(req.headers['x-request-id'] || '').trim();
@@ -206,10 +215,14 @@ function isValidEmail(email) {
 }
 
 /**
- * Issues signed JWT authorization token for verified sessions.
+ * Issues signed JWT authorization token for verified sessions (24h lifespan, strict claims).
  */
 function generateUserToken(email) {
-  return jwt.sign({ email: (email || '').trim().toLowerCase() }, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign(
+    { sub: (email || '').trim().toLowerCase(), email: (email || '').trim().toLowerCase() },
+    JWT_SECRET,
+    { expiresIn: '24h', issuer: 'telegram-backup-backend' }
+  );
 }
 
 /**
@@ -3207,8 +3220,8 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
             try {
               const dec = decipher.update(headerBuf.subarray(20));
               if (dec && dec.length > 0) this.push(dec);
-            } catch (_) {
-              this.push(headerBuf.subarray(20));
+            } catch (err) {
+              return callback(new Error('Decryption stream initialization failed'));
             }
             headerBuf = null;
             return callback();
@@ -3222,8 +3235,8 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
             try {
               const dec = decipher.update(headerBuf.subarray(8));
               if (dec && dec.length > 0) this.push(dec);
-            } catch (_) {
-              this.push(headerBuf.subarray(8));
+            } catch (err) {
+              return callback(new Error('CBC decryption stream initialization failed'));
             }
             headerBuf = null;
             return callback();
@@ -3240,8 +3253,8 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
           try {
             const dec = decipher.update(chunk);
             if (dec && dec.length > 0) this.push(dec);
-          } catch (_) {
-            this.push(chunk);
+          } catch (err) {
+            return callback(new Error('Decryption failed for data chunk: data corrupted or key invalid'));
           }
         } else {
           this.push(chunk);
@@ -3572,11 +3585,9 @@ async function handleShare(req, res) {
       return await streamAndDecryptFile(req, res, shareData, isDownload);
     }
 
-    // 5. Render Full Google Material 3 Web Share Portal
-    const sessionToken = (pinHash && pinHash.length > 0) ? getShareSessionToken(shareData.shareId, pinHash) : '';
-    const authQuery = sessionToken ? `&auth=${encodeURIComponent(sessionToken)}` : '';
-    const downloadUrl = `/api/share/download/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}${authQuery}`;
-    const streamUrl = `/share/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}&stream=1${authQuery}`;
+    // 5. Render Full Google Material 3 Web Share Portal (tokens strictly in HttpOnly Secure cookies)
+    const downloadUrl = `/api/share/download/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}`;
+    const streamUrl = `/share/${encodeURIComponent(shareData.shareId)}?id=${encodeURIComponent(identifier)}&stream=1`;
 
     const fileSizeBytes = parseInt(fileSize) || 0;
     const humanSize = fileSizeBytes > 0 ? (
@@ -4082,7 +4093,7 @@ async function handleShareChunk(req, res) {
 }
 
 // Register Sharing Engine API Routes
-app.post(['/api/share/create', '/share/create'], handleShareCreate);
+app.post(['/api/share/create', '/share/create'], requireAuth, handleShareCreate);
 app.get(['/api/share/download/:id', '/share/download/:id'], (req, res) => {
   req.query.download = '1';
   return handleShare(req, res);
