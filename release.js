@@ -111,6 +111,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.7.9': `🛡️ What's New in v2.7.9 (Production Security & Cryptographic Hardening):
+- 🔐 Cryptographic APK Update Verification (P0): Added dual-tier signing certificate verification (GET_SIGNING_CERTIFICATES / GET_SIGNATURES) comparing SHA-256 certificate digests against the active installed package before allowing installation.
+- 🛡️ Authoritative Zero-Knowledge File Sharing (P0): Enforced server-side database ownership lookups for public share generation, completely rejecting client-supplied Telegram credentials, bot tokens, and master encryption keys.
+- 🔑 Keystore Isolation & Room Scrubbing (P0): Removed plaintext encryption keys and bot tokens from local Room SQLite databases and remote profile synchronization; purged legacy keys on database startup.
+- ⚡ Fail-Closed Resilience & Token Revocation (P0): Eliminated in-memory authentication/OTP fallbacks in favor of strict PostgreSQL operations with immediate 503 fail-closed responses and instant session revocation upon password reset.`,
     '2.7.8': `✨ What's New in v2.7.8 (Zero-Stutter Navigation Engine & Instant Settings Arbitration):
 - ⚡ Zero-Stutter Navigation Engine (P0): Eliminated navigation bar stutter and 1-second lag by replacing heavy full-screen matrix scale recalculations with hardware-accelerated 130ms crossfade transitions and snappy Spring.StiffnessMedium tab physics.
 - 🛡️ Multi-Tier Settings Arbitration (P0): Established timestamp-based arbitration across SharedPreferences, Room DB, Local Config Vault, and Cloud Profiles, permanently stopping themes and navigation bars from resetting on restart or reinstall.
@@ -678,6 +683,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.7.9': 'Production Security & Cryptographic Hardening',
     '2.7.8': 'Zero-Stutter Navigation Engine & Instant Settings Arbitration',
     '2.7.7': 'Liquid Glass Design System v2.2 Overhaul',
     '2.7.6': 'Spatial Spring Page Transitions & Liquid Brand Reveal Animation',
@@ -712,9 +718,24 @@ async function main() {
 
   // Push securely using basic auth header to prevent token exposure in process tables (Fix #42)
   const basicAuth = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
-  console.log('   Pushing commits to GitHub main branch...');
+  console.log('   Pushing backend commits to GitHub main branch...');
   execSync(`git -c http.extraheader="AUTHORIZATION: basic ${basicAuth}" push origin main`, { cwd: __dirname, stdio: 'inherit' });
   console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
+
+  // Push Android client repo
+  console.log('   Pushing TelegramBackup Android commits to GitHub...');
+  execSync('git add -A', { cwd: APP_DIR });
+  try {
+    execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - ${commitTitle}"`, { cwd: APP_DIR });
+  } catch (cErr) {
+    console.log('   (Android git commit info:', (cErr.message || '').split('\n')[0], ')');
+  }
+  execSync(`git -c http.extraheader="AUTHORIZATION: basic ${basicAuth}" push origin main`, { cwd: APP_DIR, stdio: 'inherit' });
+  try {
+    execSync(`git tag -a ${tag} -m "Release ${tag}"`, { cwd: APP_DIR });
+    execSync(`git -c http.extraheader="AUTHORIZATION: basic ${basicAuth}" push origin ${tag}`, { cwd: APP_DIR, stdio: 'inherit' });
+  } catch (_) {}
+  console.log('   ✓ Android client code and tag pushed to GitHub!');
 
   // 8. Verify Server Endpoint
   console.log('8️⃣  Verifying dynamic server updater...');

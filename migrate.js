@@ -201,6 +201,42 @@ async function runMigrations() {
       }
     });
 
+    // 6. Scrub any legacy encryption keys from user_settings and users tables (Finding #6)
+    await applyMigration('v6_scrub_encryption_keys', 'Scrub encryption keys and raw bot tokens from stored settings', async (db) => {
+      const rows = await db.query(`SELECT email, settings_json FROM user_settings WHERE settings_json IS NOT NULL AND settings_json != ''`);
+      for (const row of rows.rows) {
+        try {
+          const parsed = JSON.parse(row.settings_json);
+          let modified = false;
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.security && parsed.security.encryption_key) {
+              delete parsed.security.encryption_key;
+              modified = true;
+            }
+            if (parsed.encryption_key) {
+              delete parsed.encryption_key;
+              modified = true;
+            }
+            if (parsed.master_key) {
+              delete parsed.master_key;
+              modified = true;
+            }
+            if (Array.isArray(parsed.bots)) {
+              parsed.bots = parsed.bots.map(b => {
+                const copy = { ...b };
+                delete copy.bot_token;
+                return copy;
+              });
+              modified = true;
+            }
+            if (modified) {
+              await db.query(`UPDATE user_settings SET settings_json = $1 WHERE email = $2`, [JSON.stringify(parsed), row.email]);
+            }
+          }
+        } catch (_) {}
+      }
+    });
+
     console.log('\n🎉 [Neon Postgres Migration] All versioned migrations applied successfully!\n');
   } catch (err) {
     console.error('❌ [Migration Error]:', err.message);

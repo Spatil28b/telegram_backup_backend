@@ -119,8 +119,11 @@ function sanitizeChunksJson(chunksJsonStr) {
     const list = JSON.parse(chunksJsonStr);
     if (!Array.isArray(list)) return '[]';
     for (const item of list) {
-      if (item && item.botTokenUsed) {
-        item.botTokenUsed = sanitizeBotIdentifier(item.botTokenUsed);
+      if (item && typeof item === 'object') {
+        if (item.botTokenUsed) item.botTokenUsed = sanitizeBotIdentifier(item.botTokenUsed);
+        if (item.botToken) item.botToken = sanitizeBotIdentifier(item.botToken);
+        if (item.bot_token_used) item.bot_token_used = sanitizeBotIdentifier(item.bot_token_used);
+        if (item.bot_token) item.bot_token = sanitizeBotIdentifier(item.bot_token);
       }
     }
     return JSON.stringify(list);
@@ -214,6 +217,8 @@ function verifyUserToken(token) {
  * Tokens in URL query parameters are strictly forbidden (Fix #3).
  * Attaches verified user context to req.user and req.authenticatedEmail.
  */
+const passwordResetTimes = new Map();
+
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'] || req.headers['x-access-token'];
   let token = null;
@@ -228,8 +233,15 @@ function authenticateToken(req, res, next) {
   if (token) {
     const decoded = verifyUserToken(token);
     if (decoded && decoded.email) {
+      const lower = decoded.email.toLowerCase();
+      const lastReset = passwordResetTimes.get(lower);
+      if (lastReset && decoded.iat && (decoded.iat * 1000) < lastReset) {
+        req.user = null;
+        req.authenticatedEmail = null;
+        return next();
+      }
       req.user = decoded;
-      req.authenticatedEmail = decoded.email.toLowerCase();
+      req.authenticatedEmail = lower;
       return next();
     }
   }
@@ -385,15 +397,7 @@ async function queryWithTimeout(text, params, timeoutMs = 8000, maxRetries = 1) 
   throw lastErr;
 }
 
-/**
- * -------------------------------------------------------------------------------------
- * IN-MEMORY FALLBACK STORES
- * -------------------------------------------------------------------------------------
- * Used automatically whenever database pool is unavailable or database queries fail.
- */
-const memoryUsers = new Map();
-const memoryOtps = new Map();
-const memoryFiles = new Map();
+// In-memory authentication and file fallbacks removed (Finding #8). All state strictly stored in Postgres.
 
 /**
  * OTP Brute-Force Protection: Tracks failed verification attempts per email.
@@ -529,46 +533,28 @@ function verifyOTPCode(submittedCode, storedCodeOrHash) {
  */
 async function getLatestOtp(email) {
   const lowerEmail = (email || '').trim().toLowerCase();
-  let dbOtp = null;
-  let memOtp = null;
-
-  if (pool) {
-    try {
-      const result = await queryWithTimeout(
-        `SELECT code, expires_at, type FROM otps WHERE LOWER(email) = $1 ORDER BY expires_at DESC LIMIT 1`,
-        [lowerEmail]
-      );
-      if (result.rows.length > 0) {
-        dbOtp = {
-          code: String(result.rows[0].code || '').trim(),
-          expiresAt: parseInt(result.rows[0].expires_at, 10),
-          type: result.rows[0].type
-        };
-      }
-    } catch (err) {
-      console.error('[DB Warn] getLatestOtp DB query error:', err.message);
+  if (!pool) return null;
+  try {
+    const result = await queryWithTimeout(
+      `SELECT code, expires_at, type FROM otps WHERE LOWER(email) = $1 ORDER BY expires_at DESC LIMIT 1`,
+      [lowerEmail]
+    );
+    if (result.rows.length > 0) {
+      return {
+        code: String(result.rows[0].code || '').trim(),
+        expiresAt: parseInt(result.rows[0].expires_at, 10),
+        type: result.rows[0].type
+      };
     }
+  } catch (err) {
+    console.error('[DB Warn] getLatestOtp DB query error:', err.message);
   }
-
-  const rec = memoryOtps.get(lowerEmail);
-  if (rec) {
-    memOtp = {
-      code: String(rec.code || '').trim(),
-      expiresAt: rec.expiresAt,
-      type: rec.type
-    };
-  }
-
-  if (dbOtp && memOtp) {
-    return dbOtp.expiresAt >= memOtp.expiresAt ? dbOtp : memOtp;
-  }
-  return dbOtp || memOtp || null;
+  return null;
 }
 
-/** Purges OTP from both PostgreSQL database and in-memory store */
+/** Purges OTP from PostgreSQL database */
 async function deleteOtp(email) {
   const lowerEmail = (email || '').trim().toLowerCase();
-  memoryOtps.delete(lowerEmail);
   if (pool) {
     try {
       await queryWithTimeout(`DELETE FROM otps WHERE LOWER(email) = $1`, [lowerEmail]);
@@ -588,7 +574,7 @@ async function consumeOtpAtomic(email, code, expectedType) {
   const hashedCode = hashOTP(cleanCode);
   const now = Date.now();
 
-  // 1. Database Atomic Deletion with Purpose & Time Verification
+  // Strict database atomic deletion with purpose and expiry verification
   if (pool) {
     try {
       const res = await queryWithTimeout(
@@ -600,21 +586,11 @@ async function consumeOtpAtomic(email, code, expectedType) {
          RETURNING email, type`,
         [lowerEmail, hashedCode, cleanCode, expectedType, now]
       );
-      if (res.rowCount > 0) {
-        memoryOtps.delete(lowerEmail);
+      if (res && res.rowCount > 0) {
         return { success: true };
       }
     } catch (err) {
       console.error('[DB Warn] consumeOtpAtomic DB query error:', err.message);
-    }
-  }
-
-  // 2. Memory Store Atomic Deletion
-  const mem = memoryOtps.get(lowerEmail);
-  if (mem) {
-    if (now <= mem.expiresAt && mem.type === expectedType && verifyOTPCode(cleanCode, mem.code)) {
-      memoryOtps.delete(lowerEmail);
-      return { success: true };
     }
   }
 
@@ -670,20 +646,18 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
     const hashedCode = hashOTP(code);
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 Minutes TTL
 
-    // Save hashed code to Memory Store ALWAYS for guaranteed instant fallback
-    memoryOtps.set(lowerEmail, { code: hashedCode, expiresAt, type: resolvedType });
-
-    // Also persist hashed code to PostgreSQL DB if available
-    if (pool) {
-      try {
-        await queryWithTimeout(
-          `INSERT INTO otps (email, code, expires_at, type) VALUES ($1, $2, $3, $4)
-           ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3, type = $4`,
-          [lowerEmail, hashedCode, expiresAt, resolvedType]
-        );
-      } catch (dbErr) {
-        console.error('[DB Warn] OTP DB save failed, relying on memory store:', dbErr.message);
-      }
+    if (!pool) {
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again later.' });
+    }
+    try {
+      await queryWithTimeout(
+        `INSERT INTO otps (email, code, expires_at, type) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3, type = $4`,
+        [lowerEmail, hashedCode, expiresAt, resolvedType]
+      );
+    } catch (dbErr) {
+      console.error('[DB Error] OTP DB save failed:', dbErr.message);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
 
     // Construct Responsive HTML Email Template (raw code sent to user, hashed code stored)
@@ -828,20 +802,18 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
     // Fix #1: Hash password with bcrypt before storing (10 salt rounds)
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Persist registered user into Database or Memory Store
-    if (pool) {
-      try {
-        await queryWithTimeout(
-          `INSERT INTO users (email, password_hash) VALUES ($1, $2)
-           ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
-          [lowerEmail, hashedPassword]
-        );
-      } catch (dbErr) {
-        console.error('[DB Error] User registration DB query failed:', dbErr.message);
-        return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
-      }
-    } else {
-      memoryUsers.set(lowerEmail, { password: hashedPassword, botToken: '', chatId: '', isLocked: false });
+    if (!pool) {
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
+    }
+    try {
+      await queryWithTimeout(
+        `INSERT INTO users (email, password_hash) VALUES ($1, $2)
+         ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
+        [lowerEmail, hashedPassword]
+      );
+    } catch (dbErr) {
+      console.error('[DB Error] User registration DB query failed:', dbErr.message);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
 
     const token = generateUserToken(lowerEmail);
@@ -868,24 +840,24 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
       return res.status(400).json({ success: false, message: 'Email and password are required.' });
     }
 
+    if (!pool) {
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
+    }
+
     let user;
-    if (pool) {
-      try {
-        const result = await queryWithTimeout(`SELECT email, password_hash, bot_token, chat_id, is_locked FROM users WHERE email = $1`, [lowerEmail]);
-        if (result.rows.length > 0) {
-          user = {
-            email: result.rows[0].email,
-            password: result.rows[0].password_hash,
-            chatId: result.rows[0].chat_id,
-            isLocked: result.rows[0].is_locked
-          };
-        }
-      } catch (dbErr) {
-        console.error('[DB Warn] Login query failed, falling back to memory store:', dbErr.message);
-        user = memoryUsers.get(lowerEmail);
+    try {
+      const result = await queryWithTimeout(`SELECT email, password_hash, bot_token, chat_id, is_locked FROM users WHERE email = $1`, [lowerEmail]);
+      if (result.rows.length > 0) {
+        user = {
+          email: result.rows[0].email,
+          password: result.rows[0].password_hash,
+          chatId: result.rows[0].chat_id,
+          isLocked: result.rows[0].is_locked
+        };
       }
-    } else {
-      user = memoryUsers.get(lowerEmail);
+    } catch (dbErr) {
+      console.error('[DB Error] Login query failed:', dbErr.message);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
 
     if (!user) {
@@ -900,12 +872,8 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
       passwordValid = (user.password === password);
       if (passwordValid) {
         const upgraded = await bcrypt.hash(password, 10);
-        if (pool) {
-          try { await queryWithTimeout(`UPDATE users SET password_hash = $1 WHERE email = $2`, [upgraded, lowerEmail]); }
-          catch (e) { console.warn('[DB] Password upgrade failed:', e.message); }
-        }
-        const memUser = memoryUsers.get(lowerEmail);
-        if (memUser) { memUser.password = upgraded; memoryUsers.set(lowerEmail, memUser); }
+        try { await queryWithTimeout(`UPDATE users SET password_hash = $1 WHERE email = $2`, [upgraded, lowerEmail]); }
+        catch (e) { console.warn('[DB] Password upgrade failed:', e.message); }
       }
     }
 
@@ -973,22 +941,22 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
     }
 
     // Update password in DB
-    if (pool) {
-      try {
-        await queryWithTimeout(
-          `INSERT INTO users (email, password_hash) VALUES ($1, $2)
-           ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
-          [lowerEmail, hashedPassword]
-        );
-      } catch (dbErr) {
-        console.error('[reset-password] DB update failed:', dbErr.message);
-        return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
-      }
-    } else {
-      const u = memoryUsers.get(lowerEmail) || {};
-      u.password = hashedPassword;
-      memoryUsers.set(lowerEmail, u);
+    if (!pool) {
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
+    try {
+      await queryWithTimeout(
+        `INSERT INTO users (email, password_hash) VALUES ($1, $2)
+         ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
+        [lowerEmail, hashedPassword]
+      );
+    } catch (dbErr) {
+      console.error('[reset-password] DB update failed:', dbErr.message);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
+    }
+
+    // Invalidate all tokens issued prior to this password reset (Finding #9)
+    passwordResetTimes.set(lowerEmail, Date.now());
 
     const token = generateUserToken(lowerEmail);
     return res.status(200).json({ success: true, token, message: 'Password reset successfully!' });
@@ -1008,7 +976,7 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
  */
 app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials', '/user/credentials'], requireAuth, async (req, res, next) => {
   try {
-    const { botToken, chatId } = req.body || {};
+    const { botToken, chatId, otpCode } = req.body || {};
     const lowerEmail = req.authenticatedEmail;
 
     if (!lowerEmail || !isValidEmail(lowerEmail)) {
@@ -1018,24 +986,45 @@ app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials',
       return res.status(400).json({ success: false, message: 'botToken and chatId are required.' });
     }
 
-    if (pool) {
-      try {
-        await queryWithTimeout(
-          `UPDATE users SET bot_token = $1, chat_id = $2 WHERE email = $3`,
-          [botToken || '', chatId || '', lowerEmail]
-        );
-      } catch (dbErr) {
-        console.error('[DB Error] Save credentials DB query failed:', dbErr.message);
-        return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
+    // Finding #10: Require recent re-authentication (< 2 hours) or valid purpose OTP
+    const tokenAgeSec = req.user && req.user.iat ? Math.floor(Date.now() / 1000) - req.user.iat : 999999;
+    let authVerified = tokenAgeSec < 7200; // Recent session within 2 hours
+
+    if (otpCode && String(otpCode).trim().length >= 4) {
+      const otpValid = await consumeOtpAtomic(lowerEmail, String(otpCode).trim());
+      if (otpValid) {
+        authVerified = true;
+      } else {
+        return res.status(400).json({ success: false, message: 'Invalid or expired OTP code for credential update.' });
       }
-    } else {
-      const u = memoryUsers.get(lowerEmail) || {};
-      u.botToken = botToken || '';
-      u.chatId = chatId || '';
-      memoryUsers.set(lowerEmail, u);
     }
 
-    return res.json({ success: true, message: 'Telegram credentials saved successfully.' });
+    if (!authVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Security verification required: please provide an OTP code or log in again to update Telegram credentials.'
+      });
+    }
+
+    if (!pool) {
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
+    }
+
+    try {
+      await queryWithTimeout(
+        `UPDATE users SET bot_token = $1, chat_id = $2 WHERE email = $3`,
+        [botToken || '', chatId || '', lowerEmail]
+      );
+    } catch (dbErr) {
+      console.error('[DB Error] Save credentials DB query failed:', dbErr.message);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
+    }
+
+    // Invalidate other concurrent sessions after credentials change
+    passwordResetTimes.set(lowerEmail, Date.now());
+    const refreshedToken = generateUserToken(lowerEmail);
+
+    return res.json({ success: true, token: refreshedToken, message: 'Telegram credentials saved successfully.' });
   } catch (err) {
     next(err);
   }
@@ -1053,22 +1042,20 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
       return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
+    if (!pool) {
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry.' });
+    }
+
     let botToken = '', chatId = '';
-    if (pool) {
-      try {
-        const result = await queryWithTimeout(`SELECT bot_token, chat_id FROM users WHERE email = $1`, [email]);
-        if (result.rows.length > 0) {
-          botToken = result.rows[0].bot_token || '';
-          chatId = result.rows[0].chat_id || '';
-        }
-      } catch (dbErr) {
-        console.error('[DB Error] Get credentials DB query failed:', dbErr.message);
-        return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry.' });
+    try {
+      const result = await queryWithTimeout(`SELECT bot_token, chat_id FROM users WHERE email = $1`, [email]);
+      if (result.rows.length > 0) {
+        botToken = result.rows[0].bot_token || '';
+        chatId = result.rows[0].chat_id || '';
       }
-    } else if (memoryUsers.has(email)) {
-      const u = memoryUsers.get(email);
-      botToken = u.botToken || '';
-      chatId = u.chatId || '';
+    } catch (dbErr) {
+      console.error('[DB Error] Get credentials DB query failed:', dbErr.message);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry.' });
     }
 
     // Mask the raw bot token — only return the bot ID prefix for display
@@ -1188,10 +1175,7 @@ app.get(['/api/user/settings', '/user/settings', '/api/settings/get', '/settings
       }
     }
 
-    if (!settings && memoryUsers.has(email)) {
-      const u = memoryUsers.get(email);
-      settings = u.settingsJson || null;
-    }
+
 
     let finalSettings = settings || '{}';
     try {
@@ -1303,17 +1287,7 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
         return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry indexing.' });
       }
     } else {
-      const list = memoryFiles.get(lowerEmail) || [];
-      const idx = list.findIndex(f => f.path === safePath && f.email === lowerEmail);
-      const entry = {
-        id: idx >= 0 ? list[idx].id : list.length + 1,
-        email: lowerEmail, fileName, telegramFileId, size: safeSize, path: safePath, timestamp: safeTimestamp,
-        messageId: msgId, isDriveUpload: isDrive, chunksJson: finalChunksJson, channelId: finalChannelId,
-        botTokenUsed: finalBotToken, totalChunks: finalTotalChunks
-      };
-      if (idx >= 0) list[idx] = entry;
-      else list.push(entry);
-      memoryFiles.set(lowerEmail, list);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry indexing.' });
     }
 
     return res.json({ success: true, message: 'File record synced to cloud database.' });
@@ -1412,34 +1386,7 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
         return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry batch indexing.' });
       }
     } else {
-      const list = memoryFiles.get(lowerEmail) || [];
-      for (const f of validFiles) {
-        const fName = (f.fileName || f.name || '').trim();
-        const fPath = (f.path && String(f.path).trim()) ? String(f.path).trim() : fName;
-        const idx = list.findIndex(item => item.path === fPath && item.email === lowerEmail);
-        let fChunksJson = '[]';
-        if (typeof f.chunksJson === 'string' && f.chunksJson.trim().length > 0) fChunksJson = f.chunksJson.trim();
-        else if (typeof f.chunks_json === 'string' && f.chunks_json.trim().length > 0) fChunksJson = f.chunks_json.trim();
-        else if (Array.isArray(f.chunks) && f.chunks.length > 0) fChunksJson = JSON.stringify(f.chunks);
-        const entry = {
-          id: idx >= 0 ? list[idx].id : list.length + 1,
-          email: lowerEmail,
-          fileName: fName,
-          telegramFileId: f.telegramFileId || f.fileId || '',
-          size: Math.max(0, parseInt(f.size || '0', 10) || 0),
-          path: fPath,
-          timestamp: parseInt(f.timestamp || '0', 10) || Date.now(),
-          messageId: parseInt(f.messageId || '0', 10) || 0,
-          isDriveUpload: Boolean(f.isDriveUpload || f.is_drive_upload),
-          chunksJson: fChunksJson,
-          channelId: String(f.channelId || f.channel_id || '').trim(),
-          botTokenUsed: String(f.botTokenUsed || f.bot_token_used || '').trim(),
-          totalChunks: parseInt(f.totalChunks || f.total_chunks || '1', 10) || 1
-        };
-        if (idx >= 0) list[idx] = entry;
-        else list.push(entry);
-      }
-      memoryFiles.set(lowerEmail, list);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry batch indexing.' });
     }
 
     return res.json({ success: true, count: validFiles.length, message: `Successfully synced ${validFiles.length} file records.` });
@@ -1486,9 +1433,7 @@ app.post(['/api/files/delete', '/files/delete'], requireAuth, async (req, res, n
         return res.status(503).json({ success: false, message: 'Database service unavailable. Failed to delete file record.' });
       }
     } else {
-      const list = memoryFiles.get(lowerEmail) || [];
-      const filtered = list.filter(f => f.telegramFileId !== telegramFileId && f.path !== path);
-      memoryFiles.set(lowerEmail, filtered);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Failed to delete file record.' });
     }
 
     return res.json({ success: true, message: 'File record deleted successfully.' });
@@ -1587,13 +1532,7 @@ app.post(['/api/files/purge', '/files/purge'], requireAuth, async (req, res, nex
         return res.status(503).json({ success: false, message: 'Database service unavailable. Purge failed.' });
       }
     } else {
-      const list = memoryFiles.get(lowerEmail) || [];
-      deletedItems = list.map(f => ({ messageId: f.messageId, telegramFileId: f.telegramFileId, path: f.path }));
-      for (const item of deletedItems) {
-        const mid = parseInt(item.messageId, 10);
-        if (!isNaN(mid) && mid > 0) allMessageIds.add(mid);
-      }
-      memoryFiles.set(lowerEmail, []);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Purge failed.' });
     }
 
     return res.json({
@@ -1685,11 +1624,6 @@ app.post(['/api/user/delete-account', '/user/delete-account'], requireAuth, asyn
         await client.query('COMMIT');
         client.release();
 
-        // Also clean up in-memory caches
-        memoryFiles.delete(lowerEmail);
-        memoryUsers.delete(lowerEmail);
-        memoryOtps.delete(lowerEmail);
-
         return res.json({
           success: true,
           message: 'User account and all associated cloud file data deleted permanently.',
@@ -1704,23 +1638,7 @@ app.post(['/api/user/delete-account', '/user/delete-account'], requireAuth, asyn
         return res.status(503).json({ success: false, message: 'Database service unavailable. Account deletion failed.' });
       }
     } else {
-      const u = memoryUsers.get(lowerEmail);
-      if (!u) {
-        return res.status(404).json({ success: false, message: 'User account not found.' });
-      }
-      let valid = false;
-      if (u.password && u.password.startsWith('$2')) {
-        valid = await bcrypt.compare(password, u.password);
-      } else {
-        valid = (u.password === password);
-      }
-      if (!valid) {
-        return res.status(401).json({ success: false, message: 'Incorrect password. Account deletion cancelled.' });
-      }
-      memoryFiles.delete(lowerEmail);
-      memoryUsers.delete(lowerEmail);
-      memoryOtps.delete(lowerEmail);
-      return res.json({ success: true, message: 'Account deleted from memory cache.' });
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Account deletion failed.' });
     }
   } catch (err) {
     next(err);
@@ -1813,18 +1731,11 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
         });
       }
     } else {
-      let list = memoryFiles.get(email) || [];
-      if (since > 0) {
-        list = list.filter(f => f.timestamp > since);
-      }
-      const sanitizedMem = list.slice(0, limit).map(f => {
-        if (!f.timestamp || f.timestamp < 946684800000 || f.timestamp === 1784030400000) f.timestamp = Date.now();
-        if (!f.chunksJson) f.chunksJson = '[]';
-        f.channelId = f.channelId || '';
-        f.totalChunks = f.totalChunks || 1;
-        return f;
+      return res.status(503).json({
+        success: false,
+        retryable: true,
+        message: 'Database service unavailable. Please retry syncing.'
       });
-      return res.json({ success: true, files: sanitizedMem, nextCursor: null, isDelta: since > 0 });
     }
   } catch (err) {
     next(err);
@@ -2952,96 +2863,88 @@ async function resolveShareData(identifier) {
  */
 async function handleShareCreate(req, res) {
   try {
-    const { fileName, fileSize, fileId, botToken, encryptionKey, chunks, pin, expiresAt, candidateBots } = req.body || {};
-    if (!fileName || (!fileId && (!Array.isArray(chunks) || chunks.length === 0))) {
-      return res.status(400).json({ success: false, message: 'Missing required file data' });
+    const userEmail = (req.authenticatedEmail && isValidEmail(req.authenticatedEmail)) ? req.authenticatedEmail.toLowerCase().trim() : '';
+    if (!userEmail) {
+      return res.status(401).json({ success: false, message: 'Authentication required to create share link.' });
+    }
+
+    const { fileRecordId, fileId, pin, expiresAt, fileName, path: reqPath } = req.body || {};
+    const targetLookup = fileRecordId || fileId || fileName || reqPath;
+
+    if (!targetLookup) {
+      return res.status(400).json({ success: false, message: 'fileRecordId or fileId is required.' });
+    }
+
+    if (!pool) {
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again later.' });
+    }
+
+    // Authoritative lookup ONLY from authenticated user's backed_files (Findings #2, #3)
+    let dbFile = null;
+    try {
+      const isNum = Number.isInteger(Number(targetLookup)) && Number(targetLookup) > 0;
+      const fileQuery = isNum
+        ? `SELECT id, file_name, size, telegram_file_id, chunks_json, bot_token_used, total_chunks, path
+           FROM backed_files
+           WHERE email = $1 AND (id = $2 OR telegram_file_id = $3)
+           LIMIT 1`
+        : `SELECT id, file_name, size, telegram_file_id, chunks_json, bot_token_used, total_chunks, path
+           FROM backed_files
+           WHERE email = $1 AND (telegram_file_id = $2 OR file_name = $2 OR path = $2)
+           ORDER BY total_chunks DESC, size DESC LIMIT 1`;
+      const queryParams = isNum ? [userEmail, Number(targetLookup), String(targetLookup)] : [userEmail, String(targetLookup)];
+      const fileCheck = await queryWithTimeout(fileQuery, queryParams);
+      if (fileCheck && fileCheck.rows && fileCheck.rows.length > 0) {
+        dbFile = fileCheck.rows[0];
+      }
+    } catch (err) {
+      console.error('[Share Create DB Error]', err.message);
+      return res.status(503).json({ success: false, message: 'Failed to query file records.' });
+    }
+
+    if (!dbFile) {
+      return res.status(404).json({ success: false, message: 'File not found or not owned by authenticated account.' });
     }
 
     const shareId = 's_' + crypto.randomBytes(12).toString('hex');
-    const safeFileName = path.basename(fileName).replace(/[\r\n\0]/g, '');
+    const safeFileName = path.basename(dbFile.file_name || 'file').replace(/[\r\n\0]/g, '');
     const mimeType = getMimeType(safeFileName);
-    const parsedSize = parseInt(fileSize) || 0;
+    const parsedSize = parseInt(dbFile.size) || 0;
     const expiresAtVal = parseInt(expiresAt) || 0;
     const nowMs = Date.now();
-    const userEmail = (req.authenticatedEmail && isValidEmail(req.authenticatedEmail)) ? req.authenticatedEmail.toLowerCase().trim() : '';
 
-    if (!userEmail && !botToken && (!Array.isArray(chunks) || chunks.length === 0 || !chunks[0].botTokenUsed)) {
-      return res.status(400).json({ success: false, message: 'Missing bot token or authentication to create share link.' });
-    }
-
-    let normalizedChunks = Array.isArray(chunks) && chunks.length > 0
-      ? chunks.map((c, i) => ({
-          chunkIndex: c.chunkIndex || (i + 1),
-          telegramFileId: c.telegramFileId || c.fileId,
-          botTokenUsed: (c.botTokenUsed || c.botToken || botToken || '').trim()
-        }))
-      : [{ chunkIndex: 1, telegramFileId: fileId, botTokenUsed: (botToken || '').trim() }];
-
-    const targetFileId = fileId || (Array.isArray(chunks) && chunks[0] && (chunks[0].telegramFileId || chunks[0].fileId));
-    let dbFile = null;
-    if (pool && userEmail) {
+    // Parse authoritative chunks strictly from database record
+    let normalizedChunks = [];
+    if (dbFile.chunks_json && dbFile.chunks_json !== '[]') {
       try {
-        const fileCheck = await queryWithTimeout(
-          `SELECT id, file_name, size, telegram_file_id, chunks_json, bot_token_used, total_chunks, path
-           FROM backed_files
-           WHERE email = $1
-             AND (telegram_file_id = $2 OR file_name = $3 OR path = $3)
-           ORDER BY total_chunks DESC, size DESC LIMIT 1`,
-          [userEmail, targetFileId || '', safeFileName]
-        );
-        if (fileCheck && fileCheck.rows && fileCheck.rows.length > 0) {
-          dbFile = fileCheck.rows[0];
+        const parsedDbChunks = JSON.parse(dbFile.chunks_json);
+        if (Array.isArray(parsedDbChunks) && parsedDbChunks.length > 0) {
+          normalizedChunks = parsedDbChunks.map((c, i) => ({
+            chunkIndex: c.chunkIndex || (i + 1),
+            telegramFileId: c.telegramFileId || c.fileId,
+            botTokenUsed: (c.botTokenUsed || c.botToken || dbFile.bot_token_used || '').trim()
+          }));
         }
-      } catch (err) {
-        console.warn('[Share Create DB File Check Warn]', err.message);
-      }
+      } catch (_) {}
+    }
+    if (normalizedChunks.length === 0 && dbFile.telegram_file_id) {
+      normalizedChunks = [{
+        chunkIndex: 1,
+        telegramFileId: dbFile.telegram_file_id,
+        botTokenUsed: (dbFile.bot_token_used || '').trim()
+      }];
     }
 
-    // Authoritative adoption of database chunks & telegram file id
-    if (dbFile) {
-      if (dbFile.chunks_json && dbFile.chunks_json !== '[]') {
-        try {
-          const parsedDbChunks = JSON.parse(dbFile.chunks_json);
-          if (Array.isArray(parsedDbChunks) && parsedDbChunks.length > 0) {
-            normalizedChunks = parsedDbChunks.map((c, i) => ({
-              chunkIndex: c.chunkIndex || (i + 1),
-              telegramFileId: c.telegramFileId || c.fileId,
-              botTokenUsed: (c.botTokenUsed || c.botToken || dbFile.bot_token_used || '').trim()
-            }));
-          }
-        } catch (_) {}
-      }
-      if (dbFile.telegram_file_id && normalizedChunks.length > 0 && !normalizedChunks[0].telegramFileId) {
-        normalizedChunks[0].telegramFileId = dbFile.telegram_file_id;
-      }
-    }
-
-    // Resolve bot credentials internally from database via userEmail and fileId (Fix: internal credential loading)
+    // Resolve internal bot token from user account or backed_files
     let internalBotToken = '';
-    if (pool && userEmail) {
-      try {
-        const uRes = await queryWithTimeout('SELECT bot_token FROM users WHERE email = $1', [userEmail]);
-        if (uRes && uRes.rows && uRes.rows.length > 0 && uRes.rows[0].bot_token) {
-          internalBotToken = uRes.rows[0].bot_token.trim();
-        }
-      } catch (_) {}
-    } else if (memoryUsers.has(userEmail)) {
-      internalBotToken = (memoryUsers.get(userEmail).botToken || '').trim();
-    }
+    try {
+      const uRes = await queryWithTimeout('SELECT bot_token FROM users WHERE email = $1', [userEmail]);
+      if (uRes && uRes.rows && uRes.rows.length > 0 && uRes.rows[0].bot_token) {
+        internalBotToken = uRes.rows[0].bot_token.trim();
+      }
+    } catch (_) {}
 
-    if (pool && userEmail && targetFileId && !internalBotToken) {
-      try {
-        const fRes = await queryWithTimeout(
-          'SELECT bot_token_used FROM backed_files WHERE email = $1 AND telegram_file_id = $2 LIMIT 1',
-          [userEmail, targetFileId]
-        );
-        if (fRes && fRes.rows && fRes.rows.length > 0 && fRes.rows[0].bot_token_used) {
-          internalBotToken = fRes.rows[0].bot_token_used.trim();
-        }
-      } catch (_) {}
-    }
-
-    const effectiveBotToken = (internalBotToken || botToken || '').trim();
+    const effectiveBotToken = (internalBotToken || dbFile.bot_token_used || '').trim();
 
     // Ensure all chunks have effectiveBotToken populated
     normalizedChunks = normalizedChunks.map(c => ({
@@ -3050,17 +2953,13 @@ async function handleShareCreate(req, res) {
       botTokenUsed: (c.botTokenUsed || effectiveBotToken || '').trim()
     }));
 
-    const candidateBotsList = Array.isArray(candidateBots)
-      ? candidateBots.map(b => String(b).trim()).filter(Boolean)
-      : (candidateBots ? [String(candidateBots).trim()].filter(Boolean) : []);
-
+    // Finding #3: Master encryption key is NEVER stored in the server share payload
     const sensitivePayload = {
-      fileId: fileId || normalizedChunks[0].telegramFileId,
-      botToken: effectiveBotToken || (normalizedChunks[0] && normalizedChunks[0].botTokenUsed) || '',
-      encryptionKey: (encryptionKey || '').trim(),
+      fileRecordId: dbFile.id,
+      fileId: dbFile.telegram_file_id || (normalizedChunks[0] && normalizedChunks[0].telegramFileId) || '',
+      botToken: effectiveBotToken,
       totalChunks: normalizedChunks.length,
-      chunks: normalizedChunks,
-      candidateBots: candidateBotsList
+      chunks: normalizedChunks
     };
 
     const payloadEnc = encryptServerPayload(sensitivePayload);
@@ -3070,26 +2969,24 @@ async function handleShareCreate(req, res) {
       : '';
 
     // Persist to Neon Postgres
-    if (pool) {
-      try {
-        await queryWithTimeout(
-          `INSERT INTO shared_files (share_id, file_name, file_size, mime_type, payload_enc, pin_hash, expires_at, created_at, email, file_path)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           ON CONFLICT (share_id) DO UPDATE SET
-             file_name = EXCLUDED.file_name,
-             file_size = EXCLUDED.file_size,
-             mime_type = EXCLUDED.mime_type,
-             payload_enc = EXCLUDED.payload_enc,
-             pin_hash = EXCLUDED.pin_hash,
-             expires_at = EXCLUDED.expires_at,
-             email = EXCLUDED.email,
-             file_path = EXCLUDED.file_path`,
-          [shareId, safeFileName, parsedSize, mimeType, payloadEnc, pinHash, expiresAtVal, nowMs, userEmail, safeFileName]
-        );
-      } catch (dbErr) {
-        console.error('[Share Create DB Error]', dbErr.message);
-        return res.status(503).json({ success: false, message: 'Database service unavailable. Failed to persist share link.' });
-      }
+    try {
+      await queryWithTimeout(
+        `INSERT INTO shared_files (share_id, file_name, file_size, mime_type, payload_enc, pin_hash, expires_at, created_at, email, file_path)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (share_id) DO UPDATE SET
+           file_name = EXCLUDED.file_name,
+           file_size = EXCLUDED.file_size,
+           mime_type = EXCLUDED.mime_type,
+           payload_enc = EXCLUDED.payload_enc,
+           pin_hash = EXCLUDED.pin_hash,
+           expires_at = EXCLUDED.expires_at,
+           email = EXCLUDED.email,
+           file_path = EXCLUDED.file_path`,
+        [shareId, safeFileName, parsedSize, mimeType, payloadEnc, pinHash, expiresAtVal, nowMs, userEmail, dbFile.path || safeFileName]
+      );
+    } catch (dbErr) {
+      console.error('[Share Create DB Error]', dbErr.message);
+      return res.status(503).json({ success: false, message: 'Database service unavailable. Failed to persist share link.' });
     }
 
     // Save to memory cache
@@ -3528,6 +3425,7 @@ async function handleShare(req, res) {
 
       if (!isAlreadyAuthorized) {
         let isPinValid = false;
+        let isLegacySha256 = false;
         if (userEnteredPin) {
           if (pinHash.startsWith('$2a$') || pinHash.startsWith('$2b$')) {
             try {
@@ -3540,6 +3438,9 @@ async function handleShare(req, res) {
             const enteredHash = crypto.createHash('sha256').update(userEnteredPin).digest('hex');
             try {
               isPinValid = crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'));
+              if (isPinValid) {
+                isLegacySha256 = true;
+              }
             } catch (_) {
               isPinValid = false;
             }
@@ -3550,8 +3451,28 @@ async function handleShare(req, res) {
         }
 
         if (isPinValid) {
+          // Finding #7: Upgrade legacy SHA-256 PIN hash to bcrypt
+          if (isLegacySha256) {
+            try {
+              const upgradedHash = await bcrypt.hash(userEnteredPin, 12);
+              if (pool && shareData.shareId) {
+                await queryWithTimeout(
+                  `UPDATE shared_files SET pin_hash = $1 WHERE share_id = $2`,
+                  [upgradedHash, shareData.shareId]
+                );
+              }
+              shareData.pinHash = upgradedHash;
+              if (memoryShareCache.has(shareData.shareId)) {
+                const cached = memoryShareCache.get(shareData.shareId);
+                cached.pinHash = upgradedHash;
+              }
+            } catch (upgradeErr) {
+              console.warn('[PIN Upgrade Warning] Failed to upgrade legacy PIN hash:', upgradeErr.message);
+            }
+          }
+
           recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
-          const sessionToken = getShareSessionToken(shareData.shareId, pinHash);
+          const sessionToken = getShareSessionToken(shareData.shareId, shareData.pinHash || pinHash);
           // Set secure session cookie (HttpOnly, Secure, SameSite=Strict, 15 min expiry)
           res.setHeader(
             'Set-Cookie',

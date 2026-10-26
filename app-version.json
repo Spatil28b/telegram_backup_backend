@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 156,
-  "versionName": "2.7.8",
+  "versionCode": 157,
+  "versionName": "2.7.9",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.7.8 (Zero-Stutter Navigation Engine & Instant Settings Arbitration):\n- ⚡ Zero-Stutter Navigation Engine (P0): Eliminated navigation bar stutter and 1-second lag by replacing heavy full-screen matrix scale recalculations with hardware-accelerated 130ms crossfade transitions and snappy Spring.StiffnessMedium tab physics.\n- 🛡️ Multi-Tier Settings Arbitration (P0): Established timestamp-based arbitration across SharedPreferences, Room DB, Local Config Vault, and Cloud Profiles, permanently stopping themes and navigation bars from resetting on restart or reinstall.\n- 🧭 Instant M3 Navigation Customization (P1): Custom tabs, density, labels, and indicator shapes write immediately to storage on touch with dynamic live preview feedback."
+  "releaseNotes": "🛡️ What's New in v2.7.9 (Production Security & Cryptographic Hardening):\n- 🔐 Cryptographic APK Update Verification (P0): Added dual-tier signing certificate verification (GET_SIGNING_CERTIFICATES / GET_SIGNATURES) comparing SHA-256 certificate digests against the active installed package before allowing installation.\n- 🛡️ Authoritative Zero-Knowledge File Sharing (P0): Enforced server-side database ownership lookups for public share generation, completely rejecting client-supplied Telegram credentials, bot tokens, and master encryption keys.\n- 🔑 Keystore Isolation & Room Scrubbing (P0): Removed plaintext encryption keys and bot tokens from local Room SQLite databases and remote profile synchronization; purged legacy keys on database startup.\n- ⚡ Fail-Closed Resilience & Token Revocation (P0): Eliminated in-memory authentication/OTP fallbacks in favor of strict PostgreSQL operations with immediate 503 fail-closed responses and instant session revocation upon password reset."
 }
