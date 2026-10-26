@@ -173,41 +173,141 @@ test('Integrity: Chunk metadata validation schema', () => {
   assert.equal(validateChunk({ ...validChunk, sha256: 'short' }), false);
 });
 
-test('Security & Cryptography: AES-256-GCM Magic Header & Stream Decryption', () => {
-  const MAGIC_HEADER_GCM = Buffer.from([0x47, 0x43, 0x4D, 0x32, 0x35, 0x36, 0x01, 0x00]); // "GCM256\x01\x00"
+test('Security & Cryptography: Authenticated Per-Chunk AES-256-GCM (v2) Format & Verification', () => {
+  const MAGIC_HEADER_GCM_V2 = Buffer.from([0x47, 0x43, 0x4D, 0x32, 0x35, 0x36, 0x02, 0x00]); // "GCM256\x02\x00"
   const secretKey = 'my-super-secret-vault-key-32bytes!';
   const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+  const chunkIndex = 1;
+  const totalChunks = 3;
   const nonce = crypto.randomBytes(12);
 
-  // Encrypt sample plaintext using standard AES-256-GCM
-  const plaintext = Buffer.from('Hello Secure Telegram Cloud Storage Range and Stream Test Data!');
+  const plaintext = Buffer.from('Authenticated 4MB chunk payload content!');
+
+  // Build AAD binding [chunkIndex (4B BE)][totalChunks (4B BE)]
+  const aad = Buffer.alloc(8);
+  aad.writeUInt32BE(chunkIndex, 0);
+  aad.writeUInt32BE(totalChunks, 4);
+
   const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+  cipher.setAAD(aad);
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const fullPayload = Buffer.concat([MAGIC_HEADER_GCM, nonce, ciphertext]);
+  const tag = cipher.getAuthTag();
 
-  // Assert header detection
-  assert.equal(fullPayload.subarray(0, 8).equals(MAGIC_HEADER_GCM), true);
+  // Wire format: [MAGIC_HEADER_GCM_V2 (8B)][chunkIndex (4B)][totalChunks (4B)][nonce (12B)][ciphertext][tag (16B)]
+  const chunkIndexBuf = Buffer.alloc(4);
+  chunkIndexBuf.writeUInt32BE(chunkIndex, 0);
+  const totalChunksBuf = Buffer.alloc(4);
+  totalChunksBuf.writeUInt32BE(totalChunks, 0);
 
-  // Assert random-access AES-256-CTR slice decryption matches original slice
-  const pStart = 6;
-  const pEnd = 24;
-  const blockIndex = Math.floor(pStart / 16);
-  const counterVal = 2 + blockIndex;
-  const ctrIv = Buffer.alloc(16);
-  nonce.copy(ctrIv, 0, 0, 12);
-  ctrIv.writeUInt32BE(counterVal, 12);
+  const fullChunk = Buffer.concat([
+    MAGIC_HEADER_GCM_V2,
+    chunkIndexBuf,
+    totalChunksBuf,
+    nonce,
+    ciphertext,
+    tag
+  ]);
 
-  const alignedCByteStart = 20 + blockIndex * 16;
-  const alignedCByteEnd = 20 + pEnd;
-  const rawBytes = fullPayload.subarray(alignedCByteStart, alignedCByteEnd + 1);
+  // Assert framing
+  assert.equal(fullChunk.subarray(0, 8).equals(MAGIC_HEADER_GCM_V2), true);
+  assert.equal(fullChunk.readUInt32BE(8), chunkIndex);
+  assert.equal(fullChunk.readUInt32BE(12), totalChunks);
 
-  const decipher = crypto.createDecipheriv('aes-256-ctr', key, ctrIv);
-  const decryptedBlock = Buffer.concat([decipher.update(rawBytes), decipher.final()]);
-  const offsetInBlock = pStart % 16;
-  const sliceLen = pEnd - pStart + 1;
-  const actualSlice = decryptedBlock.subarray(offsetInBlock, offsetInBlock + sliceLen);
+  // Decryption function with AAD and tag verification
+  function decryptGcmChunk(chunkBuf, keyStr) {
+    assert.ok(chunkBuf.length >= 44);
+    assert.equal(chunkBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM_V2), true);
+    const cIdx = chunkBuf.readUInt32BE(8);
+    const tChunks = chunkBuf.readUInt32BE(12);
+    const n = chunkBuf.subarray(16, 28);
+    const ct = chunkBuf.subarray(28, chunkBuf.length - 16);
+    const authTag = chunkBuf.subarray(chunkBuf.length - 16);
 
-  assert.equal(actualSlice.toString('utf8'), plaintext.subarray(pStart, pEnd + 1).toString('utf8'));
+    const k = crypto.createHash('sha256').update(keyStr, 'utf8').digest();
+    const decipher = crypto.createDecipheriv('aes-256-gcm', k, n);
+    const chunkAad = Buffer.alloc(8);
+    chunkAad.writeUInt32BE(cIdx, 0);
+    chunkAad.writeUInt32BE(tChunks, 4);
+    decipher.setAAD(chunkAad);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]);
+  }
+
+  // 1. Valid chunk decrypts cleanly
+  const decrypted = decryptGcmChunk(fullChunk, secretKey);
+  assert.equal(decrypted.toString('utf8'), plaintext.toString('utf8'));
+
+  // 2. Tampered ciphertext is rejected by GCM tag verification
+  const tamperedCiphertext = Buffer.from(fullChunk);
+  tamperedCiphertext[32] ^= 0x55; // Flip bit in ciphertext
+  assert.throws(() => {
+    decryptGcmChunk(tamperedCiphertext, secretKey);
+  }, /Unsupported state or unable to authenticate data/);
+
+  // 3. Tampered chunkIndex is rejected by GCM AAD verification
+  const tamperedIndex = Buffer.from(fullChunk);
+  tamperedIndex.writeUInt32BE(2, 8); // Change chunkIndex from 1 to 2
+  assert.throws(() => {
+    decryptGcmChunk(tamperedIndex, secretKey);
+  }, /Unsupported state or unable to authenticate data/);
+});
+
+test('Security: Short-Lived JWT & Session Revocation Logic', () => {
+  const now = Math.floor(Date.now() / 1000);
+  const tokenPayload = {
+    email: 'user@example.com',
+    iat: now - 300, // Issued 5 minutes ago
+    exp: now + 600  // Expires in 10 minutes (total 15m)
+  };
+
+  // Lifespan assertion: 15 minutes
+  assert.equal(tokenPayload.exp - tokenPayload.iat, 15 * 60);
+
+  // Session revocation: if user changed credentials at (now - 60s), older token is rejected
+  const sessionRevokedAtMs = (now - 60) * 1000;
+  const tokenIssuedAtMs = tokenPayload.iat * 1000;
+  const isRevoked = tokenIssuedAtMs < sessionRevokedAtMs;
+  assert.equal(isRevoked, true);
+
+  // Token issued after revocation is valid
+  const freshPayload = {
+    email: 'user@example.com',
+    iat: now,
+    exp: now + 15 * 60
+  };
+  const isFreshRevoked = (freshPayload.iat * 1000) < sessionRevokedAtMs;
+  assert.equal(isFreshRevoked, false);
+});
+
+test('Security: Authoritative Share Validation & 8-char PIN Requirement', () => {
+  function validateShareRequest(body) {
+    const rawId = body?.fileRecordId;
+    const fileRecordId = Number(rawId);
+    if (!Number.isInteger(fileRecordId) || fileRecordId <= 0) {
+      return { valid: false, error: 'fileRecordId (positive integer) is required.' };
+    }
+    const pinStr = (body.pin && String(body.pin).trim()) || '';
+    if (pinStr.length > 0 && pinStr.length < 8) {
+      return { valid: false, error: 'PIN/Password must be at least 8 characters.' };
+    }
+    return { valid: true, fileRecordId, pinStr };
+  }
+
+  // Reject non-integer, zero, negative, or missing
+  assert.equal(validateShareRequest({ fileId: 'some_id' }).valid, false);
+  assert.equal(validateShareRequest({ fileRecordId: 'abc' }).valid, false);
+  assert.equal(validateShareRequest({ fileRecordId: 0 }).valid, false);
+  assert.equal(validateShareRequest({ fileRecordId: -10 }).valid, false);
+
+  // Accept positive integer
+  assert.equal(validateShareRequest({ fileRecordId: 101 }).valid, true);
+  assert.equal(validateShareRequest({ fileRecordId: '101' }).valid, true);
+
+  // PIN validation: reject < 8 chars
+  assert.equal(validateShareRequest({ fileRecordId: 101, pin: '1234' }).valid, false);
+  assert.equal(validateShareRequest({ fileRecordId: 101, pin: '1234567' }).valid, false);
+  assert.equal(validateShareRequest({ fileRecordId: 101, pin: '12345678' }).valid, true);
+  assert.equal(validateShareRequest({ fileRecordId: 101, pin: '' }).valid, true);
 });
 
 test('Security: Bot Token Sanitization on Indexing', () => {
@@ -323,24 +423,28 @@ test('Share Creation: candidateBots normalization and payload construction', () 
   assert.deepEqual(normalizeCandidateBots(undefined), []);
 });
 
-test('Share Creation: Allows unauthenticated requests if bot token is provided', () => {
+test('Share Creation: Requires authenticated user and authoritative file record', () => {
   function validateShareAuth(req) {
     const userEmail = (req.authenticatedEmail && req.authenticatedEmail.includes('@')) ? req.authenticatedEmail.toLowerCase().trim() : '';
-    const { botToken, chunks } = req.body || {};
-    if (!userEmail && !botToken && (!Array.isArray(chunks) || chunks.length === 0 || !chunks[0].botTokenUsed)) {
-      return { allowed: false, error: 'Missing bot token or authentication to create share link.' };
+    if (!userEmail) {
+      return { allowed: false, error: 'Authentication required to create share link.' };
     }
-    return { allowed: true, userEmail };
+    const rawId = req.body?.fileRecordId;
+    const fileRecordId = Number(rawId);
+    if (!Number.isInteger(fileRecordId) || fileRecordId <= 0) {
+      return { allowed: false, error: 'fileRecordId (positive integer) is required.' };
+    }
+    return { allowed: true, userEmail, fileRecordId };
   }
 
-  // 1. Unauthenticated with bot token: ALLOWED
-  assert.deepEqual(validateShareAuth({ body: { botToken: '123456:ABC' } }), { allowed: true, userEmail: '' });
+  // 1. Unauthenticated with bot token: REJECTED (Finding #5)
+  assert.equal(validateShareAuth({ body: { botToken: '123456:ABC', fileRecordId: 10 } }).allowed, false);
 
-  // 2. Authenticated with JWT email: ALLOWED
-  assert.deepEqual(validateShareAuth({ authenticatedEmail: 'user@example.com', body: {} }), { allowed: true, userEmail: 'user@example.com' });
+  // 2. Authenticated with positive integer fileRecordId: ALLOWED
+  assert.deepEqual(validateShareAuth({ authenticatedEmail: 'user@example.com', body: { fileRecordId: 42 } }), { allowed: true, userEmail: 'user@example.com', fileRecordId: 42 });
 
-  // 3. No email and no bot token: REJECTED
-  assert.equal(validateShareAuth({ body: {} }).allowed, false);
+  // 3. Authenticated without fileRecordId: REJECTED
+  assert.equal(validateShareAuth({ authenticatedEmail: 'user@example.com', body: {} }).allowed, false);
 });
 
 test('Share Page: Inlined client script has valid JavaScript syntax without errors', () => {

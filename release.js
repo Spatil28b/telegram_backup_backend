@@ -111,6 +111,12 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.0': `🛡️ What's New in v2.8.0 (Cryptographic Hardening & Production Zero-Trust):
+- 🔐 Authenticated AES-256-GCM v2 Framing (P0): Per-chunk GCM framing with chunk index and total chunk AAD validation; completely purged legacy unauthenticated CTR cipher modes.
+- 🔑 Room Bot Token Keystore Isolation (P0): Raw Telegram bot tokens strictly segregated into hardware-backed Android KeyStore; Room databases store only sanitized bot identifiers.
+- 📦 Encrypted Recovery Packages (P0): Password-protected backup vault archives using PBKDF2 (100,000 iterations) + AES-GCM; purged plaintext credentials and keys from JSON vault exports.
+- 🛡️ Authoritative Zero-Knowledge Sharing (P0): Server-side database ownership lookups, zero-knowledge encryption key omission, and mandatory bcrypt PIN verification (minimum 8 characters).
+- ⚡ Distributed Rate Limiting & 15-Minute Short-Lived JWTs (P0): Persistent PostgreSQL rate limiting across serverless instances and instant session revocation upon credential updates.`,
     '2.7.9': `🛡️ What's New in v2.7.9 (Production Security & Cryptographic Hardening):
 - 🔐 Cryptographic APK Update Verification (P0): Added dual-tier signing certificate verification (GET_SIGNING_CERTIFICATES / GET_SIGNATURES) comparing SHA-256 certificate digests against the active installed package before allowing installation.
 - 🛡️ Authoritative Zero-Knowledge File Sharing (P0): Enforced server-side database ownership lookups for public share generation, completely rejecting client-supplied Telegram credentials, bot tokens, and master encryption keys.
@@ -683,6 +689,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.0': 'Cryptographic Hardening, AES-GCM v2, Room Keystore Isolation & Zero-Knowledge Sharing',
     '2.7.9': 'Production Security & Cryptographic Hardening',
     '2.7.8': 'Zero-Stutter Navigation Engine & Instant Settings Arbitration',
     '2.7.7': 'Liquid Glass Design System v2.2 Overhaul',
@@ -709,7 +716,7 @@ async function main() {
     '2.5.0': 'Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming',
   };
   const commitTitle = releaseTitleMap[versionName] || 'Security, Performance & Stability Update';
-  execSync('git add app-version.json index.js release.js migrate.js vercel.json package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md', { cwd: __dirname });
+  execSync('git add app-version.json index.js release.js migrate.js vercel.json package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md tests', { cwd: __dirname });
   try {
     execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - ${commitTitle}"`, { cwd: __dirname });
   } catch (cErr) {

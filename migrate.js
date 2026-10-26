@@ -237,6 +237,29 @@ async function runMigrations() {
       }
     });
 
+    // 7. Security Phase 4: Rate limits table, session revocation, and legacy PIN purge
+    await applyMigration('v7_security_phase4', 'Create rate_limits table, add session_revoked_at to users, and purge legacy SHA-256 PINs', async (db) => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS rate_limits (
+          key VARCHAR(255) PRIMARY KEY,
+          attempts INT NOT NULL DEFAULT 1,
+          first_attempt_at BIGINT NOT NULL,
+          lock_until BIGINT NOT NULL DEFAULT 0
+        );
+      `);
+
+      await db.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS session_revoked_at BIGINT DEFAULT 0;
+      `);
+
+      // Purge legacy SHA-256 PINs that have not been migrated to bcrypt
+      await db.query(`
+        UPDATE shared_files
+        SET pin_hash = ''
+        WHERE length(pin_hash) = 64 AND NOT (pin_hash LIKE '$2a$%' OR pin_hash LIKE '$2b$%');
+      `);
+    });
+
     console.log('\n🎉 [Neon Postgres Migration] All versioned migrations applied successfully!\n');
   } catch (err) {
     console.error('❌ [Migration Error]:', err.message);

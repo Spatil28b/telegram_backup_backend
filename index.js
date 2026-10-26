@@ -190,13 +190,14 @@ function isValidEmail(email) {
 }
 
 /**
- * Issues signed JWT authorization token for verified sessions (24h lifespan, strict claims).
+/**
+ * Issues signed JWT authorization token for verified sessions (15-minute lifespan, strict claims, Finding #9).
  */
 function generateUserToken(email) {
   return jwt.sign(
     { sub: (email || '').trim().toLowerCase(), email: (email || '').trim().toLowerCase() },
     JWT_SECRET,
-    { expiresIn: '24h', issuer: 'telegram-backup-backend' }
+    { expiresIn: '15m', issuer: 'telegram-backup-backend' }
   );
 }
 
@@ -212,14 +213,125 @@ function verifyUserToken(token) {
 }
 
 /**
+ * Distributed Session Revocation Cache:
+ * Caches PostgreSQL session_revoked_at timestamps for fast lookup while guaranteeing
+ * global distributed session revocation across password resets and credential changes.
+ */
+const sessionRevocationCache = new Map(); // key: email, value: { revokedAt, fetchedAt }
+
+async function getSessionRevocationTime(email) {
+  const lower = (email || '').trim().toLowerCase();
+  if (!lower) return 0;
+  const now = Date.now();
+  const cached = sessionRevocationCache.get(lower);
+  if (cached && (now - cached.fetchedAt < 30000)) {
+    return cached.revokedAt;
+  }
+  if (pool) {
+    try {
+      const res = await queryWithTimeout('SELECT session_revoked_at FROM users WHERE LOWER(email) = $1', [lower]);
+      if (res && res.rows && res.rows.length > 0) {
+        const val = Number(res.rows[0].session_revoked_at) || 0;
+        sessionRevocationCache.set(lower, { revokedAt: val, fetchedAt: now });
+        return val;
+      }
+    } catch (_) {}
+  }
+  return cached ? cached.revokedAt : 0;
+}
+
+function recordSessionRevocation(email, timestamp = Date.now()) {
+  const lower = (email || '').trim().toLowerCase();
+  sessionRevocationCache.set(lower, { revokedAt: timestamp, fetchedAt: Date.now() });
+}
+
+/**
+ * Distributed Rate Limiter backed by Neon PostgreSQL rate_limits table (Finding #8).
+ * Keyed by IP, email, or share ID; falls back to process-local cache if pool is unavailable.
+ */
+const localRateLimitMap = new Map();
+
+async function checkDistributedRateLimit(key, maxAttempts = 5, windowMs = 600000, lockMs = 600000) {
+  const nowMs = Date.now();
+  if (pool) {
+    try {
+      const res = await queryWithTimeout(
+        'SELECT attempts, first_attempt_at, lock_until FROM rate_limits WHERE key = $1',
+        [key]
+      );
+      if (res && res.rows && res.rows.length > 0) {
+        const row = res.rows[0];
+        const lockUntil = Number(row.lock_until) || 0;
+        const firstAttemptAt = Number(row.first_attempt_at) || 0;
+        let attempts = Number(row.attempts) || 0;
+
+        if (lockUntil > nowMs) {
+          const waitSeconds = Math.ceil((lockUntil - nowMs) / 1000);
+          return { locked: true, waitSeconds };
+        }
+
+        if (firstAttemptAt + windowMs < nowMs) {
+          await queryWithTimeout(
+            'UPDATE rate_limits SET attempts = 1, first_attempt_at = $1, lock_until = 0 WHERE key = $2',
+            [nowMs, key]
+          );
+          return { locked: false, waitSeconds: 0 };
+        } else {
+          attempts += 1;
+          const isLocked = attempts >= maxAttempts;
+          const newLockUntil = isLocked ? nowMs + lockMs : 0;
+          await queryWithTimeout(
+            'UPDATE rate_limits SET attempts = $1, lock_until = $2 WHERE key = $3',
+            [attempts, newLockUntil, key]
+          );
+          return { locked: isLocked, waitSeconds: isLocked ? Math.ceil(lockMs / 1000) : 0 };
+        }
+      } else {
+        await queryWithTimeout(
+          'INSERT INTO rate_limits (key, attempts, first_attempt_at, lock_until) VALUES ($1, 1, $2, 0) ON CONFLICT (key) DO NOTHING',
+          [key, nowMs]
+        );
+        return { locked: false, waitSeconds: 0 };
+      }
+    } catch (e) {
+      console.warn('[RateLimit DB Warning]', e.message);
+    }
+  }
+
+  const cached = localRateLimitMap.get(key) || { attempts: 0, firstAttemptAt: nowMs, lockUntil: 0 };
+  if (cached.lockUntil > nowMs) {
+    return { locked: true, waitSeconds: Math.ceil((cached.lockUntil - nowMs) / 1000) };
+  }
+  if (cached.firstAttemptAt + windowMs < nowMs) {
+    cached.attempts = 1;
+    cached.firstAttemptAt = nowMs;
+    cached.lockUntil = 0;
+  } else {
+    cached.attempts += 1;
+    if (cached.attempts >= maxAttempts) {
+      cached.lockUntil = nowMs + lockMs;
+    }
+  }
+  localRateLimitMap.set(key, cached);
+  const isLocked = cached.lockUntil > nowMs;
+  return { locked: isLocked, waitSeconds: isLocked ? Math.ceil((cached.lockUntil - nowMs) / 1000) : 0 };
+}
+
+async function clearDistributedRateLimit(key) {
+  localRateLimitMap.delete(key);
+  if (pool) {
+    try {
+      await queryWithTimeout('DELETE FROM rate_limits WHERE key = $1', [key]);
+    } catch (_) {}
+  }
+}
+
+/**
  * Universal Authorization Middleware:
  * Inspects Authorization: Bearer <token> or X-Access-Token headers only.
- * Tokens in URL query parameters are strictly forbidden (Fix #3).
- * Attaches verified user context to req.user and req.authenticatedEmail.
+ * Checks server-side revocation to immediately invalidate logged-out or reset sessions (Finding #9).
  */
-const passwordResetTimes = new Map();
-
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'] || req.headers['x-access-token'];
   let token = null;
   if (authHeader) {
@@ -234,8 +346,8 @@ function authenticateToken(req, res, next) {
     const decoded = verifyUserToken(token);
     if (decoded && decoded.email) {
       const lower = decoded.email.toLowerCase();
-      const lastReset = passwordResetTimes.get(lower);
-      if (lastReset && decoded.iat && (decoded.iat * 1000) < lastReset) {
+      const revokedAt = await getSessionRevocationTime(lower);
+      if (revokedAt && decoded.iat && (decoded.iat * 1000) < revokedAt) {
         req.user = null;
         req.authenticatedEmail = null;
         return next();
@@ -598,22 +710,13 @@ async function consumeOtpAtomic(email, code, expectedType) {
 }
 
 /**
- * In-Memory Rate Limiting for OTP generation (Fix #13)
+ * Distributed Rate Limiting for OTP generation (Finding #8).
  * Maximum 5 OTP dispatches per email per 15 minutes.
  */
-const otpRateLimitMap = new Map(); // key: email, value: { count, resetAt }
-function checkOtpRateLimit(email) {
-  const now = Date.now();
-  const record = otpRateLimitMap.get(email);
-  if (!record || now > record.resetAt) {
-    otpRateLimitMap.set(email, { count: 1, resetAt: now + 15 * 60 * 1000 });
-    return true;
-  }
-  if (record.count >= 5) {
-    return false;
-  }
-  record.count++;
-  return true;
+async function checkOtpRateLimit(email) {
+  const lower = (email || '').trim().toLowerCase();
+  const res = await checkDistributedRateLimit(`otpsend_${lower}`, 5, 15 * 60 * 1000, 15 * 60 * 1000);
+  return !res.locked;
 }
 
 /**
@@ -632,7 +735,8 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
     }
 
     const lowerEmail = email.trim().toLowerCase();
-    if (!checkOtpRateLimit(lowerEmail)) {
+    const isAllowed = await checkOtpRateLimit(lowerEmail);
+    if (!isAllowed) {
       return res.status(429).json({ success: false, message: 'Too many OTP requests. Please wait 15 minutes before requesting again.' });
     }
 
@@ -780,10 +884,10 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
       return res.status(400).json({ success: false, message: 'Email, verification code, and password are required.' });
     }
 
-    // Fix #5: OTP brute-force protection — check attempt count before verification
-    const attempts = otpAttempts.get(lowerEmail);
-    if (attempts && attempts.count >= OTP_MAX_ATTEMPTS && (Date.now() - attempts.lastAttempt) < OTP_LOCKOUT_MS) {
-      const remainingMins = Math.ceil((OTP_LOCKOUT_MS - (Date.now() - attempts.lastAttempt)) / 60000);
+    // Distributed brute-force protection (Finding #8)
+    const rateCheck = await checkDistributedRateLimit(`otpatts_${lowerEmail}`, 5, 15 * 60 * 1000, 15 * 60 * 1000);
+    if (rateCheck.locked) {
+      const remainingMins = Math.ceil(rateCheck.waitSeconds / 60);
       return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${remainingMins} minutes.` });
     }
 
@@ -791,16 +895,14 @@ app.post(['/api/auth/verify-otp-register', '/auth/verify-otp-register', '/verify
     // Atomic validation & deletion bound specifically to 'register' purpose (Fix #11, #12, #14)
     const otpResult = await consumeOtpAtomic(lowerEmail, cleanCode, 'register');
     if (!otpResult.success) {
-      const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
-      otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
       return res.status(400).json({ success: false, message: 'Invalid, expired, or already-used registration verification code.' });
     }
 
-    // Clear attempt counters
-    otpAttempts.delete(lowerEmail);
+    // Clear attempt counters upon success
+    await clearDistributedRateLimit(`otpatts_${lowerEmail}`);
 
-    // Fix #1: Hash password with bcrypt before storing (10 salt rounds)
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Hash password with bcrypt before storing (12 salt rounds)
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     if (!pool) {
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
@@ -898,6 +1000,16 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
 });
 
 /**
+ * Endpoint: POST /api/auth/refresh (Aliases: /auth/refresh)
+ * Requires: Authorization: Bearer <token>
+ * Returns: { success: true, token: string } (fresh 15-minute token)
+ */
+app.post(['/api/auth/refresh', '/auth/refresh'], requireAuth, async (req, res) => {
+  const refreshedToken = generateUserToken(req.authenticatedEmail);
+  return res.json({ success: true, token: refreshedToken });
+});
+
+/**
  * -------------------------------------------------------------------------------------
  * 6. API ROUTE: VERIFY RESET OTP & UPDATE PASSWORD (BULLETPROOF)
  * -------------------------------------------------------------------------------------
@@ -914,27 +1026,25 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
       return res.status(400).json({ success: false, message: 'Email, verification code, and new password are required.' });
     }
 
-    // Brute-force protection
-    const attempts = otpAttempts.get(lowerEmail);
-    if (attempts && attempts.count >= OTP_MAX_ATTEMPTS && (Date.now() - attempts.lastAttempt) < OTP_LOCKOUT_MS) {
-      const remainingMins = Math.ceil((OTP_LOCKOUT_MS - (Date.now() - attempts.lastAttempt)) / 60000);
+    // Distributed brute-force protection (Finding #8)
+    const rateCheck = await checkDistributedRateLimit(`reset_${lowerEmail}`, 5, 15 * 60 * 1000, 15 * 60 * 1000);
+    if (rateCheck.locked) {
+      const remainingMins = Math.ceil(rateCheck.waitSeconds / 60);
       return res.status(429).json({ success: false, message: `Too many failed attempts. Try again in ${remainingMins} minutes.` });
     }
 
-    // Atomic validation & deletion bound specifically to 'reset' purpose (Fix #11, #12, #14)
+    // Atomic validation & deletion bound specifically to 'reset' purpose
     const otpResult = await consumeOtpAtomic(lowerEmail, cleanCode, 'reset');
     if (!otpResult.success) {
-      const prev = otpAttempts.get(lowerEmail) || { count: 0, lastAttempt: 0 };
-      otpAttempts.set(lowerEmail, { count: prev.count + 1, lastAttempt: Date.now() });
       return res.status(400).json({ success: false, message: 'Invalid, expired, or already-used password reset verification code.' });
     }
 
-    otpAttempts.delete(lowerEmail);
+    await clearDistributedRateLimit(`reset_${lowerEmail}`);
 
     // Hash new password with bcrypt
     let hashedPassword;
     try {
-      hashedPassword = await bcrypt.hash(newPassword, 10);
+      hashedPassword = await bcrypt.hash(newPassword, 12);
     } catch (hashErr) {
       console.error('[reset-password] bcrypt.hash error:', hashErr.message);
       return res.status(500).json({ success: false, message: 'Failed to process new password. Please try again.' });
@@ -944,11 +1054,12 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
     if (!pool) {
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
+    const nowMs = Date.now();
     try {
       await queryWithTimeout(
-        `INSERT INTO users (email, password_hash) VALUES ($1, $2)
-         ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
-        [lowerEmail, hashedPassword]
+        `INSERT INTO users (email, password_hash, session_revoked_at) VALUES ($1, $2, $3)
+         ON CONFLICT (email) DO UPDATE SET password_hash = $2, session_revoked_at = $3`,
+        [lowerEmail, hashedPassword, nowMs]
       );
     } catch (dbErr) {
       console.error('[reset-password] DB update failed:', dbErr.message);
@@ -956,7 +1067,7 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
     }
 
     // Invalidate all tokens issued prior to this password reset (Finding #9)
-    passwordResetTimes.set(lowerEmail, Date.now());
+    recordSessionRevocation(lowerEmail, nowMs);
 
     const token = generateUserToken(lowerEmail);
     return res.status(200).json({ success: true, token, message: 'Password reset successfully!' });
@@ -971,8 +1082,8 @@ app.post(['/api/auth/reset-password', '/auth/reset-password', '/reset-password',
  * 8. API ROUTE: SAVE USER TELEGRAM CREDENTIALS
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/credentials/save (Aliases: /credentials/save, /api/user/credentials, /user/credentials)
- * Requires: Authorization: Bearer <token> (Fix #1, #2)
- * Accepts: { botToken: string, chatId: string }
+ * Requires: Authorization: Bearer <token>
+ * Accepts: { botToken: string, chatId: string, otpCode: string }
  */
 app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials', '/user/credentials'], requireAuth, async (req, res, next) => {
   try {
@@ -986,23 +1097,33 @@ app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials',
       return res.status(400).json({ success: false, message: 'botToken and chatId are required.' });
     }
 
-    // Finding #10: Require recent re-authentication (< 2 hours) or valid purpose OTP
-    const tokenAgeSec = req.user && req.user.iat ? Math.floor(Date.now() / 1000) - req.user.iat : 999999;
-    let authVerified = tokenAgeSec < 7200; // Recent session within 2 hours
+    // Mandatory server-side OTP check for credential modifications (Finding #10)
+    if (!otpCode || String(otpCode).trim().length < 4) {
+      return res.status(403).json({
+        success: false,
+        message: 'Security verification required: please supply an OTP code to verify Telegram credential update.'
+      });
+    }
 
-    if (otpCode && String(otpCode).trim().length >= 4) {
-      const otpValid = await consumeOtpAtomic(lowerEmail, String(otpCode).trim());
-      if (otpValid) {
-        authVerified = true;
+    const cleanOtp = String(otpCode).trim();
+    let otpValid = false;
+    const otpResult = await consumeOtpAtomic(lowerEmail, cleanOtp, 'credentials');
+    if (otpResult.success) {
+      otpValid = true;
+    } else {
+      const otp2fa = await consumeOtpAtomic(lowerEmail, cleanOtp, '2fa');
+      if (otp2fa.success) {
+        otpValid = true;
       } else {
-        return res.status(400).json({ success: false, message: 'Invalid or expired OTP code for credential update.' });
+        const otpGeneric = await consumeOtpAtomic(lowerEmail, cleanOtp);
+        if (otpGeneric.success) otpValid = true;
       }
     }
 
-    if (!authVerified) {
+    if (!otpValid) {
       return res.status(403).json({
         success: false,
-        message: 'Security verification required: please provide an OTP code or log in again to update Telegram credentials.'
+        message: 'Invalid or expired OTP code for credential update.'
       });
     }
 
@@ -1010,18 +1131,19 @@ app.post(['/api/credentials/save', '/credentials/save', '/api/user/credentials',
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
 
+    const nowMs = Date.now();
     try {
       await queryWithTimeout(
-        `UPDATE users SET bot_token = $1, chat_id = $2 WHERE email = $3`,
-        [botToken || '', chatId || '', lowerEmail]
+        `UPDATE users SET bot_token = $1, chat_id = $2, session_revoked_at = $3 WHERE email = $4`,
+        [botToken || '', chatId || '', nowMs, lowerEmail]
       );
     } catch (dbErr) {
       console.error('[DB Error] Save credentials DB query failed:', dbErr.message);
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
 
-    // Invalidate other concurrent sessions after credentials change
-    passwordResetTimes.set(lowerEmail, Date.now());
+    // Invalidate other concurrent sessions after credentials change (Finding #9, #10)
+    recordSessionRevocation(lowerEmail, nowMs);
     const refreshedToken = generateUserToken(lowerEmail);
 
     return res.json({ success: true, token: refreshedToken, message: 'Telegram credentials saved successfully.' });
@@ -1265,8 +1387,7 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
 
     if (pool) {
       try {
-        // Fix #4: Use UPSERT with ON CONFLICT (email, path) to prevent duplicate file records
-        await queryWithTimeout(
+        const insertRes = await queryWithTimeout(
           `INSERT INTO backed_files (email, file_name, telegram_file_id, size, path, timestamp, message_id, is_drive_upload, chunks_json, channel_id, bot_token_used, total_chunks)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT (email, path) DO UPDATE SET
@@ -1279,9 +1400,12 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
              chunks_json = CASE WHEN EXCLUDED.chunks_json != '[]' AND EXCLUDED.chunks_json != '' AND (EXCLUDED.total_chunks >= backed_files.total_chunks OR backed_files.chunks_json = '[]' OR backed_files.chunks_json = '') THEN EXCLUDED.chunks_json ELSE backed_files.chunks_json END,
              channel_id = CASE WHEN EXCLUDED.channel_id != '' THEN EXCLUDED.channel_id ELSE backed_files.channel_id END,
              bot_token_used = CASE WHEN EXCLUDED.bot_token_used != '' THEN EXCLUDED.bot_token_used ELSE backed_files.bot_token_used END,
-             total_chunks = CASE WHEN EXCLUDED.total_chunks > 1 AND (EXCLUDED.total_chunks >= backed_files.total_chunks OR backed_files.total_chunks <= 1) THEN EXCLUDED.total_chunks ELSE backed_files.total_chunks END`,
+             total_chunks = CASE WHEN EXCLUDED.total_chunks > 1 AND (EXCLUDED.total_chunks >= backed_files.total_chunks OR backed_files.total_chunks <= 1) THEN EXCLUDED.total_chunks ELSE backed_files.total_chunks END
+           RETURNING id`,
           [lowerEmail, fileName, telegramFileId, safeSize, safePath, safeTimestamp, msgId, isDrive, finalChunksJson, finalChannelId, finalBotToken, finalTotalChunks]
         );
+        const fileRecordId = (insertRes && insertRes.rows && insertRes.rows[0]) ? insertRes.rows[0].id : null;
+        return res.json({ success: true, fileRecordId, message: 'File record synced to cloud database.' });
       } catch (dbErr) {
         console.error('[DB Error] Files backup DB save failed:', dbErr.message);
         return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry indexing.' });
@@ -1289,8 +1413,6 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
     } else {
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry indexing.' });
     }
-
-    return res.json({ success: true, message: 'File record synced to cloud database.' });
   } catch (err) {
     next(err);
   }
@@ -2323,33 +2445,20 @@ function escapeHtml(str) {
 // 🔐 SECURE GOOGLE MATERIAL 3 FILE SHARING & STREAMING ENGINE
 // =====================================================================================
 
-const pinAttemptsMap = new Map();
-
 /**
- * Unified rate limiter for PIN verification on public share links.
+ * Distributed rate limiter for PIN verification on public share links (Finding #8).
  * Locks out requests from an IP after 5 consecutive incorrect attempts for 10 minutes.
  */
-function checkSharePinRateLimit(req, shareId) {
+async function checkSharePinRateLimit(req, shareId) {
   const clientIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
-  const rateLimitKey = `${clientIp}_${shareId}`;
-  const nowMs = Date.now();
-  const attempts = pinAttemptsMap.get(rateLimitKey) || { count: 0, lockUntil: 0 };
-  if (attempts.lockUntil > nowMs) {
-    const waitSeconds = Math.ceil((attempts.lockUntil - nowMs) / 1000);
-    return { locked: true, waitSeconds, rateLimitKey, attempts };
-  }
-  return { locked: false, waitSeconds: 0, rateLimitKey, attempts };
+  const rateLimitKey = `pin_${clientIp}_${shareId}`;
+  const res = await checkDistributedRateLimit(rateLimitKey, 5, 10 * 60 * 1000, 10 * 60 * 1000);
+  return { locked: res.locked, waitSeconds: res.waitSeconds, rateLimitKey };
 }
 
-function recordPinAttempt(rateLimitKey, attempts, success) {
+async function recordPinAttempt(rateLimitKey, success) {
   if (success) {
-    pinAttemptsMap.delete(rateLimitKey);
-  } else {
-    attempts.count = (attempts.count || 0) + 1;
-    if (attempts.count >= 5) {
-      attempts.lockUntil = Date.now() + (10 * 60 * 1000); // 10 min lockout
-    }
-    pinAttemptsMap.set(rateLimitKey, attempts);
+    await clearDistributedRateLimit(rateLimitKey);
   }
 }
 
@@ -2437,8 +2546,52 @@ const MAX_CHUNK_CACHE_BYTES = 32 * 1024 * 1024; // 32 MB total RAM ceiling
 let totalChunkCacheBytes = 0;
 
 const MAGIC_HEADER = Buffer.from([0x45, 0x4E, 0x43, 0x32, 0x35, 0x36, 0x01, 0x00]); // "ENC256\x01\x00" (Legacy AES-256-CBC)
-const MAGIC_HEADER_GCM = Buffer.from([0x47, 0x43, 0x4D, 0x32, 0x35, 0x36, 0x01, 0x00]); // "GCM256\x01\x00" (Modern Authenticated AES-256-GCM)
+const MAGIC_HEADER_GCM = Buffer.from([0x47, 0x43, 0x4D, 0x32, 0x35, 0x36, 0x01, 0x00]); // "GCM256\x01\x00" (Legacy AES-256-GCM Single File)
+const MAGIC_HEADER_GCM_V2 = Buffer.from([0x47, 0x43, 0x4D, 0x32, 0x35, 0x36, 0x02, 0x00]); // "GCM256\x02\x00" (Authenticated Per-Chunk AES-256-GCM)
 const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB chunk size matching FileChunker.kt
+
+/**
+ * Authenticated per-chunk AES-256-GCM decryption with AAD and tag verification.
+ */
+function decryptGcmChunk(chunkBuf, secretKey) {
+  if (!Buffer.isBuffer(chunkBuf) || chunkBuf.length < 44) {
+    throw new Error('Invalid GCM chunk buffer: insufficient length');
+  }
+  const magic = chunkBuf.subarray(0, 8);
+  if (!magic.equals(MAGIC_HEADER_GCM_V2)) {
+    throw new Error('Invalid GCM chunk magic header');
+  }
+  const chunkIdx = chunkBuf.readUInt32BE(8);
+  const totalChunks = chunkBuf.readUInt32BE(12);
+  const nonce = chunkBuf.subarray(16, 28);
+  const ciphertext = chunkBuf.subarray(28, chunkBuf.length - 16);
+  const authTag = chunkBuf.subarray(chunkBuf.length - 16);
+
+  const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+  const aad = Buffer.alloc(8);
+  aad.writeUInt32BE(chunkIdx, 0);
+  aad.writeUInt32BE(totalChunks, 4);
+  decipher.setAAD(aad);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
+/**
+ * Authenticated legacy single-file AES-256-GCM decryption.
+ */
+function decryptGcmSingleV1(buf, secretKey) {
+  if (!Buffer.isBuffer(buf) || buf.length < 36) {
+    throw new Error('Invalid GCM v1 buffer: insufficient length');
+  }
+  const nonce = buf.subarray(8, 20);
+  const ciphertext = buf.subarray(20, buf.length - 16);
+  const authTag = buf.subarray(buf.length - 16);
+  const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
 
 /**
  * Resolves a chunk's fresh Telegram CDN URL with multi-bot fleet failover.
@@ -2632,10 +2785,38 @@ async function getDecryptedPlaintextRange(chunkList, shareData, pStart, pEnd) {
   const firstChunkBuf = await fetchChunkBuffer(chunkList[0], shareData);
   if (!firstChunkBuf) throw new Error('Could not fetch initial chunk');
 
-  const hasGcmHeader = firstChunkBuf.length >= 20 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM);
+  const hasGcmV2Header = firstChunkBuf.length >= 44 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM_V2);
+  const hasGcmV1Header = firstChunkBuf.length >= 20 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM);
   const hasMagicHeader = firstChunkBuf.length >= 8 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER);
 
-  if (!hasGcmHeader && !hasMagicHeader) {
+  if (hasGcmV2Header) {
+    // Authenticated per-chunk AES-256-GCM v2
+    const firstIdx = Math.max(0, Math.floor(pStart / CHUNK_SIZE));
+    const lastIdx = Math.min(chunkList.length - 1, Math.floor(pEnd / CHUNK_SIZE));
+    if (firstIdx > lastIdx) return Buffer.alloc(0);
+
+    const bufs = [];
+    for (let idx = firstIdx; idx <= lastIdx; idx++) {
+      const chunkBuf = (idx === 0) ? firstChunkBuf : await fetchChunkBuffer(chunkList[idx], shareData);
+      if (!chunkBuf) throw new Error(`Could not fetch chunk ${idx + 1}`);
+      const plainChunk = decryptGcmChunk(chunkBuf, secretKey);
+      const chunkStart = idx * CHUNK_SIZE;
+      const sliceStart = Math.max(0, pStart - chunkStart);
+      const sliceEnd = Math.min(plainChunk.length - 1, pEnd - chunkStart);
+      if (sliceStart <= sliceEnd) {
+        bufs.push(plainChunk.subarray(sliceStart, sliceEnd + 1));
+      }
+    }
+    return Buffer.concat(bufs);
+  }
+
+  if (hasGcmV1Header && chunkList.length === 1) {
+    // Single-chunk legacy AES-256-GCM with authentication tag
+    const plainChunk = decryptGcmSingleV1(firstChunkBuf, secretKey);
+    return plainChunk.subarray(Math.max(0, pStart), Math.min(plainChunk.length - 1, pEnd) + 1);
+  }
+
+  if (!hasGcmV2Header && !hasGcmV1Header && !hasMagicHeader) {
     // Plain unencrypted file without encryption magic headers:
     const firstIdx = Math.max(0, Math.floor(pStart / CHUNK_SIZE));
     const lastIdx = Math.min(chunkList.length - 1, Math.floor(pEnd / CHUNK_SIZE));
@@ -2662,30 +2843,6 @@ async function getDecryptedPlaintextRange(chunkList, shareData, pStart, pEnd) {
       }
     }
     return Buffer.concat(bufs);
-  }
-
-  const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
-
-  if (hasGcmHeader) {
-    // Authenticated AES-256-GCM: 8B header + 12B nonce + ciphertext
-    // GCM keystream counter mode starts at block index + 2
-    const nonce = firstChunkBuf.subarray(8, 20);
-    const blockIndex = Math.floor(pStart / 16);
-    const counterVal = 2 + blockIndex;
-    const ctrIv = Buffer.alloc(16);
-    nonce.copy(ctrIv, 0, 0, 12);
-    ctrIv.writeUInt32BE(counterVal, 12);
-
-    const alignedCByteStart = 20 + blockIndex * 16;
-    const alignedCByteEnd = 20 + pEnd;
-    const rawBytes = await readEncryptedBytesFromChunks(chunkList, shareData, alignedCByteStart, alignedCByteEnd);
-
-    const d = crypto.createDecipheriv('aes-256-ctr', key, ctrIv);
-    const decrypted = Buffer.concat([d.update(rawBytes), d.final()]);
-
-    const offsetInBlock = pStart % 16;
-    const len = pEnd - pStart + 1;
-    return decrypted.subarray(offsetInBlock, offsetInBlock + len);
   }
 
   // Legacy AES-256-CBC Zero-Knowledge Encryption
@@ -2868,32 +3025,32 @@ async function handleShareCreate(req, res) {
       return res.status(401).json({ success: false, message: 'Authentication required to create share link.' });
     }
 
-    const { fileRecordId, fileId, pin, expiresAt, fileName, path: reqPath } = req.body || {};
-    const targetLookup = fileRecordId || fileId || fileName || reqPath;
+    const rawId = req.body?.fileRecordId;
+    const fileRecordId = Number(rawId);
+    if (!Number.isInteger(fileRecordId) || fileRecordId <= 0) {
+      return res.status(400).json({ success: false, message: 'fileRecordId (positive integer) is required.' });
+    }
 
-    if (!targetLookup) {
-      return res.status(400).json({ success: false, message: 'fileRecordId or fileId is required.' });
+    const { pin, expiresAt } = req.body || {};
+    const pinStr = (pin && String(pin).trim()) || '';
+    if (pinStr.length > 0 && pinStr.length < 8) {
+      return res.status(400).json({ success: false, message: 'PIN/Password must be at least 8 characters.' });
     }
 
     if (!pool) {
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again later.' });
     }
 
-    // Authoritative lookup ONLY from authenticated user's backed_files (Findings #2, #3)
+    // Authoritative lookup ONLY from authenticated user's backed_files by id and email
     let dbFile = null;
     try {
-      const isNum = Number.isInteger(Number(targetLookup)) && Number(targetLookup) > 0;
-      const fileQuery = isNum
-        ? `SELECT id, file_name, size, telegram_file_id, chunks_json, bot_token_used, total_chunks, path
-           FROM backed_files
-           WHERE email = $1 AND (id = $2 OR telegram_file_id = $3)
-           LIMIT 1`
-        : `SELECT id, file_name, size, telegram_file_id, chunks_json, bot_token_used, total_chunks, path
-           FROM backed_files
-           WHERE email = $1 AND (telegram_file_id = $2 OR file_name = $2 OR path = $2)
-           ORDER BY total_chunks DESC, size DESC LIMIT 1`;
-      const queryParams = isNum ? [userEmail, Number(targetLookup), String(targetLookup)] : [userEmail, String(targetLookup)];
-      const fileCheck = await queryWithTimeout(fileQuery, queryParams);
+      const fileCheck = await queryWithTimeout(
+        `SELECT id, file_name, size, telegram_file_id, chunks_json, bot_token_used, total_chunks, path
+         FROM backed_files
+         WHERE id = $1 AND email = $2
+         LIMIT 1`,
+        [fileRecordId, userEmail]
+      );
       if (fileCheck && fileCheck.rows && fileCheck.rows.length > 0) {
         dbFile = fileCheck.rows[0];
       }
@@ -2963,9 +3120,8 @@ async function handleShareCreate(req, res) {
     };
 
     const payloadEnc = encryptServerPayload(sensitivePayload);
-    const pinStr = (pin && String(pin).trim()) || '';
-    const pinHash = pinStr.length > 0
-      ? await bcrypt.hash(pinStr, 10)
+    const pinHash = pinStr.length >= 8
+      ? await bcrypt.hash(pinStr, 12)
       : '';
 
     // Persist to Neon Postgres
@@ -3112,6 +3268,36 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
     res.setHeader('Content-Length', totalSize);
   }
 
+  if (secretKey && chunkList.length > 0) {
+    let firstChunkBuf = null;
+    try {
+      firstChunkBuf = await fetchChunkBuffer(chunkList[0], shareData);
+    } catch (_) {}
+
+    if (firstChunkBuf && firstChunkBuf.length >= 44 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM_V2)) {
+      let isAborted = false;
+      res.on('close', () => { isAborted = true; });
+
+      for (let i = 0; i < chunkList.length; i++) {
+        if (isAborted) break;
+        const chunkBuf = (i === 0) ? firstChunkBuf : await fetchChunkBuffer(chunkList[i], shareData);
+        if (!chunkBuf) throw new Error(`Could not fetch chunk ${i + 1}`);
+        const plainBuf = decryptGcmChunk(chunkBuf, secretKey);
+        if (!res.write(plainBuf)) {
+          await new Promise(r => res.once('drain', r));
+        }
+      }
+      res.end();
+      return;
+    }
+
+    if (firstChunkBuf && firstChunkBuf.length >= 36 && firstChunkBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM) && chunkList.length === 1) {
+      const plainBuf = decryptGcmSingleV1(firstChunkBuf, secretKey);
+      res.end(plainBuf);
+      return;
+    }
+  }
+
   const { PassThrough, Readable, Transform } = require('stream');
   const outPass = new PassThrough();
 
@@ -3129,29 +3315,11 @@ async function streamAndDecryptFile(req, res, shareData, isDownload = true) {
             return callback();
           }
 
-          const isGcm = headerBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM);
+          const isGcm = headerBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM) || headerBuf.subarray(0, 8).equals(MAGIC_HEADER_GCM_V2);
           const isCbc = headerBuf.subarray(0, 8).equals(MAGIC_HEADER);
 
           if (isGcm) {
-            if (headerBuf.length < 20) {
-              return callback(); // Need 8B magic header + 12B nonce
-            }
-            headerChecked = true;
-            const nonce = headerBuf.subarray(8, 20);
-            const ctrIv = Buffer.alloc(16);
-            nonce.copy(ctrIv, 0, 0, 12);
-            ctrIv.writeUInt32BE(2, 12);
-            const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
-            decipher = crypto.createDecipheriv('aes-256-ctr', key, ctrIv);
-            decipher.on('error', () => {});
-            try {
-              const dec = decipher.update(headerBuf.subarray(20));
-              if (dec && dec.length > 0) this.push(dec);
-            } catch (err) {
-              return callback(new Error('Decryption stream initialization failed'));
-            }
-            headerBuf = null;
-            return callback();
+            return callback(new Error('Unauthenticated legacy GCM format is deprecated. Use v2 per-chunk authenticated format.'));
           } else if (isCbc) {
             headerChecked = true;
             const key = crypto.createHash('sha256').update(secretKey, 'utf8').digest();
@@ -3388,8 +3556,8 @@ async function handleShare(req, res) {
       `);
     }
 
-    // 2. Anti-Brute-Force Rate Limiting on PIN
-    const pinRate = checkSharePinRateLimit(req, shareData.shareId);
+    // 2. Anti-Brute-Force Rate Limiting on PIN (Finding #8)
+    const pinRate = await checkSharePinRateLimit(req, shareData.shareId);
     if (pinRate.locked) {
       return res.status(429).send(`
         <!DOCTYPE html>
@@ -3425,7 +3593,6 @@ async function handleShare(req, res) {
 
       if (!isAlreadyAuthorized) {
         let isPinValid = false;
-        let isLegacySha256 = false;
         if (userEnteredPin) {
           if (pinHash.startsWith('$2a$') || pinHash.startsWith('$2b$')) {
             try {
@@ -3433,45 +3600,11 @@ async function handleShare(req, res) {
             } catch (_) {
               isPinValid = false;
             }
-          } else if (pinHash.length === 64) {
-            // Backward-compatible timing-safe verification for legacy SHA-256 hashes
-            const enteredHash = crypto.createHash('sha256').update(userEnteredPin).digest('hex');
-            try {
-              isPinValid = crypto.timingSafeEqual(Buffer.from(enteredHash, 'utf8'), Buffer.from(pinHash, 'utf8'));
-              if (isPinValid) {
-                isLegacySha256 = true;
-              }
-            } catch (_) {
-              isPinValid = false;
-            }
-          }
-          if (!isPinValid && plainPin) {
-            isPinValid = (userEnteredPin === plainPin);
           }
         }
 
         if (isPinValid) {
-          // Finding #7: Upgrade legacy SHA-256 PIN hash to bcrypt
-          if (isLegacySha256) {
-            try {
-              const upgradedHash = await bcrypt.hash(userEnteredPin, 12);
-              if (pool && shareData.shareId) {
-                await queryWithTimeout(
-                  `UPDATE shared_files SET pin_hash = $1 WHERE share_id = $2`,
-                  [upgradedHash, shareData.shareId]
-                );
-              }
-              shareData.pinHash = upgradedHash;
-              if (memoryShareCache.has(shareData.shareId)) {
-                const cached = memoryShareCache.get(shareData.shareId);
-                cached.pinHash = upgradedHash;
-              }
-            } catch (upgradeErr) {
-              console.warn('[PIN Upgrade Warning] Failed to upgrade legacy PIN hash:', upgradeErr.message);
-            }
-          }
-
-          recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, true);
+          await recordPinAttempt(pinRate.rateLimitKey, true);
           const sessionToken = getShareSessionToken(shareData.shareId, shareData.pinHash || pinHash);
           // Set secure session cookie (HttpOnly, Secure, SameSite=Strict, 15 min expiry)
           res.setHeader(
@@ -3484,10 +3617,10 @@ async function handleShare(req, res) {
           }
         } else {
           if (userEnteredPin) {
-            recordPinAttempt(pinRate.rateLimitKey, pinRate.attempts, false);
+            await recordPinAttempt(pinRate.rateLimitKey, false);
           }
 
-          const remainingTries = Math.max(0, 5 - (pinRate.attempts.count || 0));
+          const remainingTries = Math.max(0, 5 - (pinRate.attempts?.count || 1));
           return res.send(`
             <!DOCTYPE html>
             <html lang="en">
