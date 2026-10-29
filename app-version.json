@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 158,
-  "versionName": "2.8.0",
+  "versionCode": 159,
+  "versionName": "2.8.1",
   "downloadUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend.vercel.app/api/app/download-latest",
-  "releaseNotes": "🛡️ What's New in v2.8.0 (Cryptographic Hardening & Production Zero-Trust):\n- 🔐 Authenticated AES-256-GCM v2 Framing (P0): Per-chunk GCM framing with chunk index and total chunk AAD validation; completely purged legacy unauthenticated CTR cipher modes.\n- 🔑 Room Bot Token Keystore Isolation (P0): Raw Telegram bot tokens strictly segregated into hardware-backed Android KeyStore; Room databases store only sanitized bot identifiers.\n- 📦 Encrypted Recovery Packages (P0): Password-protected backup vault archives using PBKDF2 (100,000 iterations) + AES-GCM; purged plaintext credentials and keys from JSON vault exports.\n- 🛡️ Authoritative Zero-Knowledge Sharing (P0): Server-side database ownership lookups, zero-knowledge encryption key omission, and mandatory bcrypt PIN verification (minimum 8 characters).\n- ⚡ Distributed Rate Limiting & 15-Minute Short-Lived JWTs (P0): Persistent PostgreSQL rate limiting across serverless instances and instant session revocation upon credential updates."
+  "releaseNotes": "✨ What's New in v2.8.1 (Multi-Bot Deep Scanner, Cloud Drive Hierarchy & Fleet Restoration):\n- ☁️ Unified Cloud Drive Explorer (P0): Dynamically displays all cloud-backed files in the folder hierarchy with seamless scope toggle between All Cloud Storage and Personal Drive.\n- ⚡ High-Speed Multi-Bot Deep Scanner (P0): Probes top channel message ID and scans the full channel range in parallel across the Bot Fleet using forwardMessage for accurate metadata.\n- 🤖 Seamless Bot Fleet Re-login Recovery (P0): Smart settings merge prevents partial config updates from wiping connected bots and routing channels.\n- 🗄️ Database Index & Monthly Archive Hardening (P0): Unconstrained unique index on backed files guarantees zero collision drops during background file indexing."
 }

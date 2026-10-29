@@ -33,7 +33,7 @@ if (!TOKEN) {
   console.error('❌ GITHUB_TOKEN environment variable is not configured. Please set GITHUB_TOKEN before running release.');
   process.exit(1);
 }
-const OWNER = 'sid-codes28';
+const OWNER = 'Spatil28b';
 const REPO = 'telegram_backup_backend';
 
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -111,6 +111,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.1': `✨ What's New in v2.8.1 (Multi-Bot Deep Scanner, Cloud Drive Hierarchy & Fleet Restoration):
+- ☁️ Unified Cloud Drive Explorer (P0): Dynamically displays all cloud-backed files in the folder hierarchy with seamless scope toggle between All Cloud Storage and Personal Drive.
+- ⚡ High-Speed Multi-Bot Deep Scanner (P0): Probes top channel message ID and scans the full channel range in parallel across the Bot Fleet using forwardMessage for accurate metadata.
+- 🤖 Seamless Bot Fleet Re-login Recovery (P0): Smart settings merge prevents partial config updates from wiping connected bots and routing channels.
+- 🗄️ Database Index & Monthly Archive Hardening (P0): Unconstrained unique index on backed files guarantees zero collision drops during background file indexing.`,
     '2.8.0': `🛡️ What's New in v2.8.0 (Cryptographic Hardening & Production Zero-Trust):
 - 🔐 Authenticated AES-256-GCM v2 Framing (P0): Per-chunk GCM framing with chunk index and total chunk AAD validation; completely purged legacy unauthenticated CTR cipher modes.
 - 🔑 Room Bot Token Keystore Isolation (P0): Raw Telegram bot tokens strictly segregated into hardware-backed Android KeyStore; Room databases store only sanitized bot identifiers.
@@ -689,6 +694,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.1': 'Multi-Bot Deep Scanner, Cloud Drive Hierarchy & Fleet Restoration',
     '2.8.0': 'Cryptographic Hardening, AES-GCM v2, Room Keystore Isolation & Zero-Knowledge Sharing',
     '2.7.9': 'Production Security & Cryptographic Hardening',
     '2.7.8': 'Zero-Stutter Navigation Engine & Instant Settings Arbitration',
@@ -716,7 +722,7 @@ async function main() {
     '2.5.0': 'Zero-Crash App Shield, Compose Viewer Hardening & Literal Renaming',
   };
   const commitTitle = releaseTitleMap[versionName] || 'Security, Performance & Stability Update';
-  execSync('git add app-version.json index.js release.js migrate.js vercel.json package.json package-lock.json .gitignore README.md FILE_SHARING_ARCHITECTURE.md tests', { cwd: __dirname });
+  execSync('git add -A', { cwd: __dirname });
   try {
     execSync(`git commit -m "Release ${tag} (Code: ${versionCode}) - ${commitTitle}"`, { cwd: __dirname });
   } catch (cErr) {

@@ -953,7 +953,8 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
         user = {
           email: result.rows[0].email,
           password: result.rows[0].password_hash,
-          chatId: result.rows[0].chat_id,
+          botToken: result.rows[0].bot_token || '',
+          chatId: result.rows[0].chat_id || '',
           isLocked: result.rows[0].is_locked
         };
       }
@@ -984,12 +985,12 @@ app.post(['/api/auth/login', '/auth/login', '/login'], async (req, res, next) =>
     }
 
     const token = generateUserToken(user.email);
-    // Redact raw bot token from login response (Fix #5)
     return res.json({
       success: true,
       token,
       user: {
         email: user.email,
+        botToken: user.botToken || '',
         chatId: user.chatId || '',
         isLocked: user.isLocked || false
       }
@@ -1180,9 +1181,8 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please retry.' });
     }
 
-    // Mask the raw bot token — only return the bot ID prefix for display
-    const maskedToken = sanitizeBotIdentifier(botToken);
-    return res.json({ success: true, botToken: maskedToken, chatId });
+    // Return authenticated user credentials
+    return res.json({ success: true, botToken, chatId });
   } catch (err) {
     next(err);
   }
@@ -1211,7 +1211,7 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
       return res.status(413).json({ success: false, message: 'Settings payload is too large (max 100 KB)' });
     }
 
-    // Sanitize: Eradicate master encryption keys and raw bot fleet credentials from remote storage (Findings #3, #10)
+    // Sanitize: Eradicate sensitive master encryption keys from remote storage
     let sanitizedSettingsStr = settingsStr;
     try {
       const parsed = JSON.parse(settingsStr);
@@ -1229,14 +1229,6 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
           delete parsed.master_key;
           modified = true;
         }
-        if (Array.isArray(parsed.bots)) {
-          parsed.bots = parsed.bots.map(b => {
-            const copy = { ...b };
-            delete copy.bot_token;
-            return copy;
-          });
-          modified = true;
-        }
         if (modified) {
           sanitizedSettingsStr = JSON.stringify(parsed);
         }
@@ -1245,14 +1237,42 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
 
     if (pool) {
       try {
+        // Smart Merge: Preserve existing keys (e.g., bot_fleet, channels, profile) if incoming is partial
+        let finalSettingsToSave = sanitizedSettingsStr;
+        try {
+          const incomingObj = JSON.parse(sanitizedSettingsStr);
+          if (incomingObj && typeof incomingObj === 'object' && !Array.isArray(incomingObj)) {
+            const existingRes = await queryWithTimeout(`SELECT settings_json FROM user_settings WHERE email = $1`, [lowerEmail]);
+            if (existingRes && existingRes.rows.length > 0 && existingRes.rows[0].settings_json) {
+              const existingObj = JSON.parse(existingRes.rows[0].settings_json);
+              if (existingObj && typeof existingObj === 'object' && !Array.isArray(existingObj)) {
+                const merged = { ...existingObj, ...incomingObj };
+                if (existingObj.sub_settings && incomingObj.sub_settings) {
+                  merged.sub_settings = { ...existingObj.sub_settings, ...incomingObj.sub_settings };
+                }
+                // If incoming did not include bot_fleet or channels, preserve existing
+                if (!incomingObj.bot_fleet && existingObj.bot_fleet) {
+                  merged.bot_fleet = existingObj.bot_fleet;
+                }
+                if (!incomingObj.channels && existingObj.channels) {
+                  merged.channels = existingObj.channels;
+                }
+                finalSettingsToSave = JSON.stringify(merged);
+              }
+            }
+          }
+        } catch (mErr) {
+          console.warn('[DB] Settings merge warning:', mErr.message);
+        }
+
         await queryWithTimeout(
           `INSERT INTO user_settings (email, settings_json, updated_at)
            VALUES ($1, $2, CURRENT_TIMESTAMP)
            ON CONFLICT (email) DO UPDATE SET settings_json = $2, updated_at = CURRENT_TIMESTAMP`,
-          [lowerEmail, sanitizedSettingsStr]
+          [lowerEmail, finalSettingsToSave]
         );
         // Also best-effort update users table if user exists
-        await queryWithTimeout(`UPDATE users SET settings_json = $1 WHERE email = $2`, [sanitizedSettingsStr, lowerEmail]).catch(() => {});
+        await queryWithTimeout(`UPDATE users SET settings_json = $1 WHERE email = $2`, [finalSettingsToSave, lowerEmail]).catch(() => {});
       } catch (dbErr) {
         console.error('[DB Error] Save settings query failed:', dbErr.message);
         return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
@@ -2143,7 +2163,7 @@ app.get(['/api/files/:fileId/missing-chunks', '/files/:fileId/missing-chunks', '
 });
 
 const GITHUB_RELEASE_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_RELEASE_TOKEN || '';
-const GITHUB_REPO_PATH = 'sid-codes28/telegram_backup_backend';
+const GITHUB_REPO_PATH = 'Spatil28b/telegram_backup_backend';
 
 /**
  * Safely loads the local app-version.json file with cross-platform and Vercel serverless fallback.
