@@ -285,6 +285,13 @@ async function runMigrations() {
       `);
     });
 
+    // 8. Expand otps.code column to VARCHAR(128) to store SHA-256 hashed OTPs
+    await applyMigration('v8_expand_otps_code_column', 'Expand otps code column to VARCHAR(128) for SHA-256 hashes', async (db) => {
+      await db.query(`
+        ALTER TABLE otps ALTER COLUMN code TYPE VARCHAR(128);
+      `);
+    });
+
     console.log('\n🎉 [Neon Postgres Migration] All versioned migrations applied successfully!\n');
   } catch (err) {
     console.error('❌ [Migration Error]:', err.message);
