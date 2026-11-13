@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const dns = require('dns');
+try { dns.setDefaultResultOrder('ipv4first'); } catch {}
 const resolver = new dns.Resolver();
 try {
   resolver.setServers(['8.8.8.8', '1.1.1.1']);
@@ -92,8 +93,21 @@ async function main() {
 
   // 2. Build APK
   console.log('2️⃣  Compiling Android APK with Gradle (assembleDebug)...');
+  if (!process.env.JAVA_HOME) {
+    const candidateJdks = [
+      '/home/siddharth/.jdks/jdk-17.0.21+9',
+      '/usr/lib/jvm/java-17-openjdk-amd64'
+    ];
+    for (const jdk of candidateJdks) {
+      if (fs.existsSync(jdk)) {
+        process.env.JAVA_HOME = jdk;
+        process.env.PATH = `${path.join(jdk, 'bin')}:${process.env.PATH}`;
+        break;
+      }
+    }
+  }
   const gradlewCmd = process.platform === 'win32' ? 'gradlew.bat assembleDebug' : './gradlew assembleDebug';
-  execSync(gradlewCmd, { cwd: APP_DIR, stdio: 'inherit' });
+  execSync(gradlewCmd, { cwd: APP_DIR, stdio: 'inherit', env: process.env });
 
   if (!fs.existsSync(APK_SRC)) {
     throw new Error(`Compiled APK not found at: ${APK_SRC}`);
@@ -624,30 +638,19 @@ async function main() {
           }
         }
 
-        console.log(`   Uploading ${assetName} (${apkSizeMB} MB) [Attempt ${attempt}/4]...`);
-        const fileBuffer = fs.readFileSync(APK_SRC);
-        const uploadRes = await fetch(uploadUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${TOKEN}`,
-            'User-Agent': 'ReleasePipeline/2.5',
-            'Content-Type': 'application/vnd.android.package-archive',
-            'Content-Length': fileBuffer.length.toString()
-          },
-          body: fileBuffer
-        });
-
-        if (uploadRes.status === 201 || uploadRes.status === 200) {
-          console.log(`   ✓ ${assetName} uploaded and verified successfully (HTTP ${uploadRes.status})!`);
-          return;
-        }
-
-        // If fetch upload failed, try platform-aware curl fallback
+        console.log(`   Uploading ${assetName} (${apkSizeMB} MB) via curl [Attempt ${attempt}/4]...`);
         const curlCmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
         const curlTarget = APK_SRC.replace(/\\/g, '/');
-        execSync(`${curlCmd} -s -S --http1.1 --retry 3 --retry-delay 2 -w "\\nHTTP_STATUS:%{http_code}\\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`, { stdio: 'inherit' });
-        console.log(`   ✓ ${assetName} uploaded successfully via curl!`);
-        return;
+        const curlOutput = execSync(`${curlCmd} -4 -s -S --http1.1 --retry 3 --retry-delay 2 -w "\\nHTTP_STATUS:%{http_code}" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`).toString();
+        
+        const statusMatch = curlOutput.match(/HTTP_STATUS:(\d+)/);
+        const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+        if (statusCode === 201 || statusCode === 200) {
+          console.log(`   ✓ ${assetName} uploaded successfully via curl (HTTP ${statusCode})!`);
+          return;
+        } else {
+          throw new Error(`Upload returned status ${statusCode}: ${curlOutput.slice(-300)}`);
+        }
       } catch (e) {
         console.warn(`   ⚠️ Upload attempt ${attempt} for ${assetName} failed: ${e.message}`);
         if (attempt < 4) {
@@ -733,6 +736,13 @@ async function main() {
   const basicAuth = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
   console.log('   Pushing backend commits to GitHub main branch...');
   execSync(`git -c http.extraheader="AUTHORIZATION: basic ${basicAuth}" push origin main`, { cwd: __dirname, stdio: 'inherit' });
+  try {
+    execSync(`git tag -a ${tag} -m "Release ${tag}"`, { cwd: __dirname });
+    execSync(`git -c http.extraheader="AUTHORIZATION: basic ${basicAuth}" push origin ${tag}`, { cwd: __dirname, stdio: 'inherit' });
+    console.log(`   ✓ Backend tag ${tag} pushed to GitHub!`);
+  } catch (tagErr) {
+    console.log('   (Backend git tag info:', (tagErr.message || '').split('\n')[0], ')');
+  }
   console.log('   ✓ Backend code pushed to GitHub (triggers Vercel deployment)!');
 
   // Push Android client repo
