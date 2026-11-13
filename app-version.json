@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 160,
-  "versionName": "2.8.2",
+  "versionCode": 161,
+  "versionName": "2.8.3",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in Release v2.8.2:\n- 🚀 Performance improvements & memory optimizations\n- ⚡ Faster chunk uploading with multi-bot fleet\n- 🛡️ Stability fixes & enhanced cloud sync"
+  "releaseNotes": "✨ What's New in v2.8.3 (Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine):\n- 🛡️ Zero-Loss Settings & Profile Preservation (P0): Implemented non-destructive smart merge in both backend and client, permanently preventing display names, avatars, secondary recovery emails, and custom settings from resetting to defaults or blank fields.\n- 🤖 Reactive Multi-Bot Fleet Engine (P0): Replaced static one-shot state with reactive Room Flow observation (getAllBotsFlow) in Bot Fleet settings; bots now immediately display and update without race conditions or disappearances.\n- 🔑 Keystore Token Caching & Resolution (P0): Automatically preloads and resolves hardware-backed bot tokens across restarts and uninstalls, ensuring full bot tokens are preserved in local snapshots and available for high-speed multi-bot uploads.\n- ☁️ Non-Destructive Cloud Manifest Synchronization (P0): Smart backend and client arbiters guarantee existing bot pools, channels, and profile data can never be dropped or overwritten by partial manifests."
 }

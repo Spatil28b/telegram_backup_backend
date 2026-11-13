@@ -1251,13 +1251,63 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
                 if (existingObj.sub_settings && incomingObj.sub_settings) {
                   merged.sub_settings = { ...existingObj.sub_settings, ...incomingObj.sub_settings };
                 }
-                // If incoming did not include bot_fleet or channels, preserve existing
-                if (!incomingObj.bot_fleet && existingObj.bot_fleet) {
-                  merged.bot_fleet = existingObj.bot_fleet;
+
+                // 1. Smart Profile Merge: Never overwrite non-empty recovery_email, avatar, or real display name with empty strings
+                if (existingObj.profile || incomingObj.profile) {
+                  const ep = (existingObj.profile && typeof existingObj.profile === 'object') ? existingObj.profile : {};
+                  const ip = (incomingObj.profile && typeof incomingObj.profile === 'object') ? incomingObj.profile : {};
+                  merged.profile = {
+                    ...ep,
+                    ...ip,
+                    user_email: (ip.user_email && ip.user_email.trim()) ? ip.user_email.trim() : (ep.user_email || lowerEmail),
+                    recovery_email: (ip.recovery_email && ip.recovery_email.trim()) ? ip.recovery_email.trim() : (ep.recovery_email || ''),
+                    profile_avatar_base64: ip.profile_avatar_base64 ? ip.profile_avatar_base64 : (ip.remove_avatar ? '' : (ep.profile_avatar_base64 || '')),
+                    profile_picture_uri: (ip.profile_picture_uri && ip.profile_picture_uri.trim()) ? ip.profile_picture_uri.trim() : (ip.remove_avatar ? '' : (ep.profile_picture_uri || '')),
+                    display_name: (ip.display_name && ip.display_name.trim() && ip.display_name !== 'My Cloud Account' && ip.display_name !== 'Device Back-up') 
+                      ? ip.display_name.trim() 
+                      : (ep.display_name && ep.display_name !== 'My Cloud Account' && ep.display_name !== 'Device Back-up' ? ep.display_name : (ip.display_name || ep.display_name || 'My Cloud Account')),
+                    profile_updated_at: Math.max(Number(ip.profile_updated_at) || 0, Number(ep.profile_updated_at) || 0, Date.now())
+                  };
                 }
-                if (!incomingObj.channels && existingObj.channels) {
-                  merged.channels = existingObj.channels;
+
+                // 2. Smart Bot Fleet Merge: Merge by token/bot_id, NEVER discard existing bots when incoming has fewer bots
+                const existingBots = Array.isArray(existingObj.bot_fleet) ? existingObj.bot_fleet : [];
+                const incomingBots = Array.isArray(incomingObj.bot_fleet) ? incomingObj.bot_fleet : [];
+                if (existingBots.length > 0 || incomingBots.length > 0) {
+                  const botMap = new Map();
+                  for (const b of existingBots) {
+                    const key = (b.bot_token || b.bot_id || b.bot_username || '').trim();
+                    if (key) botMap.set(key, b);
+                  }
+                  for (const b of incomingBots) {
+                    const key = (b.bot_token || b.bot_id || b.bot_username || '').trim();
+                    if (key) {
+                      const prev = botMap.get(key) || {};
+                      botMap.set(key, { ...prev, ...b, bot_token: b.bot_token || prev.bot_token });
+                    }
+                  }
+                  merged.bot_fleet = Array.from(botMap.values());
                 }
+
+                // 3. Smart Channels Merge: Merge by chat_id
+                const existingChannels = Array.isArray(existingObj.channels) ? existingObj.channels : [];
+                const incomingChannels = Array.isArray(incomingObj.channels) ? incomingObj.channels : [];
+                if (existingChannels.length > 0 || incomingChannels.length > 0) {
+                  const chMap = new Map();
+                  for (const c of existingChannels) {
+                    const key = (c.chat_id || '').trim();
+                    if (key) chMap.set(key, c);
+                  }
+                  for (const c of incomingChannels) {
+                    const key = (c.chat_id || '').trim();
+                    if (key) {
+                      const prev = chMap.get(key) || {};
+                      chMap.set(key, { ...prev, ...c });
+                    }
+                  }
+                  merged.channels = Array.from(chMap.values());
+                }
+
                 finalSettingsToSave = JSON.stringify(merged);
               }
             }

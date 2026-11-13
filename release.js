@@ -125,6 +125,15 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.3': `✨ What's New in v2.8.3 (Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine):
+- 🛡️ Zero-Loss Settings & Profile Preservation (P0): Implemented non-destructive smart merge in both backend and client, permanently preventing display names, avatars, secondary recovery emails, and custom settings from resetting to defaults or blank fields.
+- 🤖 Reactive Multi-Bot Fleet Engine (P0): Replaced static one-shot state with reactive Room Flow observation (getAllBotsFlow) in Bot Fleet settings; bots now immediately display and update without race conditions or disappearances.
+- 🔑 Keystore Token Caching & Resolution (P0): Automatically preloads and resolves hardware-backed bot tokens across restarts and uninstalls, ensuring full bot tokens are preserved in local snapshots and available for high-speed multi-bot uploads.
+- ☁️ Non-Destructive Cloud Manifest Synchronization (P0): Smart backend and client arbiters guarantee existing bot pools, channels, and profile data can never be dropped or overwritten by partial manifests.`,
+    '2.8.2': `✨ What's New in v2.8.2 (Full Backend Migration, Interactive URL Switching & OTP Schema Hardening):
+- 🛡️ Neon Postgres VARCHAR(128) OTP Schema Migration (P0): Upgraded otps.code column to handle SHA-256 hashed OTPs, eliminating 503 service unavailable errors on login and registration.
+- 🌐 Domain Rewrite & Interactive Backend Switching (P0): Client transparently routes legacy traffic to the active backend URL, with in-app Server URL configuration and real-time backend status indicators.
+- ⚡ High-Speed OTP & SMTP Auto-Fallback (P0): Verified Google SMTP dual-provider delivery returning HTTP 200 for user authentication.`,
     '2.8.1': `✨ What's New in v2.8.1 (Multi-Bot Deep Scanner, Cloud Drive Hierarchy & Fleet Restoration):
 - ☁️ Unified Cloud Drive Explorer (P0): Dynamically displays all cloud-backed files in the folder hierarchy with seamless scope toggle between All Cloud Storage and Personal Drive.
 - ⚡ High-Speed Multi-Bot Deep Scanner (P0): Probes top channel message ID and scans the full channel range in parallel across the Bot Fleet using forwardMessage for accurate metadata.
@@ -697,6 +706,8 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.3': 'Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine',
+    '2.8.2': 'Full Backend Migration, Interactive URL Switching & OTP Schema Hardening',
     '2.8.1': 'Multi-Bot Deep Scanner, Cloud Drive Hierarchy & Fleet Restoration',
     '2.8.0': 'Cryptographic Hardening, AES-GCM v2, Room Keystore Isolation & Zero-Knowledge Sharing',
     '2.7.9': 'Production Security & Cryptographic Hardening',
