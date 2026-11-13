@@ -1422,7 +1422,7 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
     const msgId = parseInt(messageId, 10) || 0;
-    const isDrive = Boolean(isDriveUpload || is_drive_upload || telegramFileId === 'DIR_MARKER');
+    const isDrive = Boolean(isDriveUpload || is_drive_upload || (telegramFileId === 'DIR_MARKER' && !path.includes('/DCIM') && !path.includes('/Pictures') && !path.includes('/Camera') && !path.includes('/WhatsApp')));
 
     let finalChunksJson = '[]';
     if (typeof chunksJson === 'string' && chunksJson.trim().length > 0) {
@@ -1532,7 +1532,7 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
             const rawTime = parseInt(f.timestamp || '0', 10);
             const fTime = (!rawTime || rawTime < 946684800000 || rawTime === 1784030400000) ? Date.now() : rawTime;
             const msgId = parseInt(f.messageId || '0', 10) || 0;
-            const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || fPath.startsWith('Internal Storage') || tgId === 'DIR_MARKER');
+            const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || (tgId === 'DIR_MARKER' && !fPath.includes('/DCIM') && !fPath.includes('/Pictures') && !fPath.includes('/Camera') && !fPath.includes('/WhatsApp')));
             let fChunksJson = '[]';
             if (typeof f.chunksJson === 'string' && f.chunksJson.trim().length > 0) {
               try {
@@ -1657,9 +1657,9 @@ app.post(['/api/files/purge', '/files/purge'], requireAuth, async (req, res, nex
     const queryParams = [lowerEmail];
 
     if (purgeMode === 'DRIVE_ONLY') {
-      queryText += ` AND (is_drive_upload = true OR telegram_file_id = 'DIR_MARKER' OR path LIKE 'Internal Storage%')`;
+      queryText += ` AND (is_drive_upload = true OR (telegram_file_id = 'DIR_MARKER' AND path NOT LIKE '%DCIM%' AND path NOT LIKE '%Pictures%' AND path NOT LIKE '%Camera%' AND path NOT LIKE '%WhatsApp%'))`;
     } else if (purgeMode === 'AUTO_BACKUP_ONLY') {
-      queryText += ` AND (is_drive_upload = false AND telegram_file_id != 'DIR_MARKER' AND path NOT LIKE 'Internal Storage%')`;
+      queryText += ` AND (is_drive_upload = false AND telegram_file_id != 'DIR_MARKER')`;
     } else if (purgeMode === 'TRASH_ONLY') {
       queryText += ` AND is_deleted = true`;
     } else if (purgeMode === 'OLDER_THAN_DAYS') {

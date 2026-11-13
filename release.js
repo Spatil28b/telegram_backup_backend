@@ -125,6 +125,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.4': `✨ What's New in v2.8.4 (Cloud Drive Dedicated Space, Streamlined Welcome Screen & Version History Synchronization):
+- ☁️ Dedicated Personal Cloud Drive: Restored Cloud Drive as an independent dedicated storage space for user-created folders and custom files, strictly isolated from automated device backups and camera photos.
+- 🧼 Clean Welcome & Login Screen: Removed technical backend server URLs and custom endpoint controls from the onboarding welcome card, moving developer configuration to a discreet 7-tap gesture.
+- 📜 Synchronized Update History & Changelog: The in-app release changelog now dynamically displays current and historical releases including v2.8.4, v2.8.3, and v2.8.2 with full details.
+- 🛠️ Drive Metadata Self-Healing: Automatic startup database repair ensures phone camera and WhatsApp backup files are never miscategorized into personal drive folders.`,
     '2.8.3': `✨ What's New in v2.8.3 (Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine):
 - 🛡️ Zero-Loss Settings & Profile Preservation (P0): Implemented non-destructive smart merge in both backend and client, permanently preventing display names, avatars, secondary recovery emails, and custom settings from resetting to defaults or blank fields.
 - 🤖 Reactive Multi-Bot Fleet Engine (P0): Replaced static one-shot state with reactive Room Flow observation (getAllBotsFlow) in Bot Fleet settings; bots now immediately display and update without race conditions or disappearances.
@@ -706,6 +711,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.4': 'Cloud Drive Dedicated Space, Streamlined Welcome Screen & Version History Synchronization',
     '2.8.3': 'Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine',
     '2.8.2': 'Full Backend Migration, Interactive URL Switching & OTP Schema Hardening',
     '2.8.1': 'Multi-Bot Deep Scanner, Cloud Drive Hierarchy & Fleet Restoration',

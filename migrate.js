@@ -292,6 +292,26 @@ async function runMigrations() {
       `);
     });
 
+    // 9. Clean up misclassified is_drive_upload flags for phone backups
+    await applyMigration('v9_clean_drive_flags', 'Clean misclassified is_drive_upload flags on device backup files', async (db) => {
+      await db.query(`
+        UPDATE backed_files
+        SET is_drive_upload = FALSE
+        WHERE is_drive_upload = TRUE
+          AND (
+            path LIKE '%/DCIM/%'
+            OR path LIKE '%/Pictures/%'
+            OR path LIKE '%/Camera/%'
+            OR path LIKE '%/WhatsApp/%'
+            OR path LIKE '/storage/emulated/0/%'
+            OR path LIKE 'Internal Storage/DCIM/%'
+            OR path LIKE 'Internal Storage/Pictures/%'
+            OR path LIKE 'Internal Storage/Camera/%'
+            OR path LIKE 'Internal Storage/WhatsApp/%'
+          );
+      `);
+    });
+
     console.log('\n🎉 [Neon Postgres Migration] All versioned migrations applied successfully!\n');
   } catch (err) {
     console.error('❌ [Migration Error]:', err.message);
