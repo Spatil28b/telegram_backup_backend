@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 159,
-  "versionName": "2.8.1",
+  "versionCode": 160,
+  "versionName": "2.8.2",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.8.1 (Multi-Bot Deep Scanner, Cloud Drive Hierarchy & Fleet Restoration):\n- ☁️ Unified Cloud Drive Explorer (P0): Dynamically displays all cloud-backed files in the folder hierarchy with seamless scope toggle between All Cloud Storage and Personal Drive.\n- ⚡ High-Speed Multi-Bot Deep Scanner (P0): Probes top channel message ID and scans the full channel range in parallel across the Bot Fleet using forwardMessage for accurate metadata.\n- 🤖 Seamless Bot Fleet Re-login Recovery (P0): Smart settings merge prevents partial config updates from wiping connected bots and routing channels.\n- 🗄️ Database Index & Monthly Archive Hardening (P0): Unconstrained unique index on backed files guarantees zero collision drops during background file indexing."
+  "releaseNotes": "✨ What's New in Release v2.8.2:\n- 🚀 Performance improvements & memory optimizations\n- ⚡ Faster chunk uploading with multi-bot fleet\n- 🛡️ Stability fixes & enhanced cloud sync"
 }
