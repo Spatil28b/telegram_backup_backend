@@ -75,6 +75,7 @@ app.use((req, res, next) => {
 
 // Middleware: Enable Cross-Origin Resource Sharing with Origin Whitelist (Fix #4)
 const ALLOWED_ORIGINS = new Set([
+  'https://telegram-backup-backend-five.vercel.app',
   'https://telegram-backup-backend.vercel.app',
   'https://tspace-vault.vercel.app',
   'http://localhost:3000',
@@ -2246,7 +2247,7 @@ app.get(['/api/app/latest-version', '/app/latest-version'], (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
-  const host = req.headers.host || 'telegram-backup-backend.vercel.app';
+  const host = req.headers.host || 'telegram-backup-backend-five.vercel.app';
   const protocol = req.headers['x-forwarded-proto'] || 'https';
   const downloadUrl = `${protocol}://${host}/api/app/download-latest`;
 
@@ -3178,7 +3179,7 @@ async function handleShareCreate(req, res) {
       filePath: safeFileName
     });
 
-    const host = req.get('host') || 'telegram-backup-backend.vercel.app';
+    const host = req.get('host') || 'telegram-backup-backend-five.vercel.app';
     const protocol = req.protocol === 'http' && host.includes('localhost') ? 'http' : 'https';
     const shareUrl = `${protocol}://${host}/share/${shareId}`;
     const directDownloadUrl = `${protocol}://${host}/api/share/download/${shareId}`;

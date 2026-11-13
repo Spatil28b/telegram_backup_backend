@@ -569,8 +569,8 @@ async function main() {
     success: true,
     versionCode: versionCode,
     versionName: versionName,
-    downloadUrl: 'https://telegram-backup-backend.vercel.app/api/app/download-latest',
-    directApkUrl: 'https://telegram-backup-backend.vercel.app/api/app/download-latest',
+    downloadUrl: 'https://telegram-backup-backend-five.vercel.app/api/app/download-latest',
+    directApkUrl: 'https://telegram-backup-backend-five.vercel.app/api/app/download-latest',
     releaseNotes: currentReleaseNotes
   }, null, 2));
   console.log(`   ✓ Updated app-version.json with v${versionName} (Code: ${versionCode})\n`);
@@ -763,7 +763,7 @@ async function main() {
   // 8. Verify Server Endpoint
   console.log('8️⃣  Verifying dynamic server updater...');
   try {
-    const vRes = await fetch('https://telegram-backup-backend.vercel.app/api/app/latest-version');
+    const vRes = await fetch('https://telegram-backup-backend-five.vercel.app/api/app/latest-version');
     const vData = await vRes.json();
     console.log(`   ✓ Server Response:`, vData);
   } catch (e) {
