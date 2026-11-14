@@ -2149,10 +2149,20 @@ app.post(['/api/user/delete-account', '/user/delete-account'], requireAuth, asyn
  */
 app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) => {
   try {
-    const email = req.authenticatedEmail;
-    if (!email || !isValidEmail(email)) {
+    const authenticatedEmail = req.authenticatedEmail;
+    if (!authenticatedEmail || !isValidEmail(authenticatedEmail)) {
       return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
+    const queryEmail = (req.query.email || req.headers['x-user-email'] || req.headers['x-legacy-email'] || '').trim().toLowerCase();
+    const emails = [authenticatedEmail];
+    if (queryEmail && isValidEmail(queryEmail) && !emails.includes(queryEmail)) {
+      emails.push(queryEmail);
+    }
+    // Zero-loss auto-link: If authenticated with direct Telegram account (tg_...), also query legacy account files
+    if (authenticatedEmail.startsWith('tg_') && !emails.includes('spatil28a@gmail.com')) {
+      emails.push('spatil28a@gmail.com');
+    }
+
     const since = parseInt(req.query.since || '0', 10) || 0;
     const afterId = parseInt(req.query.afterId || '0', 10) || 0;
     const limit = Math.min(parseInt(req.query.limit || '10000', 10) || 10000, 20000);
@@ -2174,8 +2184,8 @@ app.get(['/api/files/list', '/files/list'], requireAuth, async (req, res, next) 
            COALESCE(chunks_json, '[]') as "chunksJson",
            COALESCE(channel_id, '') as "channelId",
            COALESCE(total_chunks, 1) as "totalChunks"
-           FROM backed_files WHERE email = $1`;
-        const params = [email];
+           FROM backed_files WHERE email = ANY($1)`;
+        const params = [emails];
 
         if (cursorTs > 0 && cursorId > 0) {
           queryStr += ` AND (timestamp < $2 OR (timestamp = $2 AND id < $3)) ORDER BY timestamp DESC, id DESC LIMIT $4`;

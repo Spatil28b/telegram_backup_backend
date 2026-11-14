@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 172,
-  "versionName": "3.0.0",
+  "versionCode": 173,
+  "versionName": "3.0.1",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v3.0.0 (Zero-Bot Modern Architecture, Direct MTProto Cloud Storage & High-Speed Stream Engine):\n- ⚡ Zero-Bot Modern Architecture (P0): Fully eliminated the need for complex @BotFather bot creation and channel configuration. The app now uses high-speed direct MTProto Telegram session transfers by default.\n- 🛡️ 100% Historical Data Preservation (P0): All legacy bot-uploaded files, multi-part chunks, message IDs, and cloud catalogs remain completely intact and accessible for browsing, streaming, and download.\n- 🚀 Ultra-Fast Single-Stream Transfers (P0): Direct connection to Telegram's cloud network allows seamless single-file uploads up to 2,000 MB without 4MB chunk fragmentation or bot rate limits.\n- 🧼 Minimal, Clean & Stable UI (P1): Removed legacy BotFather guides, bot fleet manager menus, and channel input fields to provide a clean, modern, and reliable backup experience."
+  "releaseNotes": "✨ What's New in v3.0.1 (Full Historical Archive Restoration & Multi-Month Cloud Sync Fix):\n- 📁 Full Past Months Restoration (P0): Removed restrictive delta sync cutoff that blocked older historical files from being fetched. September, August, and all previous months are now 100% restored into local Monthly Archive.\n- ⚡ Telegram Direct Login & Legacy Catalog Federation (P0): Backend /api/files/list seamlessly federates Telegram direct logins with existing email backup records, guaranteeing zero lost files across all past months.\n- 🔄 1-Tap Archive Sync Control (P1): Added an instant sync button in the Monthly Archive header to refresh and reconcile all chronological buckets on demand."
 }

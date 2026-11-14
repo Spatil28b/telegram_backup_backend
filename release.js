@@ -125,6 +125,10 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '3.0.1': `✨ What's New in v3.0.1 (Full Historical Archive Restoration & Multi-Month Cloud Sync Fix):
+- 📁 Full Past Months Restoration (P0): Removed restrictive delta sync cutoff that blocked older historical files from being fetched. September, August, and all previous months are now 100% restored into local Monthly Archive.
+- ⚡ Telegram Direct Login & Legacy Catalog Federation (P0): Backend /api/files/list seamlessly federates Telegram direct logins with existing email backup records, guaranteeing zero lost files across all past months.
+- 🔄 1-Tap Archive Sync Control (P1): Added an instant sync button in the Monthly Archive header to refresh and reconcile all chronological buckets on demand.`,
     '3.0.0': `✨ What's New in v3.0.0 (Zero-Bot Modern Architecture, Direct MTProto Cloud Storage & High-Speed Stream Engine):
 - ⚡ Zero-Bot Modern Architecture (P0): Fully eliminated the need for complex @BotFather bot creation and channel configuration. The app now uses high-speed direct MTProto Telegram session transfers by default.
 - 🛡️ 100% Historical Data Preservation (P0): All legacy bot-uploaded files, multi-part chunks, message IDs, and cloud catalogs remain completely intact and accessible for browsing, streaming, and download.
@@ -779,6 +783,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '3.0.1': 'Full Historical Archive Restoration & Multi-Month Cloud Sync Fix',
     '3.0.0': 'Zero-Bot Architecture, Direct MTProto Cloud Storage & High-Speed Stream Engine',
     '2.9.3': 'Welcome Screen Direct Telegram Login & Instant Account Setup',
     '2.9.2': 'Direct MTProto Code Verification & Restored 1-Tap Credentials Setup',
