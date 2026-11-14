@@ -1317,20 +1317,30 @@ app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settin
                   };
                 }
 
-                // 2. Smart Bot Fleet Merge: Merge by token/bot_id, NEVER discard existing bots when incoming has fewer bots
+                // 2. Smart Bot Fleet Merge: Merge by canonical bot ID, NEVER discard existing bots or tokens
                 const existingBots = Array.isArray(existingObj.bot_fleet) ? existingObj.bot_fleet : [];
                 const incomingBots = Array.isArray(incomingObj.bot_fleet) ? incomingObj.bot_fleet : [];
                 if (existingBots.length > 0 || incomingBots.length > 0) {
                   const botMap = new Map();
+                  const getCanonicalId = (b) => {
+                    if (!b) return '';
+                    const token = (b.bot_token || '').trim();
+                    if (token && token.includes(':')) return token.split(':')[0].trim();
+                    if (b.bot_id) return String(b.bot_id).trim();
+                    if (token) return token;
+                    if (b.bot_username) return String(b.bot_username).trim().toLowerCase();
+                    return '';
+                  };
                   for (const b of existingBots) {
-                    const key = (b.bot_token || b.bot_id || b.bot_username || '').trim();
+                    const key = getCanonicalId(b);
                     if (key) botMap.set(key, b);
                   }
                   for (const b of incomingBots) {
-                    const key = (b.bot_token || b.bot_id || b.bot_username || '').trim();
+                    const key = getCanonicalId(b);
                     if (key) {
                       const prev = botMap.get(key) || {};
-                      botMap.set(key, { ...prev, ...b, bot_token: b.bot_token || prev.bot_token });
+                      const preservedToken = (b.bot_token && b.bot_token.trim()) || prev.bot_token || '';
+                      botMap.set(key, { ...prev, ...b, bot_token: preservedToken });
                     }
                   }
                   merged.bot_fleet = Array.from(botMap.values());
@@ -2335,6 +2345,66 @@ function calculateVersionCode(name) {
   }
   return 143;
 }
+
+/**
+ * Endpoint: GET /api/app/changelog (Aliases: /app/changelog, /changelog)
+ * Serves the complete catalog of application releases and changelogs.
+ */
+app.get(['/api/app/changelog', '/app/changelog', '/changelog'], (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  const changelog = [
+    {
+      versionName: "2.8.7",
+      versionCode: 165,
+      releaseDate: "November 2026",
+      highlights: "Cloud Drive Dedicated Space, Persistent Bot Fleet Architecture & In-App Dynamic Updater",
+      releaseNotes: "✨ What's New in v2.8.7:\n- 📁 Dedicated Cloud Drive Space: Restored personal Cloud Drive as an independent dedicated storage space without arbitrary path exclusions or stripping of drive upload status.\n- 🤖 Zero-Loss Bot Fleet: Fixed token resolution, internal vault snapshot prioritization, and canonical bot ID smart merging to ensure bots and tokens never disappear.\n- 🚀 Resilient Package Installer: Fixed signature pre-verification to seamlessly launch the Android package installer across modern Android OS releases.\n- 🔐 Multi-User Session Isolation: Comprehensive logout cleanup preventing cross-account inheritance of profile photos, display names, and secondary emails."
+    },
+    {
+      versionName: "2.8.6",
+      versionCode: 164,
+      releaseDate: "November 2026",
+      highlights: "Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection",
+      releaseNotes: "✨ What's New in v2.8.6:\n- 🎯 Account-Targeted Email Routing: Security OTPs, credential unlocks, and Master Key dispatch are strictly addressed to the logged-in user's primary account email.\n- 🛡️ Cross-Session Boundary Isolation: Complete wiping of session context, tokens, and secondary email configurations on logout to prevent cross-account inheritance.\n- 🧹 Self-Healing Recovery Email: Automatically detects and purges accidental SMTP service email addresses from client secondary email settings."
+    },
+    {
+      versionName: "2.8.5",
+      versionCode: 163,
+      releaseDate: "November 2026",
+      highlights: "Unified OTP Delivery Engine, Resend Countdown Timers & Resilient Security Handshake",
+      releaseNotes: "✨ What's New in v2.8.5:\n- ⏳ Resend OTP with 60s Countdown Timer: Added reactive 60-second cooldown timers and visible 'Resend OTP' buttons across registration, password reset, recovery email, credentials unlock, and settings dialogs.\n- 📬 Anti-Spam Multi-SMTP Deliverability: Engineered dual-part plaintext and responsive HTML email dispatch with purpose-specific subjects, avoiding email spam filters.\n- 🔒 Atomic Purpose Verification: Backend atomic OTP verification guarantees one-time codes cannot be replayed across different security actions."
+    },
+    {
+      versionName: "2.8.4",
+      versionCode: 162,
+      releaseDate: "November 2026",
+      highlights: "Cloud Drive Dedicated Space, Streamlined Welcome Screen & Version History Synchronization",
+      releaseNotes: "✨ What's New in v2.8.4:\n- 📁 Dedicated Personal Cloud Drive: Restored personal Cloud Drive as an independent dedicated storage space, strictly isolated from automated device backups and camera photos.\n- 🧹 Clean Welcome & Login Screen: Removed technical backend server endpoints and custom URL fields from the onboarding welcome screen, retaining discreet developer controls.\n- 📜 Synchronized Update History: Expanded in-app release changelog to dynamically show current and past updates with complete release details across all versions.\n- 🛠️ Drive Metadata Self-Healing: Automatic startup database repair ensures phone camera and WhatsApp backup files are never miscategorized into personal drive folders."
+    },
+    {
+      versionName: "2.8.3",
+      versionCode: 161,
+      releaseDate: "November 2026",
+      highlights: "Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine",
+      releaseNotes: "✨ What's New in v2.8.3:\n- 🛡️ Zero-Loss Profile & Settings Preservation: Intelligent multi-layered sync and fallback prevents loss of display names, profile avatars, and configurations.\n- 🤖 Reactive Bot Fleet Engine: Instant multi-bot load-balancing and 0ms fallback with background token self-healing."
+    },
+    {
+      versionName: "2.8.2",
+      versionCode: 160,
+      releaseDate: "November 2026",
+      highlights: "Unified Multi-Bot Load Balancing & Keystore Security",
+      releaseNotes: "✨ What's New in v2.8.2:\n- 🔐 Keystore Hardware Protection: Telegram bot tokens and encryption keys are securely stored in Android KeyStore.\n- ⚡ High-Throughput Parallel Transfers: Up to 16 bots concurrently distributing chunks across channels."
+    },
+    {
+      versionName: "2.8.1",
+      versionCode: 159,
+      releaseDate: "November 2026",
+      highlights: "Cloud Drive Navigation & Large File Chunking",
+      releaseNotes: "✨ What's New in v2.8.1:\n- 📂 Nested Folder Navigation: Full recursive folder hierarchy for personal cloud files.\n- 📦 2GB Chunking Engine: Seamless multipart uploads with automatic chunk resume."
+    }
+  ];
+  return res.json(changelog);
+});
 
 /**
  * Endpoint: GET /api/app/latest-version (Aliases: /app/latest-version)

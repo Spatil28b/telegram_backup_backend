@@ -125,6 +125,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.7': `✨ What's New in v2.8.7 (Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater):
+- 📁 Dedicated Cloud Drive Space: Restored personal Cloud Drive as an independent dedicated storage space without arbitrary path exclusions or stripping of drive upload status.
+- 🤖 Zero-Loss Bot Fleet: Fixed token resolution, internal vault snapshot prioritization, and canonical bot ID smart merging to ensure bots and tokens never disappear.
+- 🚀 Resilient Package Installer: Fixed signature pre-verification to seamlessly launch the Android package installer across modern Android OS releases.
+- 🔐 Multi-User Session Isolation: Comprehensive logout cleanup preventing cross-account inheritance of profile photos, display names, and secondary emails.`,
     '2.8.6': `✨ What's New in v2.8.6 (Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection):
 - 🎯 Account-Targeted Email Routing: Security OTPs, credential unlocks, and Master Key dispatch are strictly addressed to the logged-in user's primary account email.
 - 🛡️ Cross-Session Boundary Isolation: Complete wiping of session context, tokens, and secondary email configurations on logout to prevent cross-account inheritance.
@@ -720,6 +725,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.7': 'Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater',
     '2.8.6': 'Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection',
     '2.8.5': 'Unified OTP Engine, Resend Countdown Timers & Deliverability',
     '2.8.4': 'Cloud Drive Dedicated Space, Streamlined Welcome Screen & Version History Synchronization',

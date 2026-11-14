@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 164,
-  "versionName": "2.8.6",
+  "versionCode": 165,
+  "versionName": "2.8.7",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.8.6 (Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection):\n- 🎯 Account-Targeted Email Routing: Security OTPs, credential unlocks, and Master Key dispatch are strictly addressed to the logged-in user's primary account email.\n- 🛡️ Cross-Session Boundary Isolation: Complete wiping of session context, tokens, and secondary email configurations on logout to prevent cross-account inheritance.\n- 🧹 Self-Healing Recovery Email: Automatically detects and purges accidental SMTP service email addresses from client secondary email settings."
+  "releaseNotes": "✨ What's New in v2.8.7 (Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater):\n- 📁 Dedicated Cloud Drive Space: Restored personal Cloud Drive as an independent dedicated storage space without arbitrary path exclusions or stripping of drive upload status.\n- 🤖 Zero-Loss Bot Fleet: Fixed token resolution, internal vault snapshot prioritization, and canonical bot ID smart merging to ensure bots and tokens never disappear.\n- 🚀 Resilient Package Installer: Fixed signature pre-verification to seamlessly launch the Android package installer across modern Android OS releases.\n- 🔐 Multi-User Session Isolation: Comprehensive logout cleanup preventing cross-account inheritance of profile photos, display names, and secondary emails."
 }
