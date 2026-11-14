@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 168,
-  "versionName": "2.9.0",
+  "versionCode": 169,
+  "versionName": "2.9.1",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.9.0 (Direct Telegram Account Login, High-Speed MTProto & Dual-Engine Architecture):\n- ⚡ Direct Telegram Account Login (P0): Connect your personal Telegram account directly in seconds using phone OTP or QR code, completely eliminating complex @BotFather token and channel admin setup.\n- 🛡️ Dual-Engine Storage Architecture (P0): Seamlessly co-exists with the legacy Bot Fleet. Automatically prioritizes high-speed direct user MTProto while preserving 100% read/write access to historical bot-uploaded files and channels with zero data loss.\n- 🚀 Up to 2GB Native Single-File Transfers (P0): Upload large files, videos, and archives up to 2,000 MB (4,000 MB for Telegram Premium) in a single stream with zero 4MB chunk fragmentation.\n- 🔐 Hardware-Backed Session Security (P0): Telegram MTProto session credentials are encrypted inside the hardware Android KeyStore (AES/GCM/NoPadding), never leaving the device.\n- 📦 Dual GitHub Release Distribution & Komi Store Live Index: Automatically publishes verified APK binaries to both Spatil28b/TelegramBackup and Spatil28b/telegram_backup_backend repositories with real-time Komi Store indexing."
+  "releaseNotes": "✨ What's New in v2.9.1 (Live MTProto Real OTP Dispatch & Transparent Background Migration):\n- ⚡ Live Telegram MTProto Real OTP Dispatch (P0): Built-in official client gateway dispatches verification codes directly to your Telegram app with zero manual API setup required.\n- 🛡️ Silent Background Legacy Migration (P0): Automatically adopts existing channel IDs into the unified vault and tags historical files seamlessly with zero user interruption.\n- 🚀 Dual-Engine Safety & Bot Continuity (P0): Maintains 100% active bot fleet backup operations in the background while enabling smooth one-tap direct user login.\n- 📦 Dual GitHub Release Distribution & Komi Store Live Index: Verified APK binaries published to Spatil28b/TelegramBackup and Spatil28b/telegram_backup_backend."
 }
