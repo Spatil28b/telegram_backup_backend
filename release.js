@@ -725,6 +725,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.8': 'Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config',
     '2.8.7': 'Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater',
     '2.8.6': 'Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection',
     '2.8.5': 'Unified OTP Engine, Resend Countdown Timers & Deliverability',

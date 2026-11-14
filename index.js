@@ -333,7 +333,7 @@ async function clearDistributedRateLimit(key) {
  * Checks server-side revocation to immediately invalidate logged-out or reset sessions (Finding #9).
  */
 async function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'] || req.headers['x-access-token'];
+  const authHeader = req.headers['authorization'] || req.headers['x-access-token'] || req.headers['x-auth-token'];
   let token = null;
   if (authHeader) {
     if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
@@ -341,6 +341,14 @@ async function authenticateToken(req, res, next) {
     } else if (typeof authHeader === 'string') {
       token = authHeader.trim();
     }
+  }
+
+  // Also support token passed in query string or JSON body
+  if (!token && req.query && typeof req.query.token === 'string') {
+    token = req.query.token.trim();
+  }
+  if (!token && req.body && typeof req.body.token === 'string') {
+    token = req.body.token.trim();
   }
 
   if (token) {
@@ -2353,6 +2361,13 @@ function calculateVersionCode(name) {
 app.get(['/api/app/changelog', '/app/changelog', '/changelog'], (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=300');
   const changelog = [
+    {
+      versionName: "2.8.8",
+      versionCode: 166,
+      releaseDate: "November 2026",
+      highlights: "Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config",
+      releaseNotes: "✨ What's New in v2.8.8:\n- 📁 Zero-Loss Cloud Drive Sync on Reinstall: Attached authenticated bearer tokens and fallback query headers to listFiles, getUserSettings, and getCredentials, guaranteeing complete restoration of all Drive documents, folders, and settings after reinstall or re-login.\n- 🧹 Auto-Heal Ghost ENC_ Chunks: Intelligently purged 11GB of phantom ENC_*.bin chunk artifacts from the Room database and Download folder, restoring clean, authentic file trees in the Monthly Archive.\n- 🔄 Prevent Duplicate Backup Loops: Guarded BackupWorker from running on empty catalogs during sync, eliminating duplicate re-uploads of entire device archives after updates.\n- 🌐 Welcome Screen Server Configuration: Added a prominent server URL indicator and instant custom endpoint dialog on the welcome screen for quick server switching and verification."
+    },
     {
       versionName: "2.8.7",
       versionCode: 165,

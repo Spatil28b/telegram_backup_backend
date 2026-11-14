@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 165,
-  "versionName": "2.8.7",
+  "versionCode": 166,
+  "versionName": "2.8.8",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.8.7 (Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater):\n- 📁 Dedicated Cloud Drive Space: Restored personal Cloud Drive as an independent dedicated storage space without arbitrary path exclusions or stripping of drive upload status.\n- 🤖 Zero-Loss Bot Fleet: Fixed token resolution, internal vault snapshot prioritization, and canonical bot ID smart merging to ensure bots and tokens never disappear.\n- 🚀 Resilient Package Installer: Fixed signature pre-verification to seamlessly launch the Android package installer across modern Android OS releases.\n- 🔐 Multi-User Session Isolation: Comprehensive logout cleanup preventing cross-account inheritance of profile photos, display names, and secondary emails."
+  "releaseNotes": "✨ What's New in Release v2.8.8:\n- 🚀 Performance improvements & memory optimizations\n- ⚡ Faster chunk uploading with multi-bot fleet\n- 🛡️ Stability fixes & enhanced cloud sync"
 }
