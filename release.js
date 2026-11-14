@@ -125,6 +125,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.9.1': `✨ What's New in v2.9.1 (Live MTProto Real OTP Dispatch & Transparent Background Migration):
+- ⚡ Live Telegram MTProto Real OTP Dispatch (P0): Built-in official client gateway dispatches verification codes directly to your Telegram app with zero manual API setup required.
+- 🛡️ Silent Background Legacy Migration (P0): Automatically adopts existing channel IDs into the unified vault and tags historical files seamlessly with zero user interruption.
+- 🚀 Dual-Engine Safety & Bot Continuity (P0): Maintains 100% active bot fleet backup operations in the background while enabling smooth one-tap direct user login.
+- 📦 Dual GitHub Release Distribution & Komi Store Live Index: Verified APK binaries published to Spatil28b/TelegramBackup and Spatil28b/telegram_backup_backend.`,
     '2.9.0': `✨ What's New in v2.9.0 (Direct Telegram Account Login, High-Speed MTProto & Dual-Engine Architecture):
 - ⚡ Direct Telegram Account Login (P0): Connect your personal Telegram account directly in seconds using phone OTP or QR code, completely eliminating complex @BotFather token and channel admin setup.
 - 🛡️ Dual-Engine Storage Architecture (P0): Seamlessly co-exists with the legacy Bot Fleet. Automatically prioritizes high-speed direct user MTProto while preserving 100% read/write access to historical bot-uploaded files and channels with zero data loss.
@@ -761,6 +766,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.9.1': 'Live MTProto Real OTP Dispatch & Transparent Background Data Migration',
     '2.9.0': 'Direct Telegram Account Login, High-Speed MTProto & Dual-Engine Architecture',
     '2.8.9': 'Background Concurrency Unification, Zero-OOM Streaming Encryption & M3 Minimal UI',
     '2.8.8': 'Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config',

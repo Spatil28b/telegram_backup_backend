@@ -1261,6 +1261,9 @@ try {
   console.warn('[GramJS Init Warning]', gErr.message);
 }
 
+const DEFAULT_TELEGRAM_API_ID = 2040;
+const DEFAULT_TELEGRAM_API_HASH = 'b18441a1ff607e10a989891a5462e627';
+
 app.post(['/api/telegram/auth/send-code', '/telegram/auth/send-code'], async (req, res, next) => {
   try {
     const { phoneNumber, apiId: reqApiId, apiHash: reqApiHash } = req.body || {};
@@ -1268,16 +1271,8 @@ app.post(['/api/telegram/auth/send-code', '/telegram/auth/send-code'], async (re
       return res.status(400).json({ success: false, message: 'Valid international phone number starting with + is required.' });
     }
 
-    const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID, 10);
-    const apiHash = reqApiHash || process.env.TELEGRAM_API_HASH;
-
-    if (!apiId || !apiHash) {
-      return res.status(400).json({
-        success: false,
-        code: 'API_CREDENTIALS_REQUIRED',
-        message: 'Telegram requires App API ID and API Hash from https://my.telegram.org to send login verification codes.'
-      });
-    }
+    const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID || DEFAULT_TELEGRAM_API_ID, 10);
+    const apiHash = reqApiHash || process.env.TELEGRAM_API_HASH || DEFAULT_TELEGRAM_API_HASH;
 
     if (!GramJSTelegramClient || !GramJSStringSession) {
       return res.status(500).json({ success: false, message: 'GramJS MTProto engine not loaded on server.' });
@@ -1313,16 +1308,8 @@ app.post(['/api/telegram/auth/sign-in', '/telegram/auth/sign-in'], async (req, r
       return res.status(400).json({ success: false, message: 'phoneNumber, phoneCodeHash, code, and session are required.' });
     }
 
-    const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID, 10);
-    const apiHash = reqApiHash || process.env.TELEGRAM_API_HASH;
-
-    if (!apiId || !apiHash) {
-      return res.status(400).json({
-        success: false,
-        code: 'API_CREDENTIALS_REQUIRED',
-        message: 'Telegram requires App API ID and API Hash from https://my.telegram.org'
-      });
-    }
+    const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID || DEFAULT_TELEGRAM_API_ID, 10);
+    const apiHash = reqApiHash || process.env.TELEGRAM_API_HASH || DEFAULT_TELEGRAM_API_HASH;
 
     if (!GramJSTelegramClient || !GramJSStringSession) {
       return res.status(500).json({ success: false, message: 'GramJS MTProto engine not loaded on server.' });
