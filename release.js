@@ -35,7 +35,7 @@ if (!TOKEN) {
   process.exit(1);
 }
 const OWNER = 'Spatil28b';
-const REPO = 'telegram_backup_backend';
+const TARGET_REPOS = ['TelegramBackup', 'telegram_backup_backend'];
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT_DIR, 'TelegramBackup');
@@ -618,114 +618,129 @@ async function main() {
   }, null, 2));
   console.log(`   ✓ Updated app-version.json with v${versionName} (Code: ${versionCode})\n`);
 
-  // 4. Update or Create GitHub Release
-  console.log('4️⃣  Creating or updating GitHub Release: ' + tag + '...');
-  const listRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases`);
+  // 4, 5, 6: Publish Releases and Upload Assets to Target Repositories (TelegramBackup + telegram_backup_backend)
+  for (const targetRepo of TARGET_REPOS) {
+    console.log(`\n4️⃣  Creating or updating GitHub Release in ${OWNER}/${targetRepo}: ${tag}...`);
+    const listRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${targetRepo}/releases`);
 
-  let releaseId;
-  let uploadUrlTemplate;
-  const existingRelease = Array.isArray(listRes.data) ? listRes.data.find(r => r.tag_name === tag) : null;
+    let releaseId;
+    let uploadUrlTemplate;
+    const existingRelease = Array.isArray(listRes.data) ? listRes.data.find(r => r.tag_name === tag) : null;
 
-  if (existingRelease) {
-    console.log(`   Existing release found for ${tag} (ID: ${existingRelease.id}). Updating release notes body...`);
-    releaseId = existingRelease.id;
-    uploadUrlTemplate = existingRelease.upload_url;
-    await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}`, 'PATCH', JSON.stringify({
-      body: currentReleaseNotes
-    }), { 'Content-Type': 'application/json' });
-  } else {
-    console.log(`   Creating new GitHub Release: ${tag}...`);
-    const createRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases`, 'POST', JSON.stringify({
-      tag_name: tag,
-      target_commitish: 'main',
-      body: currentReleaseNotes,
-      draft: false,
-      prerelease: false
-    }), { 'Content-Type': 'application/json' });
+    if (existingRelease) {
+      console.log(`   Existing release found in ${targetRepo} for ${tag} (ID: ${existingRelease.id}). Updating release notes body...`);
+      releaseId = existingRelease.id;
+      uploadUrlTemplate = existingRelease.upload_url;
+      await ghRequest(`https://api.github.com/repos/${OWNER}/${targetRepo}/releases/${releaseId}`, 'PATCH', JSON.stringify({
+        body: currentReleaseNotes
+      }), { 'Content-Type': 'application/json' });
+    } else {
+      console.log(`   Creating new GitHub Release in ${targetRepo}: ${tag}...`);
+      const createRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${targetRepo}/releases`, 'POST', JSON.stringify({
+        tag_name: tag,
+        target_commitish: 'main',
+        body: currentReleaseNotes,
+        draft: false,
+        prerelease: false
+      }), { 'Content-Type': 'application/json' });
 
-    if (!createRes.data || !createRes.data.id) {
-      throw new Error(`Failed to create release: ${createRes.raw}`);
+      if (!createRes.data || !createRes.data.id) {
+        throw new Error(`Failed to create release in ${targetRepo}: ${createRes.raw}`);
+      }
+      releaseId = createRes.data.id;
+      uploadUrlTemplate = createRes.data.upload_url;
     }
-    releaseId = createRes.data.id;
-    uploadUrlTemplate = createRes.data.upload_url;
-  }
-  console.log(`   ✓ Release ID: ${releaseId}\n`);
+    console.log(`   ✓ Release ID (${targetRepo}): ${releaseId}\n`);
 
-  // 5. Upload APK Assets with verified HTTP response
-  console.log('5️⃣  Uploading Release Binaries...');
-  async function uploadAsset(assetName) {
-    const assetPath = path.join(RELEASES_DIR, assetName);
-    try {
-      console.log(`   Uploading ${assetName} via GitHub CLI (gh release upload)...`);
-      execSync(`gh release upload "${tag}" "${assetPath}" --repo "${OWNER}/${REPO}" --clobber`, {
-        env: { ...process.env, GH_TOKEN: TOKEN },
-        stdio: 'inherit'
-      });
-      console.log(`   ✓ ${assetName} uploaded successfully via gh CLI!`);
-      return;
-    } catch (ghErr) {
-      console.log(`   (gh CLI fallback note: ${ghErr.message})`);
-    }
-
-    const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
-
-    for (let attempt = 1; attempt <= 4; attempt++) {
+    // 5. Upload APK Assets with verified HTTP response
+    console.log(`5️⃣  Uploading Release Binaries to ${targetRepo}...`);
+    async function uploadAsset(assetName) {
+      const assetPath = path.join(RELEASES_DIR, assetName);
       try {
-        const currentAssetsRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets`);
-        if (Array.isArray(currentAssetsRes.data)) {
-          const match = currentAssetsRes.data.find(a => a.name === assetName);
-          if (match) {
-            console.log(`   Removing previous/partial asset ${assetName} (ID: ${match.id})...`);
-            await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/assets/${match.id}`, 'DELETE');
-            await new Promise(r => setTimeout(r, 1500));
+        console.log(`   Uploading ${assetName} via GitHub CLI (gh release upload)...`);
+        execSync(`gh release upload "${tag}" "${assetPath}" --repo "${OWNER}/${targetRepo}" --clobber`, {
+          env: { ...process.env, GH_TOKEN: TOKEN },
+          stdio: 'inherit'
+        });
+        console.log(`   ✓ ${assetName} uploaded successfully via gh CLI!`);
+        return;
+      } catch (ghErr) {
+        // Fallback to curl
+      }
+
+      const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${targetRepo}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
+
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          const currentAssetsRes = await ghRequest(`https://api.github.com/repos/${OWNER}/${targetRepo}/releases/${releaseId}/assets`);
+          if (Array.isArray(currentAssetsRes.data)) {
+            const match = currentAssetsRes.data.find(a => a.name === assetName);
+            if (match) {
+              console.log(`   Removing previous/partial asset ${assetName} (ID: ${match.id})...`);
+              await ghRequest(`https://api.github.com/repos/${OWNER}/${targetRepo}/releases/assets/${match.id}`, 'DELETE');
+              await new Promise(r => setTimeout(r, 1500));
+            }
+          }
+
+          console.log(`   Uploading ${assetName} (${apkSizeMB} MB) to ${targetRepo} via curl [Attempt ${attempt}/4]...`);
+          const curlCmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
+          const curlTarget = APK_SRC.replace(/\\/g, '/');
+          const curlOutput = execSync(`${curlCmd} -4 -s -S --http1.1 --retry 3 --retry-delay 2 -w "\\nHTTP_STATUS:%{http_code}" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`).toString();
+          
+          const statusMatch = curlOutput.match(/HTTP_STATUS:(\d+)/);
+          const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+          if (statusCode === 201 || statusCode === 200) {
+            console.log(`   ✓ ${assetName} uploaded successfully to ${targetRepo} via curl (HTTP ${statusCode})!`);
+            return;
+          } else {
+            throw new Error(`Upload returned status ${statusCode}: ${curlOutput.slice(-300)}`);
+          }
+        } catch (e) {
+          console.warn(`   ⚠️ Upload attempt ${attempt} for ${assetName} failed: ${e.message}`);
+          if (attempt < 4) {
+            console.log(`   Retrying in 3s...`);
+            await new Promise(r => setTimeout(r, 3000));
+          } else {
+            throw new Error(`Failed to upload ${assetName} to ${targetRepo} after 4 attempts: ${e.message}`);
           }
         }
+      }
+    }
 
-        console.log(`   Uploading ${assetName} (${apkSizeMB} MB) via curl [Attempt ${attempt}/4]...`);
-        const curlCmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
-        const curlTarget = APK_SRC.replace(/\\/g, '/');
-        const curlOutput = execSync(`${curlCmd} -4 -s -S --http1.1 --retry 3 --retry-delay 2 -w "\\nHTTP_STATUS:%{http_code}" -X POST -H "Authorization: Bearer ${TOKEN}" -H "User-Agent: ReleasePipeline" -H "Content-Type: application/vnd.android.package-archive" --data-binary "@${curlTarget}" "${uploadUrl}"`).toString();
-        
-        const statusMatch = curlOutput.match(/HTTP_STATUS:(\d+)/);
-        const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
-        if (statusCode === 201 || statusCode === 200) {
-          console.log(`   ✓ ${assetName} uploaded successfully via curl (HTTP ${statusCode})!`);
-          return;
-        } else {
-          throw new Error(`Upload returned status ${statusCode}: ${curlOutput.slice(-300)}`);
-        }
-      } catch (e) {
-        console.warn(`   ⚠️ Upload attempt ${attempt} for ${assetName} failed: ${e.message}`);
-        if (attempt < 4) {
-          console.log(`   Retrying in 3s...`);
-          await new Promise(r => setTimeout(r, 3000));
-        } else {
-          throw new Error(`Failed to upload ${assetName} after 4 attempts: ${e.message}`);
+    await uploadAsset(`TelegramBackup-${tag}.apk`);
+    await uploadAsset(`TelegramBackup-latest.apk`);
+    console.log('');
+
+    // 6. Only clean up old releases AFTER new release assets are 100% verified (Fix #41)
+    console.log(`6️⃣  Cleaning up superseded releases on GitHub in ${targetRepo} (retaining previous 2 for rollback safety)...`);
+    try {
+      if (Array.isArray(listRes.data)) {
+        const sortedReleases = [...listRes.data].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        // Keep current release and 2 previous stable releases (top 3)
+        const toDelete = sortedReleases.slice(3);
+        for (const rel of toDelete) {
+          if (rel.tag_name !== tag) {
+            console.log(`   Deleting superseded release ${rel.tag_name} (ID: ${rel.id}) in ${targetRepo}...`);
+            await ghRequest(`https://api.github.com/repos/${OWNER}/${targetRepo}/releases/${rel.id}`, 'DELETE');
+          }
         }
       }
+    } catch (cleanErr) {
+      console.warn('   (Old release cleanup note:', cleanErr.message, ')');
     }
   }
 
-  await uploadAsset(`TelegramBackup-${tag}.apk`);
-  await uploadAsset(`TelegramBackup-latest.apk`);
-  console.log('');
-
-  // 6. Only clean up old releases AFTER new release assets are 100% verified (Fix #41)
-  console.log('6️⃣  Cleaning up superseded releases on GitHub (retaining previous 2 for rollback safety)...');
+  // 6a. Ping Komi Store / GitHub Store Refresh API
+  console.log('6️⃣a Pinging Komi Store / GitHub Store discovery refresh...');
   try {
-    if (Array.isArray(listRes.data)) {
-      const sortedReleases = [...listRes.data].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-      // Keep current release and 2 previous stable releases (top 3)
-      const toDelete = sortedReleases.slice(3);
-      for (const rel of toDelete) {
-        if (rel.tag_name !== tag) {
-          console.log(`   Deleting superseded release ${rel.tag_name} (ID: ${rel.id})...`);
-          await ghRequest(`https://api.github.com/repos/${OWNER}/${REPO}/releases/${rel.id}`, 'DELETE');
-        }
-      }
+    const ksRes = await fetch(`https://api.github-store.org/v1/repo/${OWNER}/TelegramBackup/refresh`, { method: 'POST' });
+    if (ksRes.ok) {
+      console.log('   ✓ Komi Store index refreshed successfully!');
+    } else {
+      console.log(`   (Komi Store refresh returned HTTP ${ksRes.status})`);
     }
-  } catch (cleanErr) {
-    console.warn('   (Old release cleanup note:', cleanErr.message, ')');
+  } catch (ksErr) {
+    console.warn('   (Komi Store refresh note:', ksErr.message, ')');
   }
 
   // 6b. Run database schema migrations
