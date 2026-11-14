@@ -1247,6 +1247,133 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
 
 /**
  * -------------------------------------------------------------------------------------
+ * 8a-1. API ROUTES: TELEGRAM MTPROTO DIRECT USER AUTHENTICATION
+ * -------------------------------------------------------------------------------------
+ */
+let GramJSTelegramClient = null;
+let GramJSStringSession = null;
+try {
+  const gramjs = require('telegram');
+  const sessions = require('telegram/sessions');
+  GramJSTelegramClient = gramjs.TelegramClient;
+  GramJSStringSession = sessions.StringSession;
+} catch (gErr) {
+  console.warn('[GramJS Init Warning]', gErr.message);
+}
+
+app.post(['/api/telegram/auth/send-code', '/telegram/auth/send-code'], async (req, res, next) => {
+  try {
+    const { phoneNumber, apiId: reqApiId, apiHash: reqApiHash } = req.body || {};
+    if (!phoneNumber || typeof phoneNumber !== 'string' || !phoneNumber.startsWith('+')) {
+      return res.status(400).json({ success: false, message: 'Valid international phone number starting with + is required.' });
+    }
+
+    const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID, 10);
+    const apiHash = reqApiHash || process.env.TELEGRAM_API_HASH;
+
+    if (!apiId || !apiHash) {
+      return res.status(400).json({
+        success: false,
+        code: 'API_CREDENTIALS_REQUIRED',
+        message: 'Telegram requires App API ID and API Hash from https://my.telegram.org to send login verification codes.'
+      });
+    }
+
+    if (!GramJSTelegramClient || !GramJSStringSession) {
+      return res.status(500).json({ success: false, message: 'GramJS MTProto engine not loaded on server.' });
+    }
+
+    const stringSession = new GramJSStringSession('');
+    const client = new GramJSTelegramClient(stringSession, apiId, apiHash, {
+      connectionRetries: 5,
+      timeout: 15000,
+    });
+
+    await client.connect();
+    const result = await client.sendCode({ apiId, apiHash }, phoneNumber.trim());
+    const sessionString = client.session.save();
+    try { await client.disconnect(); } catch (_) {}
+
+    return res.json({
+      success: true,
+      phoneCodeHash: result.phoneCodeHash,
+      session: sessionString,
+      isCodeViaApp: result.isCodeViaApp
+    });
+  } catch (err) {
+    console.error('[Telegram MTProto sendCode Error]', err.message);
+    return res.status(400).json({ success: false, message: err.message || 'Failed to dispatch Telegram login code.' });
+  }
+});
+
+app.post(['/api/telegram/auth/sign-in', '/telegram/auth/sign-in'], async (req, res, next) => {
+  try {
+    const { phoneNumber, phoneCodeHash, code, password, session: sessionStr, apiId: reqApiId, apiHash: reqApiHash } = req.body || {};
+    if (!phoneNumber || !phoneCodeHash || !code || !sessionStr) {
+      return res.status(400).json({ success: false, message: 'phoneNumber, phoneCodeHash, code, and session are required.' });
+    }
+
+    const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID, 10);
+    const apiHash = reqApiHash || process.env.TELEGRAM_API_HASH;
+
+    if (!apiId || !apiHash) {
+      return res.status(400).json({
+        success: false,
+        code: 'API_CREDENTIALS_REQUIRED',
+        message: 'Telegram requires App API ID and API Hash from https://my.telegram.org'
+      });
+    }
+
+    if (!GramJSTelegramClient || !GramJSStringSession) {
+      return res.status(500).json({ success: false, message: 'GramJS MTProto engine not loaded on server.' });
+    }
+
+    const stringSession = new GramJSStringSession(sessionStr);
+    const client = new GramJSTelegramClient(stringSession, apiId, apiHash, {
+      connectionRetries: 5,
+      timeout: 15000,
+    });
+
+    await client.connect();
+    await client.signInUser(
+      { apiId, apiHash },
+      {
+        phoneNumber: phoneNumber.trim(),
+        phoneCodeHash: phoneCodeHash.trim(),
+        phoneCode: code.trim(),
+        password: async () => (password || ''),
+        onError: (err) => { throw err; }
+      }
+    );
+
+    const me = await client.getMe();
+    const finalSession = client.session.save();
+    try { await client.disconnect(); } catch (_) {}
+
+    return res.json({
+      success: true,
+      user: {
+        userId: Number(me.id),
+        phoneNumber: me.phone || phoneNumber,
+        firstName: me.firstName || '',
+        lastName: me.lastName || '',
+        username: me.username || '',
+        isPremium: Boolean(me.premium)
+      },
+      session: finalSession
+    });
+  } catch (err) {
+    console.error('[Telegram MTProto signIn Error]', err.message);
+    const msg = err.message || '';
+    if (msg.includes('SESSION_PASSWORD_NEEDED')) {
+      return res.status(401).json({ success: false, code: '2FA_REQUIRED', message: 'Two-Step Verification cloud password is required.' });
+    }
+    return res.status(400).json({ success: false, message: msg || 'Failed to sign in to Telegram.' });
+  }
+});
+
+/**
+ * -------------------------------------------------------------------------------------
  * 8b. API ROUTES: SAVE & FETCH USER APP SETTINGS JSON
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/user/settings (Aliases: /user/settings, /api/settings/save, /settings/save)
