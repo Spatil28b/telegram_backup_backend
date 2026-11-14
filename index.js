@@ -528,10 +528,10 @@ const OTP_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
  * rate limits or authentication issues, system instantly falls back to Secondary SMTP.
  */
 const primarySender = (process.env.SMTP_EMAIL || '').trim();
-const primaryPass = (process.env.SMTP_APP_PASSWORD || '').trim();
+const primaryPass = (process.env.SMTP_APP_PASSWORD || '').trim().replace(/\s+/g, '');
 
 const secondarySender = (process.env.SMTP_EMAIL_2 || '').trim();
-const secondaryPass = (process.env.SMTP_APP_PASSWORD_2 || '').trim();
+const secondaryPass = (process.env.SMTP_APP_PASSWORD_2 || '').trim().replace(/\s+/g, '');
 
 
 const primaryTransporter = nodemailer.createTransport({
@@ -690,15 +690,26 @@ async function consumeOtpAtomic(email, code, expectedType) {
   // Strict database atomic deletion with purpose and expiry verification
   if (pool) {
     try {
-      const res = await queryWithTimeout(
-        `DELETE FROM otps
+      let queryText;
+      let queryParams;
+      if (expectedType) {
+        queryText = `DELETE FROM otps
          WHERE LOWER(email) = $1
            AND (code = $2 OR code = $3)
-           AND type = $4
+           AND (type = $4 OR ($4 = 'credentials' AND type IN ('credentials', '2fa', 'settings_auth', 'credentials_unlock')) OR ($4 = 'register' AND type = 'register') OR ($4 = 'reset' AND type = 'reset'))
            AND expires_at > $5
-         RETURNING email, type`,
-        [lowerEmail, hashedCode, cleanCode, expectedType, now]
-      );
+         RETURNING email, type`;
+        queryParams = [lowerEmail, hashedCode, cleanCode, expectedType, now];
+      } else {
+        queryText = `DELETE FROM otps
+         WHERE LOWER(email) = $1
+           AND (code = $2 OR code = $3)
+           AND expires_at > $4
+         RETURNING email, type`;
+        queryParams = [lowerEmail, hashedCode, cleanCode, now];
+      }
+
+      const res = await queryWithTimeout(queryText, queryParams);
       if (res && res.rowCount > 0) {
         return { success: true };
       }
@@ -712,12 +723,12 @@ async function consumeOtpAtomic(email, code, expectedType) {
 
 /**
  * Distributed Rate Limiting for OTP generation (Finding #8).
- * Maximum 5 OTP dispatches per email per 15 minutes.
+ * Maximum 10 OTP dispatches per email per 15 minutes.
  */
 async function checkOtpRateLimit(email) {
   const lower = (email || '').trim().toLowerCase();
-  const res = await checkDistributedRateLimit(`otpsend_${lower}`, 5, 15 * 60 * 1000, 15 * 60 * 1000);
-  return !res.locked;
+  const res = await checkDistributedRateLimit(`otpsend_${lower}`, 10, 15 * 60 * 1000, 15 * 60 * 1000);
+  return { allowed: !res.locked, waitSeconds: res.waitSeconds || 0 };
 }
 
 /**
@@ -725,7 +736,7 @@ async function checkOtpRateLimit(email) {
  * 3. API ROUTE: SEND OTP VERIFICATION CODE
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/auth/send-otp (Also aliases: /auth/send-otp, /send-otp)
- * Accepts: { email: string, type: 'register' | '2fa' | 'reset' }
+ * Accepts: { email: string, type: 'register' | '2fa' | 'reset' | 'recovery_email' | 'credentials_unlock' | 'settings_auth' }
  * Generates 6-digit code with 5-minute expiration and dispatches via Multi-SMTP.
  */
 app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/request-reset', '/auth/request-reset', '/request-reset'], async (req, res, next) => {
@@ -736,9 +747,14 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
     }
 
     const lowerEmail = email.trim().toLowerCase();
-    const isAllowed = await checkOtpRateLimit(lowerEmail);
-    if (!isAllowed) {
-      return res.status(429).json({ success: false, message: 'Too many OTP requests. Please wait 15 minutes before requesting again.' });
+    const rateCheck = await checkOtpRateLimit(lowerEmail);
+    if (!rateCheck.allowed) {
+      const waitMins = Math.ceil((rateCheck.waitSeconds || 900) / 60);
+      return res.status(429).json({
+        success: false,
+        message: `Too many OTP requests. Please wait ${waitMins} minute${waitMins > 1 ? 's' : ''} before requesting again.`,
+        retryAfter: rateCheck.waitSeconds
+      });
     }
 
     const reqPath = (req.originalUrl || req.url || '').toLowerCase();
@@ -765,22 +781,53 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
       return res.status(503).json({ success: false, message: 'Database service unavailable. Please try again.' });
     }
 
-    // Construct Responsive HTML Email Template (raw code sent to user, hashed code stored)
-    const emailSubject = resolvedType === 'reset'
-      ? 'Password Reset Code: Telegram Backup Cloud'
-      : (resolvedType === '2fa'
-        ? '2FA Code: Modify Telegram Credentials'
-        : 'Verification Code: Telegram Backup Registration');
+    // Context-sensitive subject and text description based on OTP purpose
+    let emailSubject = 'Verification Code: Telegram Backup Cloud';
+    let purposeLabel = 'security verification';
+    switch (resolvedType) {
+      case 'reset':
+        emailSubject = 'Password Reset Code: Telegram Backup Cloud';
+        purposeLabel = 'password reset';
+        break;
+      case 'recovery_email':
+        emailSubject = 'Verify Recovery Email: Telegram Backup Cloud';
+        purposeLabel = 'recovery email verification';
+        break;
+      case 'credentials_unlock':
+        emailSubject = 'Unlock Credentials Verification: Telegram Backup Cloud';
+        purposeLabel = 'credentials unlock';
+        break;
+      case 'settings_auth':
+        emailSubject = 'Authorize Settings Security: Telegram Backup Cloud';
+        purposeLabel = 'settings authorization';
+        break;
+      case '2fa':
+      case 'credentials':
+        emailSubject = 'Security Verification: Telegram Backup Cloud';
+        purposeLabel = 'credentials update';
+        break;
+      case 'register':
+      default:
+        emailSubject = 'Registration Verification Code: Telegram Backup Cloud';
+        purposeLabel = 'account registration';
+        break;
+    }
 
     const mailOptions = {
       to: lowerEmail,
       subject: emailSubject,
+      text: `Telegram Backup Cloud\n\nYour 6-digit ${purposeLabel} code is: ${code}\n\nThis code will expire in 5 minutes.\nIf you did not request this code, you can safely ignore this email.\n`,
       html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-          <h2 style="color: #0088cc;">Telegram Backup Cloud</h2>
-          <p>Your 6-digit security verification code is:</p>
-          <h1 style="background: #eef7fc; display: inline-block; padding: 10px 20px; color: #0088cc; letter-spacing: 4px;">${escapeHtml(code)}</h1>
-          <p>This code will expire in 5 minutes.</p>
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 500px; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <h2 style="color: #0088cc; margin-top: 0;">Telegram Backup Cloud</h2>
+          <p>Your 6-digit ${escapeHtml(purposeLabel)} code is:</p>
+          <div style="background: #eef7fc; display: inline-block; padding: 12px 24px; border-radius: 6px; margin: 10px 0;">
+            <span style="font-size: 28px; font-weight: bold; color: #0088cc; letter-spacing: 6px; font-family: monospace;">${escapeHtml(code)}</span>
+          </div>
+          <p style="color: #64748b; font-size: 14px; margin-top: 15px;">This code will expire in <strong>5 minutes</strong>.</p>
+          <p style="color: #94a3b8; font-size: 12px; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 10px;">
+            If you did not request this verification code, please ignore this email.
+          </p>
         </div>
       `
     };
@@ -810,16 +857,15 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
  * 3b. API ROUTE: SEND AES-256 MASTER SECURITY ENCRYPTION KEY
  * -------------------------------------------------------------------------------------
  * Endpoint: POST /api/auth/send-key (Also aliases: /auth/send-key, /send-key)
- * Requires: Authorization: Bearer <token> (Fix #1, #8)
- * Accepts: { encryptionKey: string }
- * Sends Master Encryption Key file attachment & access PIN to authenticated user's email.
+ * Accepts: { encryptionKey: string, email?: string }
+ * Sends Master Encryption Key file attachment & access PIN to authenticated or requested user's email.
  */
 const handleSendKey = async (req, res, next) => {
   try {
-    const { encryptionKey } = req.body || {};
-    const lowerEmail = req.authenticatedEmail;
+    const { encryptionKey, email } = req.body || {};
+    const lowerEmail = req.authenticatedEmail || (email && isValidEmail(email) ? email.trim().toLowerCase() : null);
     if (!lowerEmail || !isValidEmail(lowerEmail)) {
-      return res.status(401).json({ success: false, message: 'Authentication required.' });
+      return res.status(401).json({ success: false, message: 'Authentication or valid account email is required.' });
     }
     if (!encryptionKey || typeof encryptionKey !== 'string') {
       return res.status(400).json({ success: false, message: 'Valid encryption key is required.' });
@@ -831,6 +877,7 @@ const handleSendKey = async (req, res, next) => {
     const mailOptions = {
       to: lowerEmail,
       subject: '🔑 Your Master AES-256 Security Encryption Key File',
+      text: `Telegram Backup Cloud - Master Security Encryption Key\n\nAccount: ${lowerEmail}\nMaster Key: ${encryptionKey}\nAccess PIN: ${filePassword}\n\nAttached is your telegram_backup_master_key.txt key file.\nStore this key in a safe location. Without it, encrypted backups cannot be decrypted.\n`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; border: 1px solid #e0e0e0; border-radius: 8px;">
           <h2 style="color: #0088cc;">🔐 Telegram Backup Cloud Security</h2>
@@ -867,7 +914,7 @@ const handleSendKey = async (req, res, next) => {
   }
 };
 
-app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], requireAuth, handleSendKey);
+app.post(['/api/auth/send-key', '/auth/send-key', '/send-key'], handleSendKey);
 
 /**
  * -------------------------------------------------------------------------------------

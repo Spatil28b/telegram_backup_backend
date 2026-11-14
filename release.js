@@ -125,6 +125,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.5': `✨ What's New in v2.8.5 (Unified OTP Engine, Resend Countdown Timers & Deliverability):
+- ⏱️ Unified Resend OTP & 60s Timers: Added responsive 60-second cooldown timers and dynamic 'Resend OTP' buttons across all verification dialogs (Registration, Password Reset, Clear App Data, Recovery Email, and Credentials Unlock).
+- ✉️ Anti-Spam Dual-Part Multi-SMTP: Configured RFC-compliant plaintext and HTML email dispatch with purpose-tailored subject lines, preventing inbox spam filtering.
+- 🔐 Atomic Purpose-Bound Verification: Strengthened atomic OTP validator to recognize credential unlock and settings authorization without collision or race conditions.
+- 🔑 Direct Master Key Transmission: Corrected Master Key email action to send the AES-256 master key file and security PIN attachment directly to email.`,
     '2.8.4': `✨ What's New in v2.8.4 (Cloud Drive Dedicated Space, Streamlined Welcome Screen & Version History Synchronization):
 - ☁️ Dedicated Personal Cloud Drive: Restored Cloud Drive as an independent dedicated storage space for user-created folders and custom files, strictly isolated from automated device backups and camera photos.
 - 🧼 Clean Welcome & Login Screen: Removed technical backend server URLs and custom endpoint controls from the onboarding welcome card, moving developer configuration to a discreet 7-tap gesture.
@@ -711,6 +716,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.5': 'Unified OTP Engine, Resend Countdown Timers & Deliverability',
     '2.8.4': 'Cloud Drive Dedicated Space, Streamlined Welcome Screen & Version History Synchronization',
     '2.8.3': 'Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine',
     '2.8.2': 'Full Backend Migration, Interactive URL Switching & OTP Schema Hardening',
