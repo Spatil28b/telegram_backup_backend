@@ -125,6 +125,12 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.9.0': `✨ What's New in v2.9.0 (Direct Telegram Account Login, High-Speed MTProto & Dual-Engine Architecture):
+- ⚡ Direct Telegram Account Login (P0): Connect your personal Telegram account directly in seconds using phone OTP or QR code, completely eliminating complex @BotFather token and channel admin setup.
+- 🛡️ Dual-Engine Storage Architecture (P0): Seamlessly co-exists with the legacy Bot Fleet. Automatically prioritizes high-speed direct user MTProto while preserving 100% read/write access to historical bot-uploaded files and channels with zero data loss.
+- 🚀 Up to 2GB Native Single-File Transfers (P0): Upload large files, videos, and archives up to 2,000 MB (4,000 MB for Telegram Premium) in a single stream with zero 4MB chunk fragmentation.
+- 🔐 Hardware-Backed Session Security (P0): Telegram MTProto session credentials are encrypted inside the hardware Android KeyStore (AES/GCM/NoPadding), never leaving the device.
+- 📦 Dual GitHub Release Distribution & Komi Store Live Index: Automatically publishes verified APK binaries to both Spatil28b/TelegramBackup and Spatil28b/telegram_backup_backend repositories with real-time Komi Store indexing.`,
     '2.8.9': `✨ What's New in v2.8.9 (Concurrency Race Fix, Zero-OOM Streaming, Channel Rate Limiting & M3 Minimal UI):
 - 🛡️ Background Concurrency & Duplicate Fix (P0): Unified all backup triggers under a single WorkManager queue with ExistingWorkPolicy.KEEP, completely eliminating triple-trigger race conditions and duplicate scans.
 - ⚡ Zero-OOM Streaming Encryption & Decryption (P0): Chunk encryption and multi-part decryption now stream directly through disk with 8 KB buffers using Cipher.update(), keeping RAM consumption below 16 KB and eliminating Out-of-Memory crashes on multi-gigabyte files.
@@ -755,7 +761,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
-    '2.8.8': 'Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config',
+    '2.9.0': 'Direct Telegram Account Login, High-Speed MTProto & Dual-Engine Architecture',
     '2.8.9': 'Background Concurrency Unification, Zero-OOM Streaming Encryption & M3 Minimal UI',
     '2.8.8': 'Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config',
     '2.8.7': 'Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater',
