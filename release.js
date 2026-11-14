@@ -125,6 +125,11 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '3.0.0': `✨ What's New in v3.0.0 (Zero-Bot Modern Architecture, Direct MTProto Cloud Storage & High-Speed Stream Engine):
+- ⚡ Zero-Bot Modern Architecture (P0): Fully eliminated the need for complex @BotFather bot creation and channel configuration. The app now uses high-speed direct MTProto Telegram session transfers by default.
+- 🛡️ 100% Historical Data Preservation (P0): All legacy bot-uploaded files, multi-part chunks, message IDs, and cloud catalogs remain completely intact and accessible for browsing, streaming, and download.
+- 🚀 Ultra-Fast Single-Stream Transfers (P0): Direct connection to Telegram's cloud network allows seamless single-file uploads up to 2,000 MB without 4MB chunk fragmentation or bot rate limits.
+- 🧼 Minimal, Clean & Stable UI (P1): Removed legacy BotFather guides, bot fleet manager menus, and channel input fields to provide a clean, modern, and reliable backup experience.`,
     '2.9.3': `✨ What's New in v2.9.3 (Welcome Screen Direct Telegram Login & Instant Account Setup):
 - ⚡ Welcome Screen Direct Telegram Login (P0): Added a prominent 1-tap Telegram sign-in option right on the Welcome onboarding screen. Users can sign in directly using phone OTP without needing to create or verify an email account.
 - 🚀 Instant Backend Auto-Provisioning (P0): Direct Telegram authentication automatically provisions the user account, generates an authenticated JWT token, and initializes cloud storage with zero configuration.
@@ -774,6 +779,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '3.0.0': 'Zero-Bot Architecture, Direct MTProto Cloud Storage & High-Speed Stream Engine',
     '2.9.3': 'Welcome Screen Direct Telegram Login & Instant Account Setup',
     '2.9.2': 'Direct MTProto Code Verification & Restored 1-Tap Credentials Setup',
     '2.9.1': 'Live MTProto Real OTP Dispatch & Transparent Background Data Migration',

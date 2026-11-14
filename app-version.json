@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 171,
-  "versionName": "2.9.3",
+  "versionCode": 172,
+  "versionName": "3.0.0",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.9.3 (Welcome Screen Direct Telegram Login & Instant Account Setup):\n- ⚡ Welcome Screen Direct Telegram Login (P0): Added a prominent 1-tap Telegram sign-in option right on the Welcome onboarding screen. Users can sign in directly using phone OTP without needing to create or verify an email account.\n- 🚀 Instant Backend Auto-Provisioning (P0): Direct Telegram authentication automatically provisions the user account, generates an authenticated JWT token, and initializes cloud storage with zero configuration.\n- 🛡️ Seamless Dual-Engine Storage Setup: New and existing users can instantly connect or auto-create their dedicated private Telegram vault channel with one tap."
+  "releaseNotes": "✨ What's New in v3.0.0 (Zero-Bot Modern Architecture, Direct MTProto Cloud Storage & High-Speed Stream Engine):\n- ⚡ Zero-Bot Modern Architecture (P0): Fully eliminated the need for complex @BotFather bot creation and channel configuration. The app now uses high-speed direct MTProto Telegram session transfers by default.\n- 🛡️ 100% Historical Data Preservation (P0): All legacy bot-uploaded files, multi-part chunks, message IDs, and cloud catalogs remain completely intact and accessible for browsing, streaming, and download.\n- 🚀 Ultra-Fast Single-Stream Transfers (P0): Direct connection to Telegram's cloud network allows seamless single-file uploads up to 2,000 MB without 4MB chunk fragmentation or bot rate limits.\n- 🧼 Minimal, Clean & Stable UI (P1): Removed legacy BotFather guides, bot fleet manager menus, and channel input fields to provide a clean, modern, and reliable backup experience."
 }

@@ -1301,11 +1301,51 @@ app.post(['/api/telegram/auth/send-code', '/telegram/auth/send-code'], async (re
   }
 });
 
+app.post(['/api/telegram/auth/resend-code', '/telegram/auth/resend-code'], async (req, res, next) => {
+  try {
+    const { phoneNumber, phoneCodeHash, session: sessionStr, apiId: reqApiId, apiHash: reqApiHash } = req.body || {};
+    if (!phoneNumber || !phoneCodeHash || !sessionStr) {
+      return res.status(400).json({ success: false, message: 'phoneNumber, phoneCodeHash, and session are required.' });
+    }
+
+    const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID || DEFAULT_TELEGRAM_API_ID, 10);
+    const apiHash = reqApiHash || process.env.TELEGRAM_API_HASH || DEFAULT_TELEGRAM_API_HASH;
+
+    if (!GramJSTelegramClient || !GramJSStringSession) {
+      return res.status(500).json({ success: false, message: 'GramJS MTProto engine not loaded on server.' });
+    }
+
+    const stringSession = new GramJSStringSession(sessionStr);
+    const client = new GramJSTelegramClient(stringSession, apiId, apiHash, {
+      connectionRetries: 5,
+      timeout: 15000,
+    });
+
+    await client.connect();
+    const { Api } = require('telegram');
+    const result = await client.invoke(new Api.auth.ResendCode({
+      phoneNumber: phoneNumber.trim(),
+      phoneCodeHash: phoneCodeHash.trim(),
+    }));
+    const sessionString = client.session.save();
+    try { await client.disconnect(); } catch (_) {}
+
+    return res.json({
+      success: true,
+      phoneCodeHash: result.phoneCodeHash || phoneCodeHash,
+      session: sessionString,
+    });
+  } catch (err) {
+    console.error('[Telegram MTProto resendCode Error]', err.message);
+    return res.status(400).json({ success: false, message: err.message || 'Failed to resend code.' });
+  }
+});
+
 app.post(['/api/telegram/auth/sign-in', '/telegram/auth/sign-in'], async (req, res, next) => {
   try {
     const { phoneNumber, phoneCodeHash, code, password, session: sessionStr, apiId: reqApiId, apiHash: reqApiHash } = req.body || {};
-    if (!phoneNumber || !phoneCodeHash || !code || !sessionStr) {
-      return res.status(400).json({ success: false, message: 'phoneNumber, phoneCodeHash, code, and session are required.' });
+    if (!phoneNumber || !phoneCodeHash || (!code && !password) || !sessionStr) {
+      return res.status(400).json({ success: false, message: 'phoneNumber, phoneCodeHash, code/password, and session are required.' });
     }
 
     const apiId = parseInt(reqApiId || process.env.TELEGRAM_API_ID || DEFAULT_TELEGRAM_API_ID, 10);
@@ -1324,44 +1364,60 @@ app.post(['/api/telegram/auth/sign-in', '/telegram/auth/sign-in'], async (req, r
     await client.connect();
 
     const { Api } = require('telegram');
-    const cleanCode = String(code).trim();
+    const cleanCode = code ? String(code).trim() : '';
     let authUser = null;
 
-    try {
-      const signInResult = await client.invoke(new Api.auth.SignIn({
-        phoneNumber: phoneNumber.trim(),
-        phoneCodeHash: phoneCodeHash.trim(),
-        phoneCode: cleanCode,
-      }));
-      authUser = signInResult.user || signInResult;
-    } catch (signInErr) {
-      const errMsg = signInErr.message || '';
-      if (signInErr.errorMessage === 'SESSION_PASSWORD_NEEDED' || errMsg.includes('SESSION_PASSWORD_NEEDED')) {
-        if (password) {
-          try {
-            const passwordSrpResult = await client.invoke(new Api.account.GetPassword());
-            const { computeCheck } = require('telegram/Password');
-            const passwordSrpCheck = await computeCheck(passwordSrpResult, String(password).trim());
-            const authRes = await client.invoke(new Api.auth.CheckPassword({
-              password: passwordSrpCheck,
-            }));
-            authUser = authRes.user || authRes;
-          } catch (pwdErr) {
+    if (password && !cleanCode) {
+      // Direct 2FA password check when code already verified previously
+      try {
+        const passwordSrpResult = await client.invoke(new Api.account.GetPassword());
+        const { computeCheck } = require('telegram/Password');
+        const passwordSrpCheck = await computeCheck(passwordSrpResult, String(password).trim());
+        const authRes = await client.invoke(new Api.auth.CheckPassword({
+          password: passwordSrpCheck,
+        }));
+        authUser = authRes.user || authRes;
+      } catch (pwdErr) {
+        try { await client.disconnect(); } catch (_) {}
+        return res.status(400).json({ success: false, message: pwdErr.message || 'Incorrect 2FA cloud password.' });
+      }
+    } else {
+      try {
+        const signInResult = await client.invoke(new Api.auth.SignIn({
+          phoneNumber: phoneNumber.trim(),
+          phoneCodeHash: phoneCodeHash.trim(),
+          phoneCode: cleanCode,
+        }));
+        authUser = signInResult.user || signInResult;
+      } catch (signInErr) {
+        const errMsg = signInErr.message || '';
+        if (signInErr.errorMessage === 'SESSION_PASSWORD_NEEDED' || errMsg.includes('SESSION_PASSWORD_NEEDED')) {
+          if (password) {
+            try {
+              const passwordSrpResult = await client.invoke(new Api.account.GetPassword());
+              const { computeCheck } = require('telegram/Password');
+              const passwordSrpCheck = await computeCheck(passwordSrpResult, String(password).trim());
+              const authRes = await client.invoke(new Api.auth.CheckPassword({
+                password: passwordSrpCheck,
+              }));
+              authUser = authRes.user || authRes;
+            } catch (pwdErr) {
+              try { await client.disconnect(); } catch (_) {}
+              return res.status(400).json({ success: false, message: pwdErr.message || 'Incorrect 2FA cloud password.' });
+            }
+          } else {
+            const interimSession = client.session.save();
             try { await client.disconnect(); } catch (_) {}
-            return res.status(400).json({ success: false, message: pwdErr.message || 'Incorrect 2FA cloud password.' });
+            return res.status(401).json({
+              success: false,
+              code: '2FA_REQUIRED',
+              session: interimSession,
+              message: 'Two-Step Verification cloud password is required.'
+            });
           }
         } else {
-          const interimSession = client.session.save();
-          try { await client.disconnect(); } catch (_) {}
-          return res.status(401).json({
-            success: false,
-            code: '2FA_REQUIRED',
-            session: interimSession,
-            message: 'Two-Step Verification cloud password is required.'
-          });
+          throw signInErr;
         }
-      } else {
-        throw signInErr;
       }
     }
 
