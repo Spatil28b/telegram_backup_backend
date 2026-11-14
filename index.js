@@ -1375,11 +1375,33 @@ app.post(['/api/telegram/auth/sign-in', '/telegram/auth/sign-in'], async (req, r
     const finalSession = client.session.save();
     try { await client.disconnect(); } catch (_) {}
 
+    const telegramUserId = Number(me?.id || authUser?.id || 0);
+    const userPhone = me?.phone || authUser?.phone || phoneNumber;
+    const cleanPhoneDigits = String(userPhone).replace(/\D/g, '');
+    const accountEmail = `tg_${telegramUserId || cleanPhoneDigits}@telegram.tspace.app`;
+
+    if (pool) {
+      try {
+        const dummyHash = await bcrypt.hash(`tg_auth_${telegramUserId}_${Date.now()}`, 10);
+        await queryWithTimeout(
+          `INSERT INTO users (email, password_hash, created_at)
+           VALUES ($1, $2, NOW())
+           ON CONFLICT (email) DO NOTHING`,
+          [accountEmail, dummyHash]
+        );
+      } catch (upsertErr) {
+        console.warn('[Auto-provision Telegram user warning]', upsertErr.message);
+      }
+    }
+    const token = generateUserToken(accountEmail);
+
     return res.json({
       success: true,
+      token,
+      accountEmail,
       user: {
-        userId: Number(me?.id || authUser?.id || 0),
-        phoneNumber: me?.phone || authUser?.phone || phoneNumber,
+        userId: telegramUserId,
+        phoneNumber: userPhone,
         firstName: me?.firstName || authUser?.firstName || '',
         lastName: me?.lastName || authUser?.lastName || '',
         username: me?.username || authUser?.username || '',
