@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 169,
-  "versionName": "2.9.1",
+  "versionCode": 170,
+  "versionName": "2.9.2",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.9.1 (Live MTProto Real OTP Dispatch & Transparent Background Migration):\n- ⚡ Live Telegram MTProto Real OTP Dispatch (P0): Built-in official client gateway dispatches verification codes directly to your Telegram app with zero manual API setup required.\n- 🛡️ Silent Background Legacy Migration (P0): Automatically adopts existing channel IDs into the unified vault and tags historical files seamlessly with zero user interruption.\n- 🚀 Dual-Engine Safety & Bot Continuity (P0): Maintains 100% active bot fleet backup operations in the background while enabling smooth one-tap direct user login.\n- 📦 Dual GitHub Release Distribution & Komi Store Live Index: Verified APK binaries published to Spatil28b/TelegramBackup and Spatil28b/telegram_backup_backend."
+  "releaseNotes": "✨ What's New in v2.9.2 (Direct MTProto Code Verification & Restored 1-Tap Credentials Setup):\n- ⚡ Direct MTProto Code Verification (P0): Direct TL SignIn invocation resolves the \"Code is empty\" error, enabling reliable one-tap sign-in and cloud 2FA password verification.\n- 🔑 Restored 1-Tap Bot Credentials Setup (P0): Removed accidental security lock blocking bot setup. Bot Token and Channel Chat ID fields are now always accessible with a dedicated \"Save & Connect\" button.\n- 🛡️ Silent Background Legacy Migration (P0): Preserves existing channel IDs into the unified vault and tags historical files seamlessly."
 }
