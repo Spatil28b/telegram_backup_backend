@@ -125,6 +125,21 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.9': `✨ What's New in v2.8.9 (Concurrency Race Fix, Zero-OOM Streaming, Channel Rate Limiting & M3 Minimal UI):
+- 🛡️ Background Concurrency & Duplicate Fix (P0): Unified all backup triggers under a single WorkManager queue with ExistingWorkPolicy.KEEP, completely eliminating triple-trigger race conditions and duplicate scans.
+- ⚡ Zero-OOM Streaming Encryption & Decryption (P0): Chunk encryption and multi-part decryption now stream directly through disk with 8 KB buffers using Cipher.update(), keeping RAM consumption below 16 KB and eliminating Out-of-Memory crashes on multi-gigabyte files.
+- ⏱️ Telegram Channel Rate Limiting (P0): Enforced hard token-bucket channel rate limiting (max 20 messages/min per channel, 3s delay) across all bots in the fleet to prevent HTTP 429 Flood-Wait errors.
+- 🖼️ 45-Minute In-Memory TTL Cache (P1): Added 45-minute TTL caching for Telegram CDN download links, preventing 404/403 errors caused by Telegram's 1-hour URL expiration.
+- 🎨 Material 3 Flat High-Contrast & Jitter-Free UI (P1): Replaced GPU-melting blur shader loops with solid M3 surface elevation (surfaceContainer) and subtle 1.dp borders. Navbar translation now skips the Compose layout phase via graphicsLayer translationY for buttery 120Hz scrolling.
+- 📱 Progressive Disclosure Transfer Queue (P1): Tapping the SyncStatusPill in the top bar now opens an interactive modal bottom sheet with live speeds, queue status, and pause/resume controls without navigating away from the current screen.
+- 🩺 Unified Sync & Vault Health (P2): Consolidated Diagnostics, Chunks integrity, and Exceptions into a single card on the Home dashboard, only surfacing exceptions when failed files actually exist.
+- 🧠 Thermal AI & OCR Decoupling (P2): Removed heavy inline OCR indexing from the backup upload loop, chaining OCR asynchronously after backup completion with battery-not-low constraints.
+- 🗜️ Backend GZIP Settings Compression (P2): Automatically compresses settings manifests > 2 KB with GZIP, preventing serverless payload limits.`,
+    '2.8.8': `✨ What's New in v2.8.8 (Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config):
+- 📁 Zero-Loss Cloud Drive Sync on Reinstall: Attached authenticated bearer tokens and fallback query headers to listFiles, getUserSettings, and getCredentials, guaranteeing complete restoration of all Drive documents, folders, and settings after reinstall or re-login.
+- 🧹 Auto-Heal Ghost ENC_ Chunks: Intelligently purged 11GB of phantom ENC_*.bin chunk artifacts from the Room database and Download folder, restoring clean, authentic file trees in the Monthly Archive.
+- 🔄 Prevent Duplicate Backup Loops: Guarded BackupWorker from running on empty catalogs during sync, eliminating duplicate re-uploads of entire device archives after updates.
+- 🌐 Welcome Screen Server Configuration: Added a prominent server URL indicator and instant custom endpoint dialog on the welcome screen for quick server switching and verification.`,
     '2.8.7': `✨ What's New in v2.8.7 (Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater):
 - 📁 Dedicated Cloud Drive Space: Restored personal Cloud Drive as an independent dedicated storage space without arbitrary path exclusions or stripping of drive upload status.
 - 🤖 Zero-Loss Bot Fleet: Fixed token resolution, internal vault snapshot prioritization, and canonical bot ID smart merging to ensure bots and tokens never disappear.
@@ -725,6 +740,8 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.8': 'Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config',
+    '2.8.9': 'Background Concurrency Unification, Zero-OOM Streaming Encryption & M3 Minimal UI',
     '2.8.8': 'Cloud Drive Reinstall Recovery, Auto-Heal ENC_ Ghost Chunks & Welcome Server Config',
     '2.8.7': 'Dedicated Cloud Drive Space, Zero-Loss Bot Fleet & In-App Dynamic Updater',
     '2.8.6': 'Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection',

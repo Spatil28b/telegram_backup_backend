@@ -20,6 +20,7 @@ const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('@neondatabase/serverless');
+const zlib = require('zlib');
 
 // Cryptographically Secure JWT Secret Key (strictly from environment, minimum 32 chars)
 const JWT_SECRET = (process.env.JWT_SECRET || '').trim();
@@ -1254,17 +1255,27 @@ app.get(['/api/credentials/get', '/credentials/get', '/api/user/credentials/get'
  */
 app.post(['/api/user/settings', '/user/settings', '/api/settings/save', '/settings/save'], requireAuth, async (req, res, next) => {
   try {
-    const { settings, manifest, data } = req.body || {};
+    const { settings, manifest, data, compressed } = req.body || {};
     const lowerEmail = req.authenticatedEmail;
     if (!lowerEmail || !isValidEmail(lowerEmail)) {
       return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
     const rawVal = manifest !== undefined ? manifest : (settings !== undefined ? settings : data);
-    const settingsStr = typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal || {});
+    let settingsStr = typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal || {});
 
-    // Guard against oversized settings JSON injection
-    if (settingsStr.length > 100 * 1024) {
-      return res.status(413).json({ success: false, message: 'Settings payload is too large (max 100 KB)' });
+    // Decompress GZIP payload if compressed or Base64 GZIP header detected
+    if (compressed || (typeof settingsStr === 'string' && settingsStr.startsWith('H4sI'))) {
+      try {
+        const buf = Buffer.from(settingsStr, 'base64');
+        settingsStr = zlib.gunzipSync(buf).toString('utf8');
+      } catch (decompErr) {
+        console.warn('[Settings GZIP Decompress Warning]', decompErr.message);
+      }
+    }
+
+    // Guard against oversized settings JSON injection (allow up to 256 KB uncompressed)
+    if (settingsStr.length > 256 * 1024) {
+      return res.status(413).json({ success: false, message: 'Settings payload is too large (max 256 KB)' });
     }
 
     // Sanitize: Eradicate sensitive master encryption keys from remote storage
@@ -1487,7 +1498,7 @@ app.post(['/api/files/index', '/files/index', '/api/files/backup', '/files/backu
       return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
     const msgId = parseInt(messageId, 10) || 0;
-    const isDrive = Boolean(isDriveUpload || is_drive_upload || (telegramFileId === 'DIR_MARKER' && !path.includes('/DCIM') && !path.includes('/Pictures') && !path.includes('/Camera') && !path.includes('/WhatsApp')));
+    const isDrive = Boolean(isDriveUpload || is_drive_upload || (path && (path.startsWith('Cloud Drive/') || path === 'Cloud Drive')) || (telegramFileId === 'DIR_MARKER' && !path.includes('/DCIM') && !path.includes('/Pictures') && !path.includes('/Camera') && !path.includes('/WhatsApp')));
 
     let finalChunksJson = '[]';
     if (typeof chunksJson === 'string' && chunksJson.trim().length > 0) {
@@ -1597,7 +1608,7 @@ app.post(['/api/files/index-batch', '/files/index-batch', '/api/index-files-batc
             const rawTime = parseInt(f.timestamp || '0', 10);
             const fTime = (!rawTime || rawTime < 946684800000 || rawTime === 1784030400000) ? Date.now() : rawTime;
             const msgId = parseInt(f.messageId || '0', 10) || 0;
-            const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || (tgId === 'DIR_MARKER' && !fPath.includes('/DCIM') && !fPath.includes('/Pictures') && !fPath.includes('/Camera') && !fPath.includes('/WhatsApp')));
+            const isDrive = Boolean(f.isDriveUpload || f.is_drive_upload || (fPath && (fPath.startsWith('Cloud Drive/') || fPath === 'Cloud Drive')) || (tgId === 'DIR_MARKER' && !fPath.includes('/DCIM') && !fPath.includes('/Pictures') && !fPath.includes('/Camera') && !fPath.includes('/WhatsApp')));
             let fChunksJson = '[]';
             if (typeof f.chunksJson === 'string' && f.chunksJson.trim().length > 0) {
               try {
@@ -2362,6 +2373,13 @@ app.get(['/api/app/changelog', '/app/changelog', '/changelog'], (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=300');
   const changelog = [
     {
+      versionName: "2.8.9",
+      versionCode: 167,
+      releaseDate: "November 2026",
+      highlights: "Concurrency Race Fix, Zero-OOM Streaming, Channel Rate Limiting & M3 Minimal UI",
+      releaseNotes: "✨ What's New in v2.8.9:\n- 🛡️ Background Concurrency & Duplicate Fix: Unified all backup triggers under a single WorkManager queue with ExistingWorkPolicy.KEEP, completely eliminating triple-trigger race conditions and duplicate scans.\n- ⚡ Zero-OOM Streaming Encryption & Decryption: Chunk encryption and multi-part decryption now stream directly through disk with 8 KB buffers using Cipher.update(), keeping RAM consumption below 16 KB and eliminating Out-of-Memory crashes on multi-gigabyte files.\n- ⏱️ Telegram Channel Rate Limiting: Enforced hard token-bucket channel rate limiting (max 20 messages/min per channel, 3s delay) across all bots in the fleet to prevent HTTP 429 Flood-Wait errors.\n- 🖼️ 45-Minute In-Memory TTL Cache: Added 45-minute TTL caching for Telegram CDN download links, preventing 404/403 errors caused by Telegram's 1-hour URL expiration.\n- 🎨 Material 3 Flat High-Contrast & Jitter-Free UI: Replaced GPU-melting blur shader loops with solid M3 surface elevation (surfaceContainer) and subtle 1.dp borders. Navbar translation now skips the Compose layout phase via graphicsLayer translationY for buttery 120Hz scrolling.\n- 📱 Progressive Disclosure Transfer Queue: Tapping the SyncStatusPill in the top bar now opens an interactive modal bottom sheet with live speeds, queue status, and pause/resume controls without navigating away from the current screen.\n- 🩺 Unified Sync & Vault Health: Consolidated Diagnostics, Chunks integrity, and Exceptions into a single card on the Home dashboard, only surfacing exceptions when failed files actually exist.\n- 🧠 Thermal AI & OCR Decoupling: Removed heavy inline OCR indexing from the backup upload loop, chaining OCR asynchronously after backup completion with battery-not-low constraints.\n- 🗜️ Backend GZIP Settings Compression: Automatically compresses settings manifests > 2 KB with GZIP, preventing serverless payload limits."
+    },
+    {
       versionName: "2.8.8",
       versionCode: 166,
       releaseDate: "November 2026",
@@ -2416,6 +2434,27 @@ app.get(['/api/app/changelog', '/app/changelog', '/changelog'], (req, res) => {
       releaseDate: "November 2026",
       highlights: "Cloud Drive Navigation & Large File Chunking",
       releaseNotes: "✨ What's New in v2.8.1:\n- 📂 Nested Folder Navigation: Full recursive folder hierarchy for personal cloud files.\n- 📦 2GB Chunking Engine: Seamless multipart uploads with automatic chunk resume."
+    },
+    {
+      versionName: "2.8.0",
+      versionCode: 158,
+      releaseDate: "October 2026",
+      highlights: "Cryptographic Hardening, AES-256-GCM v2 & Hardware Keystore Isolation",
+      releaseNotes: "✨ What's New in v2.8.0:\n- 🛡️ Authenticated AES-256-GCM v2 Framing: Per-chunk GCM authenticated framing with chunk index and total chunk AAD validation.\n- 🔑 Hardware Keystore Room Isolation: Complete isolation of master keys and credentials inside hardware keystore.\n- ⚡ High-Throughput Parallel Worker Channels: Optimized channel streaming and buffer pools."
+    },
+    {
+      versionName: "2.7.9",
+      versionCode: 157,
+      releaseDate: "October 2026",
+      highlights: "Telegram Bot Channel Binding & Fast File Reindexer",
+      releaseNotes: "✨ What's New in v2.7.9:\n- 🤖 Dynamic Telegram Channel Auto-Binding: Smart channel resolution for backup and drive storage.\n- 🔍 Fast File Reindexer: Instant delta reconciliation between local database and cloud storage."
+    },
+    {
+      versionName: "2.7.8",
+      versionCode: 156,
+      releaseDate: "October 2026",
+      highlights: "Database Migration Robustness & Multi-Bot Fleet",
+      releaseNotes: "✨ What's New in v2.7.8:\n- 💾 Robust Schema Upgrades: Zero data-loss room migrations across app updates.\n- 🤖 Multi-Bot Worker Pool: Parallel chunk dispatching across up to 16 bot tokens."
     }
   ];
   return res.json(changelog);
