@@ -125,6 +125,10 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.9.2': `✨ What's New in v2.9.2 (Direct MTProto Code Verification & Restored 1-Tap Credentials Setup):
+- ⚡ Direct MTProto Code Verification (P0): Direct TL SignIn invocation resolves the "Code is empty" error, enabling reliable one-tap sign-in and cloud 2FA password verification.
+- 🔑 Restored 1-Tap Bot Credentials Setup (P0): Removed accidental security lock blocking bot setup. Bot Token and Channel Chat ID fields are now always accessible with a dedicated "Save & Connect" button.
+- 🛡️ Silent Background Legacy Migration (P0): Preserves existing channel IDs into the unified vault and tags historical files seamlessly.`,
     '2.9.1': `✨ What's New in v2.9.1 (Live MTProto Real OTP Dispatch & Transparent Background Migration):
 - ⚡ Live Telegram MTProto Real OTP Dispatch (P0): Built-in official client gateway dispatches verification codes directly to your Telegram app with zero manual API setup required.
 - 🛡️ Silent Background Legacy Migration (P0): Automatically adopts existing channel IDs into the unified vault and tags historical files seamlessly with zero user interruption.
@@ -766,6 +770,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.9.2': 'Direct MTProto Code Verification & Restored 1-Tap Credentials Setup',
     '2.9.1': 'Live MTProto Real OTP Dispatch & Transparent Background Data Migration',
     '2.9.0': 'Direct Telegram Account Login, High-Speed MTProto & Dual-Engine Architecture',
     '2.8.9': 'Background Concurrency Unification, Zero-OOM Streaming Encryption & M3 Minimal UI',

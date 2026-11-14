@@ -1322,40 +1322,74 @@ app.post(['/api/telegram/auth/sign-in', '/telegram/auth/sign-in'], async (req, r
     });
 
     await client.connect();
-    await client.signInUser(
-      { apiId, apiHash },
-      {
+
+    const { Api } = require('telegram');
+    const cleanCode = String(code).trim();
+    let authUser = null;
+
+    try {
+      const signInResult = await client.invoke(new Api.auth.SignIn({
         phoneNumber: phoneNumber.trim(),
         phoneCodeHash: phoneCodeHash.trim(),
-        phoneCode: code.trim(),
-        password: async () => (password || ''),
-        onError: (err) => { throw err; }
+        phoneCode: cleanCode,
+      }));
+      authUser = signInResult.user || signInResult;
+    } catch (signInErr) {
+      const errMsg = signInErr.message || '';
+      if (signInErr.errorMessage === 'SESSION_PASSWORD_NEEDED' || errMsg.includes('SESSION_PASSWORD_NEEDED')) {
+        if (password) {
+          try {
+            const passwordSrpResult = await client.invoke(new Api.account.GetPassword());
+            const { computeCheck } = require('telegram/Password');
+            const passwordSrpCheck = await computeCheck(passwordSrpResult, String(password).trim());
+            const authRes = await client.invoke(new Api.auth.CheckPassword({
+              password: passwordSrpCheck,
+            }));
+            authUser = authRes.user || authRes;
+          } catch (pwdErr) {
+            try { await client.disconnect(); } catch (_) {}
+            return res.status(400).json({ success: false, message: pwdErr.message || 'Incorrect 2FA cloud password.' });
+          }
+        } else {
+          const interimSession = client.session.save();
+          try { await client.disconnect(); } catch (_) {}
+          return res.status(401).json({
+            success: false,
+            code: '2FA_REQUIRED',
+            session: interimSession,
+            message: 'Two-Step Verification cloud password is required.'
+          });
+        }
+      } else {
+        throw signInErr;
       }
-    );
+    }
 
-    const me = await client.getMe();
+    let me = null;
+    try {
+      me = await client.getMe();
+    } catch (_) {
+      me = authUser;
+    }
+
     const finalSession = client.session.save();
     try { await client.disconnect(); } catch (_) {}
 
     return res.json({
       success: true,
       user: {
-        userId: Number(me.id),
-        phoneNumber: me.phone || phoneNumber,
-        firstName: me.firstName || '',
-        lastName: me.lastName || '',
-        username: me.username || '',
-        isPremium: Boolean(me.premium)
+        userId: Number(me?.id || authUser?.id || 0),
+        phoneNumber: me?.phone || authUser?.phone || phoneNumber,
+        firstName: me?.firstName || authUser?.firstName || '',
+        lastName: me?.lastName || authUser?.lastName || '',
+        username: me?.username || authUser?.username || '',
+        isPremium: Boolean(me?.premium || authUser?.premium)
       },
       session: finalSession
     });
   } catch (err) {
     console.error('[Telegram MTProto signIn Error]', err.message);
-    const msg = err.message || '';
-    if (msg.includes('SESSION_PASSWORD_NEEDED')) {
-      return res.status(401).json({ success: false, code: '2FA_REQUIRED', message: 'Two-Step Verification cloud password is required.' });
-    }
-    return res.status(400).json({ success: false, message: msg || 'Failed to sign in to Telegram.' });
+    return res.status(400).json({ success: false, message: err.message || 'Failed to sign in to Telegram.' });
   }
 });
 
