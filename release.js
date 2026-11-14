@@ -125,6 +125,10 @@ async function main() {
   try { fs.copyFileSync(APK_SRC, path.join(ROOT_DIR, 'TelegramBackup-debug.apk')); } catch {}
   // 3b. Generate Dynamic Release Notes for this Version
   const releaseNotesMap = {
+    '2.8.6': `✨ What's New in v2.8.6 (Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection):
+- 🎯 Account-Targeted Email Routing: Security OTPs, credential unlocks, and Master Key dispatch are strictly addressed to the logged-in user's primary account email.
+- 🛡️ Cross-Session Boundary Isolation: Complete wiping of session context, tokens, and secondary email configurations on logout to prevent cross-account inheritance.
+- 🧹 Self-Healing Recovery Email: Automatically detects and purges accidental SMTP service email addresses from client secondary email settings.`,
     '2.8.5': `✨ What's New in v2.8.5 (Unified OTP Engine, Resend Countdown Timers & Deliverability):
 - ⏱️ Unified Resend OTP & 60s Timers: Added responsive 60-second cooldown timers and dynamic 'Resend OTP' buttons across all verification dialogs (Registration, Password Reset, Clear App Data, Recovery Email, and Credentials Unlock).
 - ✉️ Anti-Spam Dual-Part Multi-SMTP: Configured RFC-compliant plaintext and HTML email dispatch with purpose-tailored subject lines, preventing inbox spam filtering.
@@ -716,6 +720,7 @@ async function main() {
   // 7. Deploy backend to GitHub & Vercel with explicit file staging (Fix #42, #43)
   console.log('7️⃣  Deploying backend updates to GitHub repository...');
   const releaseTitleMap = {
+    '2.8.6': 'Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection',
     '2.8.5': 'Unified OTP Engine, Resend Countdown Timers & Deliverability',
     '2.8.4': 'Cloud Drive Dedicated Space, Streamlined Welcome Screen & Version History Synchronization',
     '2.8.3': 'Zero-Loss Settings, Profile Preservation & Reactive Bot Fleet Engine',

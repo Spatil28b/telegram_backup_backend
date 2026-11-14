@@ -1,8 +1,8 @@
 {
   "success": true,
-  "versionCode": 163,
-  "versionName": "2.8.5",
+  "versionCode": 164,
+  "versionName": "2.8.6",
   "downloadUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
   "directApkUrl": "https://telegram-backup-backend-five.vercel.app/api/app/download-latest",
-  "releaseNotes": "✨ What's New in v2.8.5 (Unified OTP Engine, Resend Countdown Timers & Deliverability):\n- ⏱️ Unified Resend OTP & 60s Timers: Added responsive 60-second cooldown timers and dynamic 'Resend OTP' buttons across all verification dialogs (Registration, Password Reset, Clear App Data, Recovery Email, and Credentials Unlock).\n- ✉️ Anti-Spam Dual-Part Multi-SMTP: Configured RFC-compliant plaintext and HTML email dispatch with purpose-tailored subject lines, preventing inbox spam filtering.\n- 🔐 Atomic Purpose-Bound Verification: Strengthened atomic OTP validator to recognize credential unlock and settings authorization without collision or race conditions.\n- 🔑 Direct Master Key Transmission: Corrected Master Key email action to send the AES-256 master key file and security PIN attachment directly to email."
+  "releaseNotes": "✨ What's New in v2.8.6 (Account Email Routing Isolation, Self-Healing Recovery Email & Multi-User Boundary Protection):\n- 🎯 Account-Targeted Email Routing: Security OTPs, credential unlocks, and Master Key dispatch are strictly addressed to the logged-in user's primary account email.\n- 🛡️ Cross-Session Boundary Isolation: Complete wiping of session context, tokens, and secondary email configurations on logout to prevent cross-account inheritance.\n- 🧹 Self-Healing Recovery Email: Automatically detects and purges accidental SMTP service email addresses from client secondary email settings."
 }

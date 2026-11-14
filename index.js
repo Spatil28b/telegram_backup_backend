@@ -863,7 +863,7 @@ app.post(['/api/auth/send-otp', '/auth/send-otp', '/send-otp', '/api/auth/reques
 const handleSendKey = async (req, res, next) => {
   try {
     const { encryptionKey, email } = req.body || {};
-    const lowerEmail = req.authenticatedEmail || (email && isValidEmail(email) ? email.trim().toLowerCase() : null);
+    const lowerEmail = (email && isValidEmail(email) ? email.trim().toLowerCase() : null) || req.authenticatedEmail;
     if (!lowerEmail || !isValidEmail(lowerEmail)) {
       return res.status(401).json({ success: false, message: 'Authentication or valid account email is required.' });
     }
